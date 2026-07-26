@@ -1,5 +1,5 @@
 # Stage 1 — build (needs memory for Go compiler, isolated from runtime)
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26-alpine AS builder
 WORKDIR /src
 # Download deps first for layer caching
 COPY go.mod go.sum ./
