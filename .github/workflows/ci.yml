@@ -40,7 +40,11 @@ jobs:
         with:
           go-version: "1.25"
           cache-dependency-path: forward-auth/go.sum
+      # install-mode: goinstall compiles golangci-lint with the Go 1.25
+      # toolchain set up above, avoiding a prebuilt-binary/toolchain skew
+      # ("built with go1.24 is lower than the targeted go1.25.0").
       - uses: golangci/golangci-lint-action@v6
         with:
           working-directory: forward-auth
           version: latest
+          install-mode: goinstall
