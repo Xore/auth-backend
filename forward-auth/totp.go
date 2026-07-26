@@ -19,8 +19,8 @@ import (
 func normalizeB32(s string) string {
 	var b strings.Builder
 	for _, r := range strings.ToUpper(s) {
-		switch {
-		case r == '=', r == '-', r == ' ', r == '\t', r == '\r', r == '\n', r == '"', r == '\'':
+		switch r {
+		case '=', '-', ' ', '\t', '\r', '\n', '"', '\'':
 			// dropped: padding, grouping, whitespace, stray .env quotes
 		default:
 			b.WriteRune(r)

@@ -972,12 +972,12 @@ func (s *server) metrics(w http.ResponseWriter, r *http.Request) {
 	snap := s.aud.snapshot(0)
 	locked := s.tr.snapshot()
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	fmt.Fprintf(w, "# TYPE forwardauth_attempts_total counter\nforwardauth_attempts_total %d\n", snap.Total)
-	fmt.Fprintf(w, "# TYPE forwardauth_success_total counter\nforwardauth_success_total %d\n", snap.Success)
-	fmt.Fprintf(w, "# TYPE forwardauth_failed_total counter\nforwardauth_failed_total %d\n", snap.Failed)
-	fmt.Fprintf(w, "# TYPE forwardauth_locked_ips gauge\nforwardauth_locked_ips %d\n", len(locked))
-	fmt.Fprintf(w, "# TYPE forwardauth_users gauge\nforwardauth_users %d\n", s.users.count())
-	fmt.Fprintf(w, "# TYPE forwardauth_sessions_active gauge\nforwardauth_sessions_active %d\n", s.reg.active())
+	_, _ = fmt.Fprintf(w, "# TYPE forwardauth_attempts_total counter\nforwardauth_attempts_total %d\n", snap.Total)
+	_, _ = fmt.Fprintf(w, "# TYPE forwardauth_success_total counter\nforwardauth_success_total %d\n", snap.Success)
+	_, _ = fmt.Fprintf(w, "# TYPE forwardauth_failed_total counter\nforwardauth_failed_total %d\n", snap.Failed)
+	_, _ = fmt.Fprintf(w, "# TYPE forwardauth_locked_ips gauge\nforwardauth_locked_ips %d\n", len(locked))
+	_, _ = fmt.Fprintf(w, "# TYPE forwardauth_users gauge\nforwardauth_users %d\n", s.users.count())
+	_, _ = fmt.Fprintf(w, "# TYPE forwardauth_sessions_active gauge\nforwardauth_sessions_active %d\n", s.reg.active())
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -1132,7 +1132,9 @@ func main() {
 			log.Error("shutdown", "error", err)
 		}
 		if aud.file != nil {
-			aud.file.Close()
+			if err := aud.file.Close(); err != nil {
+				log.Error("audit log close", "error", err)
+			}
 		}
 	}()
 

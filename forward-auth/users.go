@@ -184,7 +184,7 @@ func (st *userStore) saveLocked() error {
 		return err
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	defer func() { _ = os.Remove(tmpName) }() // no-op once renamed on the success path
 	if err = tmp.Chmod(0o600); err == nil {
 		_, err = tmp.Write(append(raw, '\n'))
 	}

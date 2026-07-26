@@ -102,7 +102,7 @@ func (sr *sessionRegistry) saveLocked() error {
 		return err
 	}
 	name := f.Name()
-	defer os.Remove(name)
+	defer func() { _ = os.Remove(name) }() // no-op once renamed on the success path
 	if err = f.Chmod(0o600); err == nil {
 		_, err = f.Write(append(raw, '\n'))
 	}
