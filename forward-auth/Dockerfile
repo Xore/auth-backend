@@ -9,7 +9,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /forward-auth .
 
 # Stage 2 — runtime (tiny, no compiler, no OOM risk)
-FROM alpine:3.20
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates tzdata \
   && addgroup -S -g 65532 forwardauth \
   && adduser -S -D -H -u 65532 -G forwardauth forwardauth \
