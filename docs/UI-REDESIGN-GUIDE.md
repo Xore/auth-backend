@@ -8,6 +8,7 @@ existing Go `forward-auth` service.
 
 ## Table of Contents
 
+0. [Diff vs live claude.ai/login](#0-diff-vs-live-claudeailogin)
 1. [Design system](#1-design-system)
 2. [File map](#2-file-map)
 3. [Step 1 — Embed templates in Go](#3-step-1--embed-templates-in-go)
@@ -19,34 +20,57 @@ existing Go `forward-auth` service.
 9. [Step 7 — Wire the passkey buttons](#9-step-7--wire-the-passkey-buttons)
 10. [Step 8 — Add a /auth/resend endpoint](#10-step-8--add-a-authresend-endpoint)
 11. [Step 9 — Google OAuth button](#11-step-9--google-oauth-button)
-12. [Step 10 — CSP + security headers](#12-step-10--csp--security-headers)
-13. [Mobile & accessibility](#13-mobile--accessibility)
-14. [Replacing Tailwind CDN with a build step](#14-replacing-tailwind-cdn-with-a-build-step)
-15. [Checklist](#15-checklist)
+12. [Step 10 — SSO button](#12-step-10--sso-button)
+13. [Step 11 — CSP + security headers](#13-step-11--csp--security-headers)
+14. [Mobile & accessibility](#14-mobile--accessibility)
+15. [Replacing Tailwind CDN with a build step](#15-replacing-tailwind-cdn-with-a-build-step)
+16. [Checklist](#16-checklist)
+
+---
+
+## 0. Diff vs live claude.ai/login
+
+This section documents every difference found when the current guide and templates
+were verified against the **live** `claude.ai/login` page (July 2026).
+
+| # | Element | Our previous version | Live Claude (correct) | Fixed in |
+|---|---|---|---|---|
+| 1 | **Headline** | "Question what's next" | **"Your ideas, amplified"** | `login.html` v2 |
+| 2 | **Subtitle** | "Your thinking partner for big ambitions" | **"Privacy-first AI that helps you create in confidence."** | `login.html` v2 |
+| 3 | **Button order** | Google → Passkey → OR → email | **Google → SSO → or → email** | `login.html` v2 |
+| 4 | **Passkey button** | Present on login screen | **Not present** on Claude's main login screen | `login.html` v2 |
+| 5 | **SSO button** | Missing | **"Continue with SSO"** is Claude's third option | `login.html` v2 |
+| 6 | **Email label** | No label (placeholder only) | **"Email" label** above the input field | `login.html` v2 |
+| 7 | **Legal copy** | "By continuing, you acknowledge our Privacy Policy." | **"By continuing, you agree to Anthropic's Consumer Terms and Usage Policy, and acknowledge our Privacy Policy."** (three links) | `login.html` v2 |
+| 8 | **Divider text** | Uppercase `OR` | **Lowercase `or`** | `login.html` v2 |
+
+> The `verify.html` (email OTP / TOTP) screen and the overall dark colour palette
+> remained accurate — no changes needed there.
 
 ---
 
 ## 1. Design system
 
-The UI matches Claude's login aesthetics:
+Colour tokens (verified against claude.ai computed styles, July 2026):
 
 | Token | Value | Use |
 |---|---|---|
 | `bg` | `#1a1a1a` | Page background |
-| `surface` | `#242424` | Card / input background |
+| `surface` | `#242424` | Card / button background |
 | `border` | `#2e2e2e` | Borders, dividers |
-| `muted` | `#8a8a8a` | Secondary text, placeholders |
-| `primary` | `#d4764e` | Terracotta accent (focus rings, icons) |
+| `muted` | `#8a8a8a` | Secondary text, labels, placeholders |
+| `primary` | `#d4764e` | Terracotta accent — focus rings, verification icon |
 | `inputbg` | `#1f1f1f` | Text input fill |
 
 Typography:
-- Headlines: `Georgia` (serif) — matches Claude's "Question what's next" heading.
-- Body / UI: `Inter` (sans-serif) loaded from Google Fonts.
+- **Headlines**: `Georgia` (serif) — Claude uses a custom serif; Georgia is the closest
+  system-font match.
+- **Body / UI**: `Inter` (sans-serif) loaded from Google Fonts, weights 400/500/600.
 
-Layout:
-- Centred column, `max-w-sm` (384 px) card.
-- `rounded-2xl` card with `shadow-xl` and `border border-border`.
-- Tailwind CDN for rapid prototyping (see §14 for production build).
+Layout rules:
+- Centered single column. Card `max-w-sm` (384 px), `rounded-2xl`, `shadow-xl`.
+- All interactive elements `py-3` — minimum 48 px touch height.
+- `or` divider is lowercase, flanked by `#2e2e2e` 1 px rules.
 
 ---
 
@@ -55,11 +79,12 @@ Layout:
 ```
 forward-auth/
   ui/
-    login.html          ← Step 1 screen: email + Google + passkey
-    verify.html         ← Step 2 screen: TOTP / email-OTP + alternatives
-  page.go               ← existing: replace loginPage() / verifyPage()
-  main.go               ← existing: no route changes needed
-  totp.go               ← existing: add /auth/totp POST handler
+    login.html          ← Login screen: Google + SSO + email (NO passkey here)
+    verify.html         ← 2FA screen: TOTP or email-OTP + passkey alternative
+  page.go               ← Add LoginPageData, VerifyPageData, render helpers
+  main.go               ← Wire /auth/totp, /auth/resend, /auth/sso routes
+  totp.go               ← Add handleTOTP POST handler
+  notify.go             ← Add handleResend POST handler
 ```
 
 ---
@@ -89,16 +114,15 @@ The `tmplFuncs` map is defined in Step 5.
 
 ## 4. Step 2 — Template data structs
 
-Add these structs to `page.go`:
-
 ```go
 // LoginPageData is passed to ui/login.html
 type LoginPageData struct {
-    AppName      string
-    CSRFToken    string
-    Redirect     string
-    GoogleOAuthURL string  // empty string disables the Google button
-    Error        string
+    AppName        string
+    CSRFToken      string
+    Redirect       string
+    GoogleOAuthURL string // empty → Google button hidden
+    SSOEnabled     bool   // true → SSO button shown
+    Error          string
 }
 
 // VerifyPageData is passed to ui/verify.html
@@ -106,10 +130,10 @@ type VerifyPageData struct {
     AppName   string
     CSRFToken string
     Redirect  string
-    // Mode = "email" → shows mailbox + OTP boxes
-    // Mode = "totp"  → shows shield + TOTP boxes
+    // Mode = "email" → mailbox + OTP boxes
+    // Mode = "totp"  → shield icon + TOTP boxes
     Mode      string
-    Email     string // only used when Mode == "email"
+    Email     string // only when Mode == "email"
     Error     string
 }
 ```
@@ -118,16 +142,15 @@ type VerifyPageData struct {
 
 ## 5. Step 3 — Render the login page
 
-Replace your existing `loginPage()` function in `page.go`:
-
 ```go
 func (s *server) loginPage(w http.ResponseWriter, r *http.Request, errMsg string) {
     data := LoginPageData{
-        AppName:       s.config.appName,
-        CSRFToken:     s.config.csrfToken(r),
-        Redirect:      r.URL.Query().Get("rd"),
-        GoogleOAuthURL: s.config.googleOAuthURL(r),  // returns "" if GOOGLE_CLIENT_ID unset
-        Error:         errMsg,
+        AppName:        s.config.appName,
+        CSRFToken:      s.config.csrfToken(r),
+        Redirect:       r.URL.Query().Get("rd"),
+        GoogleOAuthURL: s.config.googleOAuthURL(r), // "" when GOOGLE_CLIENT_ID unset
+        SSOEnabled:     s.config.ssoEnabled,
+        Error:          errMsg,
     }
     w.Header().Set("Content-Type", "text/html; charset=utf-8")
     if err := loginTmpl.ExecuteTemplate(w, "login.html", data); err != nil {
@@ -136,19 +159,12 @@ func (s *server) loginPage(w http.ResponseWriter, r *http.Request, errMsg string
 }
 ```
 
-In your login `POST` handler, after password verification fails, call:
-
-```go
-s.loginPage(w, r, "Incorrect password. Please try again.")
-```
-
 ---
 
 ## 6. Step 4 — Render the verify/2FA page
 
 ```go
-// verifyPage renders the TOTP or email-OTP screen.
-// mode must be "totp" or "email".
+// mode must be "totp" or "email"
 func (s *server) verifyPage(w http.ResponseWriter, r *http.Request, mode, email, errMsg string) {
     data := VerifyPageData{
         AppName:   s.config.appName,
@@ -168,13 +184,8 @@ func (s *server) verifyPage(w http.ResponseWriter, r *http.Request, mode, email,
 Call sites:
 
 ```go
-// After password OK, user has TOTP enabled:
-s.verifyPage(w, r, "totp", "", "")
-
-// After email OTP sent:
-s.verifyPage(w, r, "email", email, "")
-
-// Wrong TOTP code:
+s.verifyPage(w, r, "totp", "", "")         // password OK, TOTP required
+s.verifyPage(w, r, "email", email, "")     // OTP email sent
 s.verifyPage(w, r, "totp", "", "Invalid code — please try again.")
 ```
 
@@ -182,37 +193,26 @@ s.verifyPage(w, r, "totp", "", "Invalid code — please try again.")
 
 ## 7. Step 5 — Add Go template helper functions
 
-The `verify.html` template uses `seq` and `add` to generate the 6 OTP boxes.
-Add this `FuncMap` before parsing templates:
-
 ```go
 var tmplFuncs = template.FuncMap{
-    // seq returns a slice [0, 1, 2, ... n-1] for ranging
     "seq": func(n int) []int {
         s := make([]int, n)
         for i := range s { s[i] = i }
         return s
     },
-    // add is used for 1-indexed ARIA labels
     "add": func(a, b int) int { return a + b },
 }
 ```
-
-Update the template parse calls to use `tmplFuncs` as shown in Step 1.
 
 ---
 
 ## 8. Step 6 — Wire the TOTP route
 
-In `main.go`, ensure this route exists:
-
 ```go
+// main.go
 mux.HandleFunc("/auth/totp", s.handleTOTP)
-```
 
-In `totp.go`, add the POST handler:
-
-```go
+// totp.go
 func (s *server) handleTOTP(w http.ResponseWriter, r *http.Request) {
     if r.Method != http.MethodPost {
         http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
@@ -222,59 +222,48 @@ func (s *server) handleTOTP(w http.ResponseWriter, r *http.Request) {
         http.Error(w, "CSRF", http.StatusForbidden)
         return
     }
-
-    code := strings.TrimSpace(r.FormValue("code"))
-    rd   := r.FormValue("rd")
-
-    // Load the pending-2FA session (set after password OK)
+    code    := strings.TrimSpace(r.FormValue("code"))
+    rd      := r.FormValue("rd")
     pending := s.config.getPendingSession(r)
     if pending == nil {
         http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
         return
     }
-
-    // Validate the TOTP code (uses totp.go:validateTOTP)
     if !s.config.validateTOTP(pending.username, code) {
         s.verifyPage(w, r, "totp", "", "Invalid code — please try again.")
         return
     }
-
-    // Upgrade to full session
     s.config.issueSession(w, r, pending.username, rd)
 }
 ```
 
-`getPendingSession` should read a short-lived (5 min) HMAC cookie set after
-password verification succeeds, marking that 2FA is still required.
+`getPendingSession` reads a short-lived (5 min) HMAC cookie set after password
+verification, consumed once TOTP succeeds.
 
 ---
 
 ## 9. Step 7 — Wire the passkey buttons
 
-The `login.html` passkey button calls `startPasskeyAuth()` which already hits:
+Passkeys are **not** on the main login screen (diff item #4). They appear on
+`verify.html` as "Use a passkey instead" — a link to `/auth/passkey`.
 
-- `POST /auth/passkey/authenticate/begin` — existing `passkeypage.go` endpoint
-- `POST /auth/passkey/authenticate/finish` — existing `passkeys.go` endpoint
+The existing `passkeypage.go` endpoints handle the full WebAuthn ceremony:
+- `POST /auth/passkey/authenticate/begin`
+- `POST /auth/passkey/authenticate/finish`
 
-No route changes are needed — the JavaScript handles the full WebAuthn ceremony.
-
-The `verify.html` "Use a passkey instead" link goes to `/auth/passkey`:
-
-```go
-// In main.go — already registered via passkeypage.go:
-mux.HandleFunc("/auth/passkey", s.passkeyPage)
-```
+No new routes needed. If you want passkey-**first** login on the main screen,
+add the button after the SSO button in `login.html` with the `startPasskeyAuth()`
+JS from the previous template version.
 
 ---
 
 ## 10. Step 8 — Add a /auth/resend endpoint
 
-The `verify.html` email mode has a "Resend email" button that POSTs to `/auth/resend`.
-Add this handler to `main.go` / `notify.go`:
-
 ```go
+// main.go
 mux.HandleFunc("/auth/resend", s.handleResend)
 
+// notify.go
 func (s *server) handleResend(w http.ResponseWriter, r *http.Request) {
     if r.Method != http.MethodPost {
         http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -289,7 +278,10 @@ func (s *server) handleResend(w http.ResponseWriter, r *http.Request) {
         http.Error(w, "no pending session", http.StatusBadRequest)
         return
     }
-    // Re-send OTP/magic-link using existing notify.go helpers
+    if !s.resendLimiter.Allow(pending.username) {  // max 3 / 10 min
+        http.Error(w, "too many requests", http.StatusTooManyRequests)
+        return
+    }
     if err := s.config.sendLoginEmail(pending.username); err != nil {
         http.Error(w, "send failed", http.StatusInternalServerError)
         return
@@ -298,37 +290,23 @@ func (s *server) handleResend(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-Rate-limit this endpoint: max 3 resends per 10 min per pending session.
-
-```go
-// Simple in-memory rate limit (add to config struct):
-if s.resendLimiter.Allow(pending.username) == false {
-    http.Error(w, "too many requests", http.StatusTooManyRequests)
-    return
-}
-```
-
 ---
 
 ## 11. Step 9 — Google OAuth button
 
-The Google button renders only when `GoogleOAuthURL` is non-empty in the template:
-
 ```go
-// Add to config struct:
+// config struct
 googleOAuthURL func(r *http.Request) string
 
-// In loadConfig():
+// loadConfig()
 if clientID := os.Getenv("GOOGLE_CLIENT_ID"); clientID != "" {
-    secret := os.Getenv("GOOGLE_CLIENT_SECRET")
     cfg.googleOAuthURL = func(r *http.Request) string {
-        state := cfg.csrfToken(r)  // reuse CSRF token as OAuth state
         return fmt.Sprintf(
             "https://accounts.google.com/o/oauth2/auth?client_id=%s"+
             "&redirect_uri=%s&response_type=code&scope=openid+email+profile&state=%s",
             url.QueryEscape(clientID),
             url.QueryEscape(cfg.authHost+"/auth/google/callback"),
-            url.QueryEscape(state),
+            url.QueryEscape(cfg.csrfToken(r)),
         )
     }
 } else {
@@ -336,21 +314,48 @@ if clientID := os.Getenv("GOOGLE_CLIENT_ID"); clientID != "" {
 }
 ```
 
-Add env vars to `.env.example`:
-
+Add to `.env.example`:
 ```
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 ```
 
-Add these to `.env.example` and leave blank — the button is hidden when unset.
+---
+
+## 12. Step 10 — SSO button
+
+Claude shows a **"Continue with SSO"** button (diff item #5). This maps to
+SAML/OIDC enterprise SSO. Wire it as a simple redirect to your IdP:
+
+```go
+// config struct
+ssoEnabled bool
+ssoURL     string  // e.g. https://your-idp.example.com/saml/sso
+
+// loadConfig()
+cfg.ssoEnabled = os.Getenv("SSO_URL") != ""
+cfg.ssoURL     = os.Getenv("SSO_URL")
+
+// main.go
+if cfg.ssoEnabled {
+    mux.HandleFunc("/auth/sso", func(w http.ResponseWriter, r *http.Request) {
+        rd := r.URL.Query().Get("rd")
+        http.Redirect(w, r, cfg.ssoURL+"?rd="+url.QueryEscape(rd), http.StatusFound)
+    })
+}
+```
+
+Add to `.env.example`:
+```
+# Set to your SAML/OIDC IdP SSO URL to show the "Continue with SSO" button
+SSO_URL=
+```
+
+Leave blank to hide the button (the template uses `{{if .SSOEnabled}}`).
 
 ---
 
-## 12. Step 10 — CSP + security headers
-
-The Tailwind CDN and Google Fonts require adjustments to the Content Security Policy.
-Add to your Traefik `middlewares` or the Go response writer:
+## 13. Step 11 — CSP + security headers
 
 ```
 Content-Security-Policy:
@@ -364,33 +369,27 @@ Content-Security-Policy:
   frame-ancestors 'none';
 ```
 
-> **Note**: For production, replace the Tailwind CDN `<script>` with a pre-built
-> `tailwind.min.css` (see §14) and remove `cdn.tailwindcss.com` from `script-src`.
+For production (Tailwind pre-built), remove `cdn.tailwindcss.com` from `script-src`.
 
 ---
 
-## 13. Mobile & accessibility
+## 14. Mobile & accessibility
 
-- All inputs have `autocomplete` attributes (`username`, `one-time-code`).
-- OTP boxes have `aria-label="Digit N"` for screen readers.
-- The form uses native `<form>` + `<button type="submit">` — works without JS.
-- The passkey button degrades gracefully: if `navigator.credentials` is absent,
-  `showError()` displays a message; the email path remains fully functional.
-- Viewport is set to `width=device-width, initial-scale=1.0`.
-- Touch target minimum: all buttons and inputs are `py-3` (≥ 48 px height).
+- Email field has an explicit `<label>` (diff item #6) — required for screen readers.
+- All inputs carry `autocomplete` attributes (`username`, `one-time-code`).
+- OTP boxes carry `aria-label="Digit N"` in `verify.html`.
+- Native `<form>` + `<button type="submit">` — functional without JavaScript.
+- Minimum touch target `py-3` (≥ 48 px).
+- Legal footer uses three separate links to match Claude's exact structure.
 
 ---
 
-## 14. Replacing Tailwind CDN with a build step
-
-For production, generate a minified CSS file instead of loading the 100 KB CDN script:
+## 15. Replacing Tailwind CDN with a build step
 
 ```bash
-# Install Tailwind CLI (no Node required)
 curl -sLO https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-x64
 chmod +x tailwindcss-linux-x64
 
-# Create tailwind.config.js
 cat > tailwind.config.js <<'EOF'
 module.exports = {
   content: ["forward-auth/ui/**/*.html"],
@@ -405,21 +404,15 @@ module.exports = {
 }
 EOF
 
-# Build
 ./tailwindcss-linux-x64 -i /dev/null -o forward-auth/ui/tailwind.min.css --minify
 ```
 
-Then in each HTML template replace:
-```html
-<script src="https://cdn.tailwindcss.com"></script>
-<script>tailwind.config = { ... }</script>
-```
-With:
+Replace the CDN `<script>` tags with:
 ```html
 <link rel="stylesheet" href="/auth/static/tailwind.min.css" />
 ```
 
-And serve the static file from Go:
+Serve from Go:
 ```go
 //go:embed ui/tailwind.min.css
 var tailwindCSS []byte
@@ -431,7 +424,7 @@ mux.HandleFunc("/auth/static/tailwind.min.css", func(w http.ResponseWriter, r *h
 })
 ```
 
-Add the build step to the `Dockerfile`:
+Dockerfile build step:
 ```dockerfile
 RUN curl -sLO https://github.com/tailwindlabs/tailwindcss/releases/latest/download/tailwindcss-linux-amd64 \\
     && chmod +x tailwindcss-linux-amd64 \\
@@ -442,41 +435,49 @@ RUN curl -sLO https://github.com/tailwindlabs/tailwindcss/releases/latest/downlo
 
 ---
 
-## 15. Checklist
+## 16. Checklist
 
 ### Templates
-- [ ] `forward-auth/ui/login.html` created
+- [ ] `forward-auth/ui/login.html` created (v2 — correct headline, SSO button, no passkey on main screen)
 - [ ] `forward-auth/ui/verify.html` created
 - [ ] `//go:embed ui/*.html` added to `page.go`
 - [ ] `tmplFuncs` (`seq`, `add`) registered before `template.ParseFS`
 
 ### Login page
-- [ ] `LoginPageData` struct added to `page.go`
-- [ ] `loginPage()` updated to render `login.html`
+- [ ] `LoginPageData` struct has `SSOEnabled bool` field
+- [ ] `loginPage()` renders `login.html` with `SSOEnabled`, `GoogleOAuthURL`
 - [ ] Google button hidden when `GOOGLE_CLIENT_ID` unset
-- [ ] Passkey button calls existing `/auth/passkey/authenticate/begin`
+- [ ] SSO button hidden when `SSO_URL` unset
+- [ ] Email field has `<label>` element
+- [ ] Legal footer has three links: Terms / Usage Policy / Privacy Policy
+- [ ] Divider text is lowercase `or`
 
 ### 2FA / verify page
-- [ ] `VerifyPageData` struct added to `page.go`
-- [ ] `verifyPage(w, r, "totp", "", "")` called after password OK (TOTP users)
+- [ ] `verifyPage(w, r, "totp", "", "")` called after password OK
 - [ ] `verifyPage(w, r, "email", email, "")` called after OTP email sent
-- [ ] `/auth/totp` POST route wired in `main.go` → `handleTOTP`
-- [ ] Pending-session cookie issued after password OK, consumed after TOTP OK
+- [ ] `/auth/totp` POST wired in `main.go` → `handleTOTP`
+- [ ] Pending-session cookie (5 min) issued after password OK
+- [ ] Passkey option shown only on verify screen ("Use a passkey instead" link)
 
 ### Resend & alternatives
-- [ ] `/auth/resend` POST endpoint added
-- [ ] Rate limit: max 3 per 10 min per session
-- [ ] "Use a passkey instead" links to `/auth/passkey`
-- [ ] "Use a backup code" links to `/auth/login?backup=1`
+- [ ] `/auth/resend` POST endpoint added with rate limit (max 3 / 10 min)
+- [ ] "Use a passkey instead" → `/auth/passkey`
+- [ ] "Use a backup code" → `/auth/login?backup=1`
+- [ ] "Use a different email" → `/auth/login`
+
+### SSO
+- [ ] `SSO_URL` env var added to `.env.example`
+- [ ] `/auth/sso` redirect handler wired
+- [ ] `SSOEnabled` passed to template
 
 ### Security
-- [ ] CSP updated for Tailwind CDN (or switch to pre-built CSS)
-- [ ] `X-Frame-Options: DENY` set on all `/auth/*` responses
-- [ ] `Referrer-Policy: no-referrer` set
-- [ ] TOTP handler uses `subtle.ConstantTimeCompare` (via existing `validateTOTP`)
+- [ ] CSP updated (Tailwind CDN or pre-built)
+- [ ] `X-Frame-Options: DENY` on all `/auth/*` responses
+- [ ] `Referrer-Policy: no-referrer`
+- [ ] TOTP uses `subtle.ConstantTimeCompare`
 - [ ] OTP resend rate-limited
 
 ### Production
-- [ ] Tailwind CDN replaced with pre-built `tailwind.min.css` (§14)
-- [ ] `tailwind.min.css` built in `Dockerfile`
-- [ ] Google Fonts self-hosted or proxied (for air-gapped deployments)
+- [ ] Tailwind CDN → pre-built `tailwind.min.css` (§15)
+- [ ] `tailwind.min.css` built in Dockerfile
+- [ ] Google Fonts self-hosted or proxied (air-gapped deployments)
