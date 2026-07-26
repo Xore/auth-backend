@@ -43,7 +43,7 @@ jobs:
       # install-mode: goinstall compiles golangci-lint with the Go 1.25
       # toolchain set up above, avoiding a prebuilt-binary/toolchain skew
       # ("built with go1.24 is lower than the targeted go1.25.0").
-      - uses: golangci/golangci-lint-action@v6
+      - uses: golangci/golangci-lint-action@v9
         with:
           working-directory: forward-auth
           version: latest
