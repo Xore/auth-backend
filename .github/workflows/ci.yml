@@ -17,9 +17,30 @@ jobs:
         with:
           go-version: "1.25"
           cache-dependency-path: forward-auth/go.sum
+      - name: gofmt
+        run: |
+          fmt_out="$(gofmt -l .)"
+          if [ -n "$fmt_out" ]; then
+            echo "$fmt_out"
+            echo "::error::gofmt found unformatted files (run 'gofmt -w .')"
+            exit 1
+          fi
       - name: go vet
         run: go vet ./...
       - name: go build
         run: go build ./...
       - name: go test
         run: go test ./... -race -cover
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: forward-auth/go.sum
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: forward-auth
+          version: latest
