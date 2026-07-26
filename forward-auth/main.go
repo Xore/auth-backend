@@ -512,22 +512,54 @@ func normalizeHost(raw string) string {
 }
 
 func (c config) safeRedirect(raw string) string {
+	fallback := "https://" + c.authHost + "/_auth/ok"
 	if raw == "" {
-		return "https://" + c.authHost + "/_auth/ok"
+		return fallback
 	}
+
+	// Some clients/browsers may treat backslashes as path separators.
+	raw = strings.ReplaceAll(raw, "\\", "/")
+
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" {
-		return "https://" + c.authHost + "/_auth/ok"
+	if err != nil {
+		return fallback
 	}
+
+	// Allow local relative redirects only when they are absolute-path references.
+	if u.Scheme == "" && u.Host == "" {
+		if strings.HasPrefix(u.Path, "/") {
+			return u.EscapedPath() + "?" + strings.TrimPrefix(u.RawQuery, "?")
+		}
+		return fallback
+	}
+
+	// For absolute URLs, require HTTPS and no userinfo.
+	if u.Scheme != "https" || u.User != nil {
+		return fallback
+	}
+
 	host := normalizeHost(u.Hostname())
+	if host == "" {
+		return fallback
+	}
+
 	dom := strings.TrimPrefix(c.cookieDom, ".")
 	if dom == "" {
 		dom = normalizeHost(c.authHost)
 	}
-	if host == dom || strings.HasSuffix(host, "."+dom) {
-		return u.String()
+	if host != dom && !strings.HasSuffix(host, "."+dom) {
+		return fallback
 	}
-	return "https://" + c.authHost + "/_auth/ok"
+
+	// Rebuild canonical redirect from validated components.
+	out := "https://" + host + u.EscapedPath()
+	if u.RawQuery != "" {
+		out += "?" + u.RawQuery
+	}
+	if u.Fragment != "" {
+		out += "#" + u.Fragment
+	}
+	return out
 }
 
 func secHeaders(w http.ResponseWriter) {
