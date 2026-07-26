@@ -649,7 +649,7 @@ func (s *server) verify(w http.ResponseWriter, r *http.Request) {
 			secHeaders(w)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusForbidden)
-			s.renderForbidden(w, host)
+			s.renderForbidden(w, normalizeHost(host))
 			return
 		}
 		s.reg.touch(cl.sid, u.Username, s.clientIP(r), r.UserAgent())

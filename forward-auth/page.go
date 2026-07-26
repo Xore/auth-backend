@@ -5,6 +5,7 @@ package main
 // The admin panel lives in adminpage.go.
 
 import (
+	"html"
 	"net/http"
 	"strconv"
 	"strings"
@@ -81,7 +82,7 @@ func (s *server) renderForbidden(w http.ResponseWriter, host string) {
 }
 
 func htmlEscape(s string) string {
-	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;", "'", "&#39;").Replace(s)
+	return html.EscapeString(s)
 }
 
 // baseCSS is shared by every page: dark backdrop, card, brand, form fields.
