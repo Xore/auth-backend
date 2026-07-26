@@ -1,0 +1,463 @@
+package main
+
+// users.go — persistent multi-user store backed by a single JSON file.
+//
+// The file lives on a mounted volume (USERS_FILE, default /data/users.json)
+// and is rewritten atomically (temp file + rename) on every mutation, so a
+// crash mid-write can never corrupt it. All access goes through userStore,
+// which keeps the parsed users in memory under a mutex — with a handful of
+// users there is no need for anything heavier.
+//
+// Passwords are stored as bcrypt hashes. TOTP secrets are per-user; a secret
+// generated during enrollment sits in PendingTOTP until the user confirms a
+// code, so a half-finished enrollment never locks anyone out. Backup codes
+// are stored as SHA-256 hashes and removed on use.
+//
+// lastStep (TOTP replay protection) is now persisted in the same JSON file
+// under "last_step" so that replay protection survives container restarts.
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base32"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/go-webauthn/webauthn/webauthn"
+	"golang.org/x/crypto/bcrypt"
+)
+
+const (
+	roleAdmin = "admin"
+	roleUser  = "user"
+)
+
+type User struct {
+	Username      string    `json:"username"`
+	Hash          string    `json:"hash"`
+	Role          string    `json:"role"`
+	Disabled      bool      `json:"disabled,omitempty"`
+	MustChange    bool      `json:"must_change,omitempty"`
+	TOTPSecret    string    `json:"totp_secret,omitempty"`
+	PendingTOTP   string    `json:"pending_totp,omitempty"`
+	BackupCodes   []string  `json:"backup_codes,omitempty"` // sha256 hex, removed on use
+	Gen           int       `json:"gen"`                    // bump to kill all sessions
+	AllowedHosts  []string  `json:"allowed_hosts,omitempty"`
+	Created       time.Time `json:"created"`
+	LastLogin     time.Time `json:"last_login,omitempty"`
+	LastIP        string    `json:"last_ip,omitempty"`
+	PasskeyUserID []byte    `json:"webauthn_id,omitempty"`
+	Passkeys      []Passkey `json:"passkeys,omitempty"`
+	DeviceGen     int       `json:"device_gen,omitempty"`
+}
+
+type Passkey struct {
+	Name       string              `json:"name"`
+	Credential webauthn.Credential `json:"credential"`
+	Created    time.Time           `json:"created"`
+	LastUsed   time.Time           `json:"last_used,omitempty"`
+}
+
+func (u *User) WebAuthnID() []byte          { return append([]byte(nil), u.PasskeyUserID...) }
+func (u *User) WebAuthnName() string        { return u.Username }
+func (u *User) WebAuthnDisplayName() string { return u.Username }
+func (u *User) WebAuthnCredentials() []webauthn.Credential {
+	out := make([]webauthn.Credential, 0, len(u.Passkeys))
+	for _, key := range u.Passkeys {
+		out = append(out, key.Credential)
+	}
+	return out
+}
+
+// hostAllowed reports whether this user may access the given
+// X-Forwarded-Host. An empty list or "*" means everything; "*.dom" matches
+// any subdomain of dom (but not dom itself); anything else is an exact match.
+func (u *User) hostAllowed(host string) bool {
+	host = normalizeHost(host)
+	if host == "" {
+		return false
+	}
+	if len(u.AllowedHosts) == 0 {
+		return true
+	}
+	for _, pat := range u.AllowedHosts {
+		pat = strings.ToLower(strings.TrimSpace(pat))
+		if !strings.HasPrefix(pat, "*.") && pat != "*" {
+			pat = normalizeHost(pat)
+		}
+		switch {
+		case pat == "*" || pat == host:
+			return true
+		case strings.HasPrefix(pat, "*."):
+			if strings.HasSuffix(host, pat[1:]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+type userStore struct {
+	mu    sync.Mutex
+	path  string
+	users map[string]*User
+
+	// lastStep guards against TOTP replay: a code for time-step N is accepted
+	// once; any code at or before the last accepted step is rejected.
+	// Persisted to disk so replay protection survives container restarts.
+	lastStep map[string]int64
+}
+
+// dummyHash is compared against when the username doesn't exist, so a login
+// attempt takes the same time whether or not the user is real.
+var dummyHash = []byte("$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy")
+
+func newUserStore(path string) *userStore {
+	return &userStore{path: path, users: map[string]*User{}, lastStep: map[string]int64{}}
+}
+
+// load reads the store from disk; a missing file is not an error (bootstrap
+// handles that case).
+func (st *userStore) load() error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	raw, err := os.ReadFile(st.path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	var f struct {
+		Users    []*User          `json:"users"`
+		LastStep map[string]int64 `json:"last_step,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return fmt.Errorf("parse %s: %w", st.path, err)
+	}
+	m := map[string]*User{}
+	for _, u := range f.Users {
+		if u.Username != "" {
+			if len(u.PasskeyUserID) == 0 {
+				u.PasskeyUserID = randomBytes(32)
+			}
+			m[u.Username] = u
+		}
+	}
+	st.users = m
+	if f.LastStep != nil {
+		st.lastStep = f.LastStep
+	}
+	return nil
+}
+
+// saveLocked writes the store atomically. Callers must hold st.mu.
+func (st *userStore) saveLocked() error {
+	list := make([]*User, 0, len(st.users))
+	for _, u := range st.users {
+		list = append(list, u)
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].Username < list[j].Username })
+	raw, err := json.MarshalIndent(struct {
+		Users    []*User          `json:"users"`
+		LastStep map[string]int64 `json:"last_step,omitempty"`
+	}{list, st.lastStep}, "", "  ")
+	if err != nil {
+		return err
+	}
+	if dir := filepath.Dir(st.path); dir != "." {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return err
+		}
+	}
+	dir := filepath.Dir(st.path)
+	tmp, err := os.CreateTemp(dir, ".users-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err = tmp.Chmod(0o600); err == nil {
+		_, err = tmp.Write(append(raw, '\n'))
+	}
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	if err = os.Rename(tmpName, st.path); err != nil {
+		return err
+	}
+	if d, openErr := os.Open(dir); openErr == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
+}
+
+func (st *userStore) writable() error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	f, err := os.OpenFile(st.path, os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+// bootstrap creates the initial admin user from the legacy env vars when the
+// store is empty, so an existing single-user deployment keeps working (same
+// username, password and already-enrolled TOTP secret) across the upgrade.
+func (st *userStore) bootstrap(username, password, totpSecret string) (created bool, err error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if len(st.users) > 0 {
+		return false, nil
+	}
+	hash := password
+	if !looksLikeBcrypt(password) {
+		h, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			return false, err
+		}
+		hash = string(h)
+	}
+	st.users[username] = &User{
+		Username:      username,
+		Hash:          hash,
+		Role:          roleAdmin,
+		TOTPSecret:    totpSecret,
+		Gen:           1,
+		Created:       time.Now().UTC(),
+		PasskeyUserID: randomBytes(32),
+		DeviceGen:     1,
+	}
+	if err := st.saveLocked(); err != nil {
+		delete(st.users, username)
+		return false, err
+	}
+	return true, nil
+}
+
+func looksLikeBcrypt(s string) bool {
+	return strings.HasPrefix(s, "$2a$") || strings.HasPrefix(s, "$2b$") || strings.HasPrefix(s, "$2y$")
+}
+
+// get returns a deep copy so callers cannot race with mutations.
+func (st *userStore) get(name string) *User {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return cloneUser(st.users[name])
+}
+
+func (st *userStore) list() []*User {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	out := make([]*User, 0, len(st.users))
+	for _, u := range st.users {
+		out = append(out, cloneUser(u))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Username < out[j].Username })
+	return out
+}
+
+func (st *userStore) count() int {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return len(st.users)
+}
+
+func (st *userStore) adminCount() int {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	n := 0
+	for _, u := range st.users {
+		if u.Role == roleAdmin && !u.Disabled {
+			n++
+		}
+	}
+	return n
+}
+
+// mutate runs fn on the named user under the lock and persists the store if
+// fn returns true.
+func (st *userStore) mutate(name string, fn func(*User) bool) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	u := st.users[name]
+	if u == nil {
+		return errors.New("no such user")
+	}
+	before := cloneUser(u)
+	if fn(u) {
+		if err := st.saveLocked(); err != nil {
+			st.users[name] = before
+			return err
+		}
+	}
+	return nil
+}
+
+func (st *userStore) create(u *User) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if _, ok := st.users[u.Username]; ok {
+		return errors.New("user already exists")
+	}
+	st.users[u.Username] = u
+	if err := st.saveLocked(); err != nil {
+		delete(st.users, u.Username)
+		return err
+	}
+	return nil
+}
+
+func (st *userStore) delete(name string) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if _, ok := st.users[name]; !ok {
+		return errors.New("no such user")
+	}
+	old := st.users[name]
+	oldStep := st.lastStep[name]
+	delete(st.users, name)
+	delete(st.lastStep, name)
+	if err := st.saveLocked(); err != nil {
+		st.users[name] = old
+		st.lastStep[name] = oldStep
+		return err
+	}
+	return nil
+}
+
+// checkPassword performs the bcrypt comparison, burning comparable time on
+// unknown users so the response can't be used for enumeration.
+func (st *userStore) checkPassword(name, password string) bool {
+	u := st.get(name)
+	if u == nil {
+		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
+		return false
+	}
+	return bcrypt.CompareHashAndPassword([]byte(u.Hash), []byte(password)) == nil
+}
+
+// checkTOTP validates a code against the user's committed secret with replay
+// protection: each 30s step is accepted at most once. lastStep is persisted
+// to disk so replay protection survives container restarts.
+func (st *userStore) checkTOTP(name, code string) bool {
+	u := st.get(name)
+	if u == nil || u.TOTPSecret == "" {
+		return false
+	}
+	ok, step := totpValidStep(u.TOTPSecret, code)
+	if !ok {
+		return false
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if step <= st.lastStep[name] {
+		return false
+	}
+	old, hadOld := st.lastStep[name]
+	st.lastStep[name] = step
+	if err := st.saveLocked(); err != nil {
+		if hadOld {
+			st.lastStep[name] = old
+		} else {
+			delete(st.lastStep, name)
+		}
+		return false
+	}
+	return true
+}
+
+// checkBackupCode consumes a one-time recovery code if it matches.
+func (st *userStore) checkBackupCode(name, code string) bool {
+	h := hashBackupCode(code)
+	used := false
+	err := st.mutate(name, func(u *User) bool {
+		for i, c := range u.BackupCodes {
+			if c == h {
+				u.BackupCodes = append(u.BackupCodes[:i], u.BackupCodes[i+1:]...)
+				used = true
+				return true
+			}
+		}
+		return false
+	})
+	return err == nil && used
+}
+
+// --- generation helpers -----------------------------------------------------
+
+var b32enc = base32.StdEncoding.WithPadding(base32.NoPadding)
+
+func newTOTPSecret() string {
+	raw := randomBytes(20)
+	return b32enc.EncodeToString(raw)
+}
+
+// newTempPassword returns a readable one-time password like "H4KQ-PW2N-XJ7R".
+func newTempPassword() string {
+	raw := randomBytes(8)
+	s := b32enc.EncodeToString(raw)
+	return s[0:4] + "-" + s[4:8] + "-" + s[8:12]
+}
+
+// newBackupCodes returns n plaintext codes ("ABCDE-23456") plus their hashes.
+func newBackupCodes(n int) (plain, hashed []string) {
+	for i := 0; i < n; i++ {
+		raw := randomBytes(7)
+		s := b32enc.EncodeToString(raw)[:10]
+		code := s[:5] + "-" + s[5:]
+		plain = append(plain, code)
+		hashed = append(hashed, hashBackupCode(code))
+	}
+	return
+}
+
+func randomBytes(n int) []byte {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
+	return b
+}
+
+func cloneUser(u *User) *User {
+	if u == nil {
+		return nil
+	}
+	raw, err := json.Marshal(u)
+	if err != nil {
+		panic(err)
+	}
+	var out User
+	if err := json.Unmarshal(raw, &out); err != nil {
+		panic(err)
+	}
+	return &out
+}
+
+func hashBackupCode(code string) string {
+	norm := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(code), " ", ""))
+	sum := sha256.Sum256([]byte(norm))
+	return hex.EncodeToString(sum[:])
+}
+
+func hashPassword(pw string) (string, error) {
+	h, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
+	return string(h), err
+}

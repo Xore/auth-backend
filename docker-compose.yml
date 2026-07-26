@@ -1,0 +1,100 @@
+# Standalone auth-backend stack (SSO / Traefik forwardAuth portal).
+#
+# One login protects any service you attach the `forward-auth` middleware to.
+# Designed to run on the same Docker network as your reverse proxy — see
+# https://github.com/Xore/cgnat for a compatible Traefik + WireGuard tunnel
+# setup, or wire it into your own.
+#
+# ⚠ The auth-portal router in your reverse proxy must NOT carry the
+#   forward-auth middleware itself, or the login page would require login
+#   (redirect loop).
+
+services:
+  auth-portal:
+    build:
+      context: ./forward-auth
+      dockerfile: Dockerfile
+    image: xore-auth-backend:local
+    container_name: auth-portal
+    restart: unless-stopped
+    environment:
+      - LISTEN_ADDR=:4181
+      - AUTH_HOST=${AUTH_HOST:-auth.xore.rocks}
+      - COOKIE_DOMAIN=${COOKIE_DOMAIN:-.xore.rocks}
+      - COOKIE_NAME=${COOKIE_NAME:-xore_sso}
+      - COOKIE_SECRET=${COOKIE_SECRET:?set COOKIE_SECRET in .env}
+      - COOKIE_SECRET_PREVIOUS=${COOKIE_SECRET_PREVIOUS:-}
+      # bootstrap only — used once to create the initial admin in users.json
+      - AUTH_USERNAME=${AUTH_USERNAME:-admin}
+      - AUTH_PASSWORD=${AUTH_PASSWORD:?set AUTH_PASSWORD in .env}
+      - TOTP_SECRET=${TOTP_SECRET:-}
+      - USERS_FILE=/data/users.json
+      - REQUIRE_TOTP=${REQUIRE_TOTP:-true}
+      - TRUST_DEVICE_DAYS=${TRUST_DEVICE_DAYS:-0}
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES:-}
+      - WEBHOOK_URL=${WEBHOOK_URL:-}
+      - METRICS_TOKEN=${METRICS_TOKEN:-}
+      - TOTP_ISSUER=${TOTP_ISSUER:-}
+      - SESSION_TTL_HOURS=${SESSION_TTL_HOURS:-12}
+      - MAX_ATTEMPTS=${MAX_ATTEMPTS:-5}
+      - LOCKOUT_MINUTES=${LOCKOUT_MINUTES:-15}
+      - MIN_DWELL_SECONDS=${MIN_DWELL_SECONDS:-2}
+      - FORM_TTL_MINUTES=${FORM_TTL_MINUTES:-15}
+      - COOKIE_SECURE=${COOKIE_SECURE:-true}
+      - MAX_BODY_KB=${MAX_BODY_KB:-64}
+    volumes:
+      - auth-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/forward-auth", "-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - proxy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 32M
+
+  # Guarded one-shot recovery tool. Excluded from normal startup by its
+  # profile; can access only the auth-data volume plus a local backup folder.
+  # See docs/CREDENTIAL-RECOVERY.md before running it.
+  #   docker compose --profile auth-maintenance run --rm auth-credentials-reset
+  auth-credentials-reset:
+    image: alpine:3.20
+    profiles: [auth-maintenance]
+    restart: "no"
+    network_mode: none
+    environment:
+      - AUTH_RESET_CONFIRM=${AUTH_RESET_CONFIRM:-}
+    entrypoint: ["/bin/sh", "/usr/local/sbin/reset-auth-data"]
+    volumes:
+      - auth-data:/data
+      - ./auth-backups:/backup
+      - ./forward-auth/reset-auth-data.sh:/usr/local/sbin/reset-auth-data:ro
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 32M
+
+networks:
+  # Provided by your reverse-proxy stack (e.g. Xore/cgnat's vps/ Traefik
+  # stack). Create it there first, or drop `external: true` to let this
+  # Compose project own it if it's the only thing on the network.
+  proxy:
+    external: true
+
+volumes:
+  auth-data:

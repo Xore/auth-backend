@@ -1,0 +1,4 @@
+.env
+auth-backups/
+.DS_Store
+*.log
