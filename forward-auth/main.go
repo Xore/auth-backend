@@ -1091,7 +1091,7 @@ func main() {
 	mux.HandleFunc("/_auth/ok", func(w http.ResponseWriter, r *http.Request) {
 		secHeaders(w)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(okPage))
+		_, _ = w.Write([]byte(okPage))
 	})
 	mux.HandleFunc("/_auth/admin", s.adminPanel)
 	mux.HandleFunc("/_auth/admin/api/state", s.adminState)
@@ -1128,7 +1128,9 @@ func main() {
 		log.Info("shutting down")
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		srv.Shutdown(ctx)
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Error("shutdown", "error", err)
+		}
 		if aud.file != nil {
 			aud.file.Close()
 		}

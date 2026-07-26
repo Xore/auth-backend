@@ -29,12 +29,6 @@ func normalizeB32(s string) string {
 	return b.String()
 }
 
-// validB32 reports whether a (normalized) secret decodes as base32.
-func validB32(s string) bool {
-	_, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(s)
-	return s != "" && err == nil
-}
-
 // totpValidStep validates a 6-digit code within a ±1 step window and returns
 // the matched time step so callers can enforce replay protection.
 func totpValidStep(secret, code string) (bool, int64) {

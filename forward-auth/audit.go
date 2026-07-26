@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -80,7 +81,9 @@ func (a *auditor) record(e authEvent) {
 	}
 	if a.file != nil {
 		if line, err := json.Marshal(e); err == nil {
-			a.file.Write(append(line, '\n'))
+			if _, err := a.file.Write(append(line, '\n')); err != nil {
+				fmt.Fprintf(os.Stderr, "audit: write failed: %v\n", err)
+			}
 		}
 	}
 }

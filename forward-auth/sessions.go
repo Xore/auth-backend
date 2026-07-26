@@ -125,13 +125,6 @@ func (sr *sessionRegistry) isRevoked(sid string) bool {
 	return ok
 }
 
-// drop removes a session from the registry without revoking it (logout).
-func (sr *sessionRegistry) drop(sid string) {
-	sr.mu.Lock()
-	defer sr.mu.Unlock()
-	delete(sr.m, sid)
-}
-
 func (sr *sessionRegistry) list() []sessionInfo {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
