@@ -281,7 +281,7 @@ var PANE_TEMPLATES = {
       '<div class="card__desc">All users, best effort — repopulates after restart.</div>' +
       '<table class="data-table">' +
         '<thead><tr><th>User</th><th>IP</th><th class="hide-sm">Agent</th>' +
-        '<th>Signed in</th><th>Last seen</th></tr></thead>' +
+        '<th>Signed in</th><th>Last seen</th><th></th></tr></thead>' +
         '<tbody id="admin-sessions-body"></tbody>' +
       '</table>' +
     '</div>',
@@ -299,6 +299,10 @@ var PANE_TEMPLATES = {
         '<span class="card__value" id="sys-session-ttl">–</span></div>' +
       '<div class="card__row"><span class="card__label">TOTP required</span>' +
         '<span id="sys-totp">–</span></div>' +
+      '<div class="card__row"><span class="card__label">Data directory</span>' +
+        '<span class="card__value--mono" id="sys-data-dir">–</span></div>' +
+      '<div class="card__row"><span class="card__label">Organization ID</span>' +
+        '<span class="card__value--mono" id="sys-org-id">–</span></div>' +
     '</div>' +
     '<div class="card">' +
       '<div class="card__row"><span class="card__label">Total users</span>' +
@@ -316,6 +320,68 @@ var PANE_TEMPLATES = {
 function loadAccount() {
   var el = document.getElementById('account-user');
   if (el) el.textContent = CURRENT_USER;
+  loadTrustedDevices();
+}
+
+function loadTrustedDevices() {
+  var tb = document.getElementById('trusted-devices-body');
+  if (!tb) return;
+  fetch('/_auth/sessions/trusted')
+    .then(function (r) { if (!r.ok) throw 'http ' + r.status; return r.json(); })
+    .then(function (devices) {
+      tb.innerHTML = (devices && devices.length) ? devices.map(function (d) {
+        return '<tr><td>' + esc(d.name) + '</td>' +
+          '<td class="cell-mono">' + ts(d.added) + '</td><td></td></tr>';
+      }).join('') : '<tr><td colspan="3" class="empty-row">no trusted devices</td></tr>';
+    })
+    .catch(function (e) { /* keep last state */ });
+}
+
+function loadMySessions() {
+  var tb = document.getElementById('my-sessions-body');
+  if (!tb) return;
+  fetch('/_auth/sessions/mine')
+    .then(function (r) { if (!r.ok) throw 'http ' + r.status; return r.json(); })
+    .then(function (sessions) {
+      if (!sessions || !sessions.length) {
+        tb.innerHTML = '<tr><td colspan="5" class="empty-row">no sessions seen yet</td></tr>';
+        return;
+      }
+      tb.innerHTML = sessions.map(function (s) {
+        return '<tr>' +
+          '<td class="cell-agent">' + esc(s.ua) +
+            (s.current ? ' <span class="badge badge--blue">Current</span>' : '') + '</td>' +
+          '<td class="cell-mono">' + esc(s.ip) + '</td>' +
+          '<td class="cell-mono">' + ts(s.created) + '</td>' +
+          '<td class="cell-mono">' + ts(s.last_seen) + '</td>' +
+          '<td></td>' +
+          '</tr>';
+      }).join('');
+    })
+    .catch(function (e) { /* keep last state */ });
+}
+
+function loadSystem() {
+  fetch('/_auth/admin/api/system')
+    .then(function (r) { if (!r.ok) throw 'http ' + r.status; return r.json(); })
+    .then(function (info) {
+      var el;
+      if ((el = document.getElementById('sys-version')))     el.textContent = info.version;
+      if ((el = document.getElementById('sys-uptime')))      el.textContent = info.uptime;
+      if ((el = document.getElementById('sys-host')))        el.textContent = info.auth_host;
+      if ((el = document.getElementById('sys-session-ttl'))) el.textContent = info.session_ttl;
+      if ((el = document.getElementById('sys-totp')))
+        el.innerHTML = info.totp_required
+          ? '<span class="badge badge--green">Required</span>'
+          : '<span class="badge badge--orange">Optional</span>';
+      if ((el = document.getElementById('sys-data-dir')))      el.textContent = info.data_dir;
+      if ((el = document.getElementById('sys-org-id')))        el.textContent = info.org_id || '–';
+      if ((el = document.getElementById('sys-user-count')))    el.textContent = info.user_count;
+      if ((el = document.getElementById('sys-admin-count')))   el.textContent = info.admin_count;
+      if ((el = document.getElementById('sys-passkey-count'))) el.textContent = info.passkey_count;
+      if ((el = document.getElementById('sys-started')))       el.textContent = ts(info.started_at);
+    })
+    .catch(function (e) { /* keep placeholders */ });
 }
 
 function loadAdminUsers() {
@@ -401,7 +467,7 @@ function loadAdminSessions() {
   if (!tb) return;
   var sessions = state.sessions || [];
   if (!sessions.length) {
-    tb.innerHTML = '<tr><td colspan="5" class="empty-row">no sessions seen yet</td></tr>';
+    tb.innerHTML = '<tr><td colspan="6" class="empty-row">no sessions seen yet</td></tr>';
     return;
   }
   tb.innerHTML = sessions.map(function (s) {
@@ -411,15 +477,18 @@ function loadAdminSessions() {
       '<td class="cell-agent hide-sm">' + esc(s.ua) + '</td>' +
       '<td class="cell-mono">' + ago(s.created) + '</td>' +
       '<td class="cell-mono">' + ago(s.last_seen) + '</td>' +
+      '<td><button class="btn btn-danger btn-sm" data-revoke-sid="' + esc(s.sid) + '">Revoke</button></td>' +
       '</tr>';
   }).join('');
 }
 
 var PANE_LOADERS = {
   'account':        loadAccount,
+  'sessions':       loadMySessions,
   'admin-users':    loadAdminUsers,
   'admin-logs':     loadAdminLogs,
-  'admin-sessions': loadAdminSessions
+  'admin-sessions': loadAdminSessions,
+  'admin-system':   loadSystem
 };
 
 function showPane(id) {
@@ -483,8 +552,18 @@ document.getElementById('sidebar-search').addEventListener('input', function () 
 document.addEventListener('click', function (e) {
   if (e.target.closest('.modal__close')) { closeSettings(); return; }
   var item = e.target.closest('#settings-nav .sidebar__item');
-  if (item && item.dataset.pane) showPane(item.dataset.pane);
+  if (item && item.dataset.pane) { showPane(item.dataset.pane); return; }
+  var rev = e.target.closest('button[data-revoke-sid]');
+  if (rev) revokeSession(rev.getAttribute('data-revoke-sid'));
 });
+
+function revokeSession(sid) {
+  if (!confirm('Revoke this session?')) return;
+  fetch('/_auth/admin/api/sessions/' + encodeURIComponent(sid) + '/revoke', {
+    method: 'POST',
+    headers: {'X-Csrf': CSRF_TOKEN}
+  }).then(function (r) { if (r.ok) fetchState(); });
+}
 
 // Delegated: audit-log filter row (re-created with the pane skeleton)
 var contentEl = document.getElementById('settings-content');
