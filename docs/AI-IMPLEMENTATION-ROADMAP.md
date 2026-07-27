@@ -903,6 +903,157 @@ When score > 50 and device is trusted, demand TOTP anyway.
 
 ---
 
+## Phase 6 — Code Structure: Declutter Go Files
+
+> Goal: break the monolithic `main.go` and other large files into focused, single-responsibility
+> files so that future features only require touching a small, well-scoped file rather than
+> searching through thousands of lines. **No behaviour changes** — this is pure refactoring.
+> Every extracted function/type must keep its exact existing signature.
+
+---
+
+### Step 25 — Split Go files into focused single-responsibility units
+
+**Phase:** Backend / Refactor  
+**Reads:** ALL Go files in `forward-auth/` before editing anything  
+**Edits:** `forward-auth/main.go` and all files listed in the extraction plan below  
+**Blocked by:** nothing (can run in parallel with any phase, but easiest after all tests are green)
+
+`main.go` is currently ~36 KB and mixes config loading, token logic, brute-force throttling,
+HTTP handlers, cookie helpers, and the server entry-point in one file. This makes every
+AI-assisted edit risky because a small change requires reading (and potentially misediting)
+thousands of lines.
+
+The goal is a **zero-diff refactor**: move code into new files, keep every symbol name,
+every function signature, and every test passing. Do not rename anything. Do not change
+behaviour. Each new file must start with `package main`.
+
+#### Current file inventory & sizes
+
+| File | ~KB | Notes |
+|---|---|---|
+| `main.go` | 36 | config + tokens + throttle + handlers + server setup |
+| `users.go` | 12 | user store, password hashing, TOTP helpers |
+| `adminpage.go` | 18 | admin panel HTML template string |
+| `page.go` | 18 | login / enroll / password HTML template strings |
+| `passkeys.go` | 9 | passkey API handlers |
+| `passkeypage.go` | 4 | passkey HTML template |
+| `admin.go` | 9 | admin JSON API handlers |
+| `sessions.go` | 4 | session registry |
+| `audit.go` | 3 | audit ring + file logger |
+| `notify.go` | 2 | webhook notifier |
+| `totp.go` | 2 | TOTP validation helpers |
+| `qr.go` | 1 | QR code generator |
+
+#### Extraction plan for `main.go`
+
+Extract the following groups into new files. Each extraction is one atomic commit.
+
+**`forward-auth/config.go`** *(create)*
+- `type config struct`
+- `getenv()`, `getenvFile()`, `atoi()`
+- `parseCIDRs()`
+- `loadConfig()`
+- `(config) validate()`
+- All `defaultTrustedProxies` constant
+
+**`forward-auth/token.go`** *(create)*
+- `type sessionClaims struct`
+- `(sessionClaims) has()`
+- `newSID()`
+- `(config) issueSession()`, `(config) parseSession()`
+- `(config) mac()`, `macWith()`, `(config) validMAC()`
+- `(config) csrfToken()`
+- `(config) issueDevice()`, `(config) validDevice()`
+- `(config) issueForm()`, `(config) checkForm()`
+- `(config) totpURI()`
+
+**`forward-auth/throttle.go`** *(create)*
+- `type entry struct`
+- `type throttle struct`
+- `newThrottle()`
+- `(throttle) locked()`, `(throttle) fail()`, `(throttle) pruneLocked()`, `(throttle) reset()`
+- `(throttle) snapshot()` (if present)
+- `min()` helper (if not already in another file)
+
+**`forward-auth/server.go`** *(create)*
+- `type server struct`
+- `(server) clientIP()`
+- `normalizeHost()`
+- `(config) safeRedirect()`
+- `secHeaders()`
+- `(server) setCookie()`, `(server) clearCookie()`, `(server) setDeviceCookie()`
+- `(server) trustedDevice()`
+- `(server) session()`
+- `(server) flagsFor()`
+- `pendingRedirect()`
+- `firstNonEmpty()`
+
+**`forward-auth/handlers.go`** *(create)*
+- `(server) verify()`
+- `(server) login()`
+- `(server) fail()`
+- `(server) logout()`
+- `(server) enroll()`
+- `(server) password()`
+- `(server) audit()`
+- `(server) metrics()`
+
+**`forward-auth/main.go`** *(keep — slim down to entry point only)*
+- `func main()` — server construction, mux registration, signal handling
+- `//go:embed` directives (must stay in the same file as the `embed.FS` variable they refer to,
+  or move the `embed.FS` declaration into the new file that owns it)
+
+#### Extraction plan for other large files
+
+**`forward-auth/page.go`** — already focused on templates; no split needed unless it grows beyond
+~25 KB after the UI restyle. If it does, split into `forward-auth/page_auth.go` (login/enroll/password)
+and `forward-auth/page_backup.go` (backup codes / ok page).
+
+**`forward-auth/adminpage.go`** — single large template string. No structural split needed;
+keep as-is unless it exceeds ~30 KB.
+
+**`forward-auth/users.go`** — already focused. If `hashPassword` + Argon2id (Step 6) pushes it
+past ~20 KB, extract password helpers into `forward-auth/password.go`.
+
+#### Implementation instructions
+
+1. **Read every file** in `forward-auth/` before making any edits.
+2. Work through the extraction plan **one file at a time**. After each new file is created:
+   a. Remove the extracted declarations from their original location.
+   b. Run `go build ./...` — must succeed with zero errors before proceeding.
+   c. Run `go test ./...` — must pass before proceeding.
+3. Do **not** rename any type, function, or variable. The only change is which `.go` file
+   contains the declaration.
+4. Do **not** add, remove, or reorder any import that is not necessitated by the move.
+   Go will flag unused imports as errors; remove them from the source file after extraction.
+5. If a helper is used by both the original file and a new file (e.g. `firstNonEmpty` used
+   in handlers and the server), place it in the file that represents its primary concern
+   (`server.go` for request-scoped helpers) and let the other files call it normally — they
+   share the same package.
+6. `//go:embed` directives must appear in the same file as the `var` they annotate. If you
+   move an `embed.FS` variable into a new file, move its `//go:embed` directive with it.
+7. After all extractions, verify the final state:
+   ```
+   wc -l forward-auth/main.go   # should be < 150 lines
+   go build ./...
+   go test ./...
+   go vet ./...
+   ```
+
+**Verification:**
+- `go build ./...` succeeds with zero errors after every individual extraction.
+- `go test ./...` passes after every individual extraction.
+- `go vet ./...` is clean at the end.
+- `forward-auth/main.go` contains only `func main()` and embed declarations (< 150 lines).
+- `forward-auth/config.go`, `forward-auth/token.go`, `forward-auth/throttle.go`,
+  `forward-auth/server.go`, and `forward-auth/handlers.go` all exist and compile.
+- No symbol has been renamed; no behaviour has changed.
+- `grep -rn 'type config struct' forward-auth/` returns exactly one result (in `config.go`).
+- `grep -rn 'type server struct' forward-auth/` returns exactly one result (in `server.go`).
+
+---
+
 ## Completion criteria
 
 The implementation is complete when all of the following are true:
@@ -917,6 +1068,7 @@ The implementation is complete when all of the following are true:
 8. Argon2id hashes are used for all new passwords.
 9. Common passwords are rejected at `/_auth/password`.
 10. Sessions idle longer than `IDLE_TIMEOUT_MINUTES` are automatically revoked.
+11. `forward-auth/main.go` contains only `func main()` and embed declarations (< 150 lines).
 
 ---
 
@@ -924,13 +1076,23 @@ The implementation is complete when all of the following are true:
 
 | File | Purpose |
 |---|---|
-| `forward-auth/main.go` | Config, session tokens, handlers, server setup |
+| `forward-auth/main.go` | Entry point only (after Step 25) |
+| `forward-auth/config.go` | *(create in Step 25)* Config struct, env loading, validation |
+| `forward-auth/token.go` | *(create in Step 25)* Session/device/form token issue + parse |
+| `forward-auth/throttle.go` | *(create in Step 25)* Brute-force throttle |
+| `forward-auth/server.go` | *(create in Step 25)* Server struct, cookie helpers, session validation |
+| `forward-auth/handlers.go` | *(create in Step 25)* HTTP handlers (verify, login, logout, enroll, password, metrics) |
 | `forward-auth/users.go` | User store, password hashing, TOTP |
 | `forward-auth/sessions.go` | Session registry, revocation list |
 | `forward-auth/admin.go` | Admin API handlers |
 | `forward-auth/adminpage.go` | Admin panel HTML template |
 | `forward-auth/page.go` | Login / enroll / password page templates |
 | `forward-auth/notify.go` | Webhook notifier |
+| `forward-auth/passkeys.go` | Passkey API handlers |
+| `forward-auth/passkeypage.go` | Passkey HTML template |
+| `forward-auth/totp.go` | TOTP validation helpers |
+| `forward-auth/qr.go` | QR code generator |
+| `forward-auth/audit.go` | Audit ring + file logger |
 | `forward-auth/ui/claude-theme.css` | *(create in Step 1)* CSS design system |
 | `forward-auth/ui/app.html` | *(create in Step 3)* App shell + settings modal |
 | `forward-auth/apppage.go` | *(create in Step 3)* `/auth/app` handler |
