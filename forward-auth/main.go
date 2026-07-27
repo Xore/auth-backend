@@ -12,7 +12,8 @@
 //	GET  /_auth/health        — unauthenticated health probe
 //	GET  /_auth/enroll        — session-gated TOTP enrollment (QR + confirm)
 //	GET  /_auth/password      — self-service password change
-//	GET  /_auth/admin         — admin panel (users / logs / sessions)
+//	GET  /auth/app            — app shell: settings + admin UI (session-gated)
+//	GET  /_auth/admin         — legacy route, redirects to /auth/app
 //	GET  /_auth/admin/api/*   — admin JSON API (CSRF-protected)
 //	GET  /_auth/metrics       — Prometheus metrics (METRICS_TOKEN-gated)
 //
@@ -62,34 +63,35 @@ import (
 )
 
 type config struct {
-	listen       string
-	authHost     string
-	cookieName   string
-	cookieDom    string
-	secret       []byte
-	oldSecrets   [][]byte
-	username     string // bootstrap only
-	password     string // bootstrap only (plaintext or bcrypt hash)
-	totpSecret   string // bootstrap only
-	totpIssuer   string
-	usersFile    string
-	requireTOTP  bool
-	trustDevDays int
-	ttl          time.Duration
-	idleTimeout  time.Duration
-	maxAttempts  int
-	lockout      time.Duration
-	minDwell     time.Duration
-	formTTL      time.Duration
-	secure       bool
-	auditLog     string
-	ringCap      int
-	webhookURL   string
-	metricsToken string
-	trustedNets  []*net.IPNet
-	maxBodyBytes int64
-	orgID        string
-	ssoURL       string
+	listen          string
+	authHost        string
+	cookieName      string
+	cookieDom       string
+	secret          []byte
+	oldSecrets      [][]byte
+	username        string // bootstrap only
+	password        string // bootstrap only (plaintext or bcrypt hash)
+	totpSecret      string // bootstrap only
+	totpIssuer      string
+	usersFile       string
+	requireTOTP     bool
+	trustDevDays    int
+	ttl             time.Duration
+	idleTimeout     time.Duration
+	maxAttempts     int
+	lockout         time.Duration
+	minDwell        time.Duration
+	formTTL         time.Duration
+	secure          bool
+	auditLog        string
+	ringCap         int
+	webhookURL      string
+	webhookProvider string
+	metricsToken    string
+	trustedNets     []*net.IPNet
+	maxBodyBytes    int64
+	orgID           string
+	ssoURL          string
 }
 
 func getenv(k, def string) string {
@@ -173,34 +175,35 @@ func loadConfig(logger *slog.Logger) config {
 		}
 	}
 	return config{
-		listen:       getenv("LISTEN_ADDR", ":4181"),
-		authHost:     authHost,
-		cookieName:   getenv("COOKIE_NAME", "xore_sso"),
-		cookieDom:    getenv("COOKIE_DOMAIN", ""),
-		secret:       secret,
-		oldSecrets:   oldSecrets,
-		username:     requireEnv("AUTH_USERNAME"),
-		password:     requireEnvFile("AUTH_PASSWORD"),
-		totpSecret:   normalizeB32(getenvFile("TOTP_SECRET", "")),
-		totpIssuer:   getenv("TOTP_ISSUER", authHost),
-		usersFile:    getenv("USERS_FILE", "/data/users.json"),
-		requireTOTP:  getenv("REQUIRE_TOTP", "true") != "false",
-		trustDevDays: atoi(os.Getenv("TRUST_DEVICE_DAYS"), 0),
-		ttl:          time.Duration(atoi(os.Getenv("SESSION_TTL_HOURS"), 12)) * time.Hour,
-		idleTimeout:  time.Duration(atoi(os.Getenv("IDLE_TIMEOUT_MINUTES"), 60)) * time.Minute,
-		maxAttempts:  atoi(os.Getenv("MAX_ATTEMPTS"), 5),
-		lockout:      time.Duration(atoi(os.Getenv("LOCKOUT_MINUTES"), 15)) * time.Minute,
-		minDwell:     time.Duration(atoi(os.Getenv("MIN_DWELL_SECONDS"), 2)) * time.Second,
-		formTTL:      time.Duration(atoi(os.Getenv("FORM_TTL_MINUTES"), 15)) * time.Minute,
-		secure:       getenv("COOKIE_SECURE", "true") != "false",
-		auditLog:     getenv("AUDIT_LOG", ""),
-		ringCap:      atoi(os.Getenv("AUDIT_RING"), 500),
-		webhookURL:   getenv("WEBHOOK_URL", ""),
-		metricsToken: getenvFile("METRICS_TOKEN", ""),
-		trustedNets:  parseCIDRs(getenv("TRUSTED_PROXIES", defaultTrustedProxies), logger),
-		maxBodyBytes: int64(atoi(os.Getenv("MAX_BODY_KB"), 64)) * 1024,
-		orgID:        getenv("ORG_ID", ""),
-		ssoURL:       getenv("SSO_URL", ""),
+		listen:          getenv("LISTEN_ADDR", ":4181"),
+		authHost:        authHost,
+		cookieName:      getenv("COOKIE_NAME", "xore_sso"),
+		cookieDom:       getenv("COOKIE_DOMAIN", ""),
+		secret:          secret,
+		oldSecrets:      oldSecrets,
+		username:        requireEnv("AUTH_USERNAME"),
+		password:        requireEnvFile("AUTH_PASSWORD"),
+		totpSecret:      normalizeB32(getenvFile("TOTP_SECRET", "")),
+		totpIssuer:      getenv("TOTP_ISSUER", authHost),
+		usersFile:       getenv("USERS_FILE", "/data/users.json"),
+		requireTOTP:     getenv("REQUIRE_TOTP", "true") != "false",
+		trustDevDays:    atoi(os.Getenv("TRUST_DEVICE_DAYS"), 0),
+		ttl:             time.Duration(atoi(os.Getenv("SESSION_TTL_HOURS"), 12)) * time.Hour,
+		idleTimeout:     time.Duration(atoi(os.Getenv("IDLE_TIMEOUT_MINUTES"), 60)) * time.Minute,
+		maxAttempts:     atoi(os.Getenv("MAX_ATTEMPTS"), 5),
+		lockout:         time.Duration(atoi(os.Getenv("LOCKOUT_MINUTES"), 15)) * time.Minute,
+		minDwell:        time.Duration(atoi(os.Getenv("MIN_DWELL_SECONDS"), 2)) * time.Second,
+		formTTL:         time.Duration(atoi(os.Getenv("FORM_TTL_MINUTES"), 15)) * time.Minute,
+		secure:          getenv("COOKIE_SECURE", "true") != "false",
+		auditLog:        getenv("AUDIT_LOG", ""),
+		ringCap:         atoi(os.Getenv("AUDIT_RING"), 500),
+		webhookURL:      getenv("WEBHOOK_URL", ""),
+		webhookProvider: getenv("WEBHOOK_PROVIDER", "raw"),
+		metricsToken:    getenvFile("METRICS_TOKEN", ""),
+		trustedNets:     parseCIDRs(getenv("TRUSTED_PROXIES", defaultTrustedProxies), logger),
+		maxBodyBytes:    int64(atoi(os.Getenv("MAX_BODY_KB"), 64)) * 1024,
+		orgID:           getenv("ORG_ID", ""),
+		ssoURL:          getenv("SSO_URL", ""),
 	}
 }
 
@@ -243,6 +246,11 @@ func (c config) validate() error {
 	}
 	if len(c.trustedNets) == 0 {
 		problems = append(problems, "TRUSTED_PROXIES must contain at least one valid CIDR")
+	}
+	switch c.webhookProvider {
+	case "", "raw", "slack", "ntfy", "gotify":
+	default:
+		problems = append(problems, "WEBHOOK_PROVIDER must be raw, slack, ntfy or gotify")
 	}
 	if len(problems) == 0 {
 		return nil
@@ -1392,7 +1400,7 @@ func main() {
 		cfg: cfg, log: log, tr: newThrottle(cfg), aud: aud,
 		users: users,
 		reg:   newSessionRegistry(cfg.ttl, filepath.Join(filepath.Dir(cfg.usersFile), "revoked-sessions.json")),
-		ntf:   newNotifier(cfg.webhookURL, log),
+		ntf:   newNotifier(cfg.webhookURL, cfg.webhookProvider, log),
 
 		startedAt: time.Now(),
 	}
@@ -1449,7 +1457,10 @@ func main() {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(strings.ReplaceAll(okPage, "{{NONCE}}", n)))
 	})
-	mux.HandleFunc("/_auth/admin", s.adminPanel)
+	mux.HandleFunc("/_auth/admin", func(w http.ResponseWriter, r *http.Request) {
+		// the standalone admin panel is gone — the app shell hosts all admin UI
+		http.Redirect(w, r, "/auth/app", http.StatusFound)
+	})
 	mux.HandleFunc("/_auth/admin/api/state", s.adminState)
 	mux.HandleFunc("/_auth/admin/api/user", s.adminCreateUser)
 	mux.HandleFunc("/_auth/admin/api/action", s.adminAction)

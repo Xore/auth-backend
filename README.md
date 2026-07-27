@@ -85,6 +85,7 @@ Add a proxied DNS record for `AUTH_HOST` (and each protected subdomain).
 | `COOKIE_SECURE` | `true` | Require HTTPS for the session cookie |
 | `MAX_BODY_KB` | `64` | Max request body size |
 | `WEBHOOK_URL` | *(empty)* | Optional alert webhook |
+| `WEBHOOK_PROVIDER` | `raw` | Webhook payload format: `raw`, `slack`, `ntfy` or `gotify` |
 | `METRICS_TOKEN` | *(empty)* | Bearer token gating `/_auth/metrics`; leave blank to disable |
 | `AUTH_RESET_CONFIRM` | *(empty)* | Confirmation flag for the `auth-credentials-reset` maintenance profile |
 

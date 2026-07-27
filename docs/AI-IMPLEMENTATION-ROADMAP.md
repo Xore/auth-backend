@@ -56,8 +56,8 @@ Steps in the same phase can be parallelised if there are no `Blocked by` depende
 | Step 2 — Restyle login/enroll/password | ✅ done (2026-07-27) | `page.go` on `claude-theme.css`; `/static/` route via `static.go`; CSP `style-src 'self'` added |
 | Step 3 — App shell page | ✅ done (2026-07-27) | `ui/app.html`, `apppage.go`, `/auth/app` route |
 | Step 4 — Settings modal panes | ✅ done (2026-07-27) | Nav, `PANE_TEMPLATES`, loaders on `/api/state`, 5 s polling, sidebar search |
-| Step 4b — Legacy admin panel restyle | ✅ done (2026-07-27) | `adminpage.go` on Claude theme; `baseCSS` removed; API/JS contract unchanged |
-| Step 5 — New Go routes | ✅ done (2026-07-27) | `/_auth/sessions/mine|trusted`, `/api/system`, `POST /api/sessions/{sid}/revoke`; `startedAt`, `ORG_ID` |
+| Step 4b — Legacy admin panel restyle | ✅ done → ⚠️ superseded (2026-07-27) | Panel was restyled, then **deleted on user request**: all admin functions (create user, row actions, unlock, revoke) moved into the `/auth/app` shell; `/_auth/admin` now redirects there; `adminpage.go` removed |
+| Step 5 — New Go routes | ✅ done (2026-07-27) | `/_auth/sessions/mine|trusted`, `/api/system`, `POST /api/sessions/{sid}/revoke`; `startedAt`, `ORG_ID`; panes fully wired to these APIs |
 | Step 5b — Tailwind two-step login | ✅ done (2026-07-27) | See deviation notes below |
 | Step 6 — Argon2id password hashing | ✅ done (2026-07-27) | PHC format, inline parser, bcrypt accepted + upgraded on login; bootstrap hashes with Argon2id |
 | Step 7 — Common-password check | ✅ done (2026-07-27) | NCSC top-100k list (SecLists URL in roadmap 404s — used `100k-most-used-passwords-NCSC.txt`); binary +953 KB, exceeds the ≤500 KB note |
@@ -65,6 +65,7 @@ Steps in the same phase can be parallelised if there are no `Blocked by` depende
 | Step 9 — Persist throttle state | ✅ done (2026-07-27) | `throttle.json` load/persist (lockout trigger + SIGTERM), expired entries pruned. **Also fixed a pre-existing bug:** `locked()` pruned zero-`lockUntil` counting entries, so the fail counter reset every attempt and lockouts never engaged |
 | Step 10 — Backup code regeneration | ✅ done (2026-07-27) | `POST /_auth/backup-codes` (session + form token), 8 new codes rendered, `DeviceGen++`; link in app-shell account pane. Codes are SHA-256-hashed in this repo (roadmap text says bcrypt) |
 | Step 11 — CSP nonce | ✅ done (2026-07-27) | `script-src` was already nonce-only; **33 inline event-handler attributes were CSP-blocked and dead** — all converted to `addEventListener`/event delegation across 5 files; `style-src 'self' 'unsafe-inline'` per spec; passkeys page also restyled to the Claude theme (Step-2 leftover) |
+| Step 12 — Webhook enrichment + providers | ✅ done (2026-07-27) | `webhookPayload` + request_id/severity/timestamp; `WEBHOOK_PROVIDER=raw|slack|ntfy|gotify` with per-provider shapes; severity mapping; `TestWebhook*` tests |
 
 **Step 5b deviation notes (approved design):**
 - Login is a **two-step UI** (username → password/passkey, client-side) followed by a

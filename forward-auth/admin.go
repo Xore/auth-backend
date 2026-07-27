@@ -1,9 +1,9 @@
 package main
 
-// admin.go — the admin panel's JSON API. All endpoints require an admin
-// session with no pending flags; mutating endpoints additionally require the
-// per-session CSRF token in the X-Csrf header. The HTML shell itself is in
-// adminpage.go.
+// admin.go — the admin JSON API. All endpoints require an admin session with
+// no pending flags; mutating endpoints additionally require the per-session
+// CSRF token in the X-Csrf header. The admin UI lives in the app shell
+// (ui/app.html via apppage.go); /_auth/admin redirects there.
 
 import (
 	"crypto/subtle"
@@ -63,16 +63,6 @@ type adminUserView struct {
 	LastLogin    time.Time `json:"last_login"`
 	LastIP       string    `json:"last_ip"`
 	Passkeys     int       `json:"passkeys"`
-}
-
-func (s *server) adminPanel(w http.ResponseWriter, r *http.Request) {
-	cl, u, ok := s.adminGate(w, r, false)
-	if !ok {
-		return
-	}
-	n := nonce()
-	secHeaders(w, n)
-	s.renderAdmin(w, u.Username, s.cfg.csrfToken(cl.sid), n)
 }
 
 func (s *server) adminState(w http.ResponseWriter, r *http.Request) {

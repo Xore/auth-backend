@@ -213,7 +213,7 @@ const okPage = pageHead + `
     <div class="foot foot-flat">
       <a href="/_auth/password">change password</a> <span class="dia">&#9670;</span>
       <a href="/_auth/passkeys">passkeys</a> <span class="dia">&#9670;</span>
-      <a href="/_auth/admin">admin</a> <span class="dia">&#9670;</span>
+      <a href="/auth/app">settings</a> <span class="dia">&#9670;</span>
       <a href="/_auth/logout">log out</a>
     </div>
   </div>

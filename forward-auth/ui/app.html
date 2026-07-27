@@ -23,13 +23,22 @@
   .filter-row{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap}
   .filter-row .form-input{flex:1;min-width:160px;width:auto}
   .filter-row select.form-input{flex:0 0 auto}
+  .newuser{display:grid;grid-template-columns:1fr 110px 1fr auto;gap:10px;align-items:end}
+  .row-actions{display:flex;gap:6px;flex-wrap:wrap}
+  #flash{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:200;display:none;
+    background:var(--surface-0);border:1px solid var(--green);border-radius:var(--radius-md);
+    padding:14px 20px;font-size:13px;color:var(--text-primary);box-shadow:var(--shadow-modal);
+    max-width:90vw;word-break:break-all;text-align:center}
+  #flash.err{border-color:var(--red)}
+  #flash b{color:var(--green)}
   .cell-mono{font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:11px}
   .cell-agent{font-size:11px;color:var(--text-muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .empty-row{color:var(--text-muted);font-size:12px}
-  @media(max-width:600px){.stat-grid{grid-template-columns:repeat(2,1fr)}.hide-sm{display:none}}
+  @media(max-width:600px){.stat-grid{grid-template-columns:repeat(2,1fr)}.hide-sm{display:none}.newuser{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
+  <div id="flash"></div>
   <div class="shell">
     <div class="shell__who">signed in as <b>{{.User}}</b></div>
     <button class="btn btn-secondary" id="open-settings" aria-label="Settings">
@@ -124,6 +133,58 @@ function copyToClipboard(text) {
   ta.select();
   try { document.execCommand('copy'); } catch (e) { /* no clipboard access */ }
   document.body.removeChild(ta);
+}
+
+// ── admin API helpers ────────────────────────────────────────────────────
+function flash(msg, isErr) {
+  var f = document.getElementById('flash');
+  f.innerHTML = msg;
+  f.className = isErr ? 'err' : '';
+  f.style.display = 'block';
+  clearTimeout(f._t);
+  f._t = setTimeout(function () { f.style.display = 'none'; }, isErr ? 6000 : 12000);
+}
+
+function api(path, body) {
+  return fetch('/_auth/admin/api/' + path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-Csrf': CSRF_TOKEN},
+    body: JSON.stringify(body)
+  })
+    .then(function (r) { return r.json().catch(function () { return {error: 'http ' + r.status}; }); })
+    .then(function (j) { if (j.error) { flash(esc(j.error), true); throw j.error; } return j; });
+}
+
+function act(action, extra) {
+  var b = extra || {};
+  b.action = action;
+  return api('action', b).then(function (j) { fetchState(); return j; });
+}
+
+function confirmAct(msg, action, extra) {
+  if (confirm(msg)) act(action, extra).then(function (j) {
+    if (j.temp_password) flash('temp password for ' + esc(extra.username) + ': <b>' + esc(j.temp_password) + '</b><br>shown once — send it over a secure channel');
+  }).catch(function () { /* error already flashed by api() */ });
+}
+
+function createUser() {
+  var name = document.getElementById('nu-name').value.trim();
+  var role = document.getElementById('nu-role').value;
+  var hosts = document.getElementById('nu-hosts').value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+  if (!name) { flash('username required', true); return; }
+  api('user', {username: name, role: role, allowed_hosts: hosts}).then(function (j) {
+    document.getElementById('nu-name').value = '';
+    document.getElementById('nu-hosts').value = '';
+    flash('created <b>' + esc(name) + '</b> — temp password: <b>' + esc(j.temp_password) + '</b><br>shown once — they must change it on first login');
+    fetchState();
+  }).catch(function () { /* error already flashed by api() */ });
+}
+
+function editHosts(name, cur) {
+  var v = prompt('Allowed hosts for ' + name + ' (comma-separated, blank = all, *.dom ok):', cur);
+  if (v === null) return;
+  var hosts = v.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+  act('set_hosts', {username: name, hosts: hosts});
 }
 
 // ── sidebar nav ──────────────────────────────────────────────────────────
@@ -233,9 +294,21 @@ var PANE_TEMPLATES = {
   'admin-users':
     '<h2 id="settings-title">Users</h2>' +
     '<div class="card">' +
+      '<div class="card__title">Create user</div>' +
+      '<div class="newuser">' +
+        '<div><label class="form-label">username</label>' +
+        '<input class="form-input" id="nu-name" autocomplete="off" autocapitalize="none" spellcheck="false"></div>' +
+        '<div><label class="form-label">role</label>' +
+        '<select class="form-input" id="nu-role"><option value="user">user</option><option value="admin">admin</option></select></div>' +
+        '<div><label class="form-label">allowed hosts <span class="card__value">— blank = all</span></label>' +
+        '<input class="form-input" id="nu-hosts" placeholder="grafana.example.com, *.media.example.com"></div>' +
+        '<button class="btn btn-primary" id="nu-create">create</button>' +
+      '</div>' +
+    '</div>' +
+    '<div class="card">' +
       '<table class="data-table">' +
         '<thead><tr><th>User</th><th>Role</th><th>Status</th><th>2FA</th>' +
-        '<th class="hide-sm">Allowed hosts</th><th class="hide-sm">Last login</th></tr></thead>' +
+        '<th class="hide-sm">Allowed hosts</th><th class="hide-sm">Last login</th><th>Actions</th></tr></thead>' +
         '<tbody id="admin-users-body"></tbody>' +
       '</table>' +
     '</div>',
@@ -251,7 +324,7 @@ var PANE_TEMPLATES = {
     '<div class="card">' +
       '<div class="card__title">Locked out</div>' +
       '<table class="data-table">' +
-        '<thead><tr><th>IP</th><th>Fails</th><th>Until</th></tr></thead>' +
+        '<thead><tr><th>IP</th><th>Fails</th><th>Until</th><th></th></tr></thead>' +
         '<tbody id="admin-locked-body"></tbody>' +
       '</table>' +
     '</div>' +
@@ -389,7 +462,7 @@ function loadAdminUsers() {
   if (!tb) return;
   var users = state.users || [];
   if (!users.length) {
-    tb.innerHTML = '<tr><td colspan="6" class="empty-row">no users</td></tr>';
+    tb.innerHTML = '<tr><td colspan="7" class="empty-row">no users</td></tr>';
     return;
   }
   tb.innerHTML = users.map(function (u) {
@@ -397,7 +470,7 @@ function loadAdminUsers() {
       : u.must_change ? '<span class="badge badge--orange">temp pw</span>'
       : '<span class="badge badge--green">active</span>';
     var totp = u.totp_enrolled
-      ? '<span class="badge badge--green">2FA on</span>'
+      ? '<span class="badge badge--green">2FA on</span> <span class="card__value">' + u.backup_codes + ' codes · ' + u.passkeys + ' keys</span>'
       : '<span class="badge badge--orange">pending</span>';
     return '<tr>' +
       '<td class="cell-mono">' + esc(u.username) + '</td>' +
@@ -406,6 +479,18 @@ function loadAdminUsers() {
       '<td>' + totp + '</td>' +
       '<td class="cell-mono hide-sm">' + esc((u.allowed_hosts || []).join(', ') || 'all') + '</td>' +
       '<td class="cell-mono hide-sm">' + (u.last_ip ? ts(u.last_login) + ' (' + esc(u.last_ip) + ')' : '–') + '</td>' +
+      '<td><div class="row-actions">' +
+      (u.disabled
+        ? '<button class="btn btn-secondary btn-sm" data-act="enable" data-user="' + esc(u.username) + '">enable</button>'
+        : '<button class="btn btn-secondary btn-sm" data-act="disable" data-msg="Disable ' + esc(u.username) + '?" data-user="' + esc(u.username) + '">disable</button>') +
+      '<button class="btn btn-secondary btn-sm" data-act="reset_password" data-msg="Reset password for ' + esc(u.username) + '?" data-user="' + esc(u.username) + '">reset pw</button>' +
+      '<button class="btn btn-secondary btn-sm" data-act="reset_totp" data-msg="Reset 2FA for ' + esc(u.username) + '? They will re-enroll on next login." data-user="' + esc(u.username) + '">reset 2fa</button>' +
+      (u.passkeys ? '<button class="btn btn-secondary btn-sm" data-act="reset_passkeys" data-msg="Remove all passkeys for ' + esc(u.username) + '?" data-user="' + esc(u.username) + '">reset keys</button>' : '') +
+      '<button class="btn btn-secondary btn-sm" data-act="logout_user" data-msg="Log ' + esc(u.username) + ' out everywhere?" data-user="' + esc(u.username) + '">logout</button>' +
+      '<button class="btn btn-secondary btn-sm" data-act="edit_hosts" data-user="' + esc(u.username) + '" data-hosts="' + esc((u.allowed_hosts || []).join(', ')) + '">hosts</button>' +
+      '<button class="btn btn-secondary btn-sm" data-act="set_role" data-user="' + esc(u.username) + '" data-role="' + (u.role === 'admin' ? 'user' : 'admin') + '">' + (u.role === 'admin' ? 'demote' : 'promote') + '</button>' +
+      '<button class="btn btn-danger btn-sm" data-act="delete" data-msg="DELETE ' + esc(u.username) + '? This cannot be undone." data-user="' + esc(u.username) + '">delete</button>' +
+      '</div></td>' +
       '</tr>';
   }).join('');
 }
@@ -424,8 +509,9 @@ function loadAdminLogs() {
     lb.innerHTML = locked.length ? locked.map(function (l) {
       return '<tr><td class="cell-mono">' + esc(l.IP) + '</td>' +
         '<td class="cell-mono">' + l.Fails + '</td>' +
-        '<td class="cell-mono">' + ts(l.Until) + '</td></tr>';
-    }).join('') : '<tr><td colspan="3" class="empty-row">nothing locked out</td></tr>';
+        '<td class="cell-mono">' + ts(l.Until) + '</td>' +
+        '<td><button class="btn btn-secondary btn-sm" data-act="unlock" data-ip="' + esc(l.IP) + '">unlock</button></td></tr>';
+    }).join('') : '<tr><td colspan="4" class="empty-row">nothing locked out</td></tr>';
   }
 
   var qEl = document.getElementById('lf-text');
@@ -554,7 +640,18 @@ document.addEventListener('click', function (e) {
   var item = e.target.closest('#settings-nav .sidebar__item');
   if (item && item.dataset.pane) { showPane(item.dataset.pane); return; }
   var rev = e.target.closest('button[data-revoke-sid]');
-  if (rev) revokeSession(rev.getAttribute('data-revoke-sid'));
+  if (rev) { revokeSession(rev.getAttribute('data-revoke-sid')); return; }
+  if (e.target.closest('#nu-create')) { createUser(); return; }
+  var b = e.target.closest('button[data-act]');
+  if (!b) return;
+  var d = b.dataset;
+  if (d.act === 'edit_hosts') { editHosts(d.user, d.hosts); return; }
+  var extra = {};
+  if (d.user) extra.username = d.user;
+  if (d.ip) extra.ip = d.ip;
+  if (d.sid) extra.sid = d.sid;
+  if (d.role) extra.role = d.role;
+  if (d.msg) { confirmAct(d.msg, d.act, extra); } else { act(d.act, extra); }
 });
 
 function revokeSession(sid) {
@@ -562,7 +659,9 @@ function revokeSession(sid) {
   fetch('/_auth/admin/api/sessions/' + encodeURIComponent(sid) + '/revoke', {
     method: 'POST',
     headers: {'X-Csrf': CSRF_TOKEN}
-  }).then(function (r) { if (r.ok) fetchState(); });
+  }).then(function (r) {
+    if (r.ok) { fetchState(); } else { flash('revoke failed (http ' + r.status + ')', true); }
+  }).catch(function () { flash('revoke failed', true); });
 }
 
 // Delegated: audit-log filter row (re-created with the pane skeleton)

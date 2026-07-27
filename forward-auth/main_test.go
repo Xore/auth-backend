@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base32"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -146,7 +147,7 @@ func TestVerifyReturnsConfiguredIdentityHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	u := st.get("admin")
-	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", slog.Default())}
+	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", "raw", slog.Default())}
 	cl := sessionClaims{user: u.Username, gen: u.Gen, sid: "sid", exp: time.Now().Add(time.Minute).Unix()}
 	r := httptest.NewRequest("GET", "http://auth/_auth/verify", nil)
 	r.Header.Set("X-Forwarded-Host", "app.example.com")
@@ -259,7 +260,7 @@ func TestTwoStepLoginFlow(t *testing.T) {
 	if _, err := st.bootstrap("admin", "a-long-test-password", "JBSWY3DPEHPK3PXP"); err != nil {
 		t.Fatal(err)
 	}
-	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", slog.Default())}
+	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", "raw", slog.Default())}
 
 	// Step 1: correct password → verify page + pending cookie, no session yet
 	form := url.Values{}
@@ -351,7 +352,7 @@ func newPasswordTestServer(t *testing.T) (*server, *userStore, *http.Cookie) {
 	if _, err := st.bootstrap("admin", "a-long-test-password", ""); err != nil {
 		t.Fatal(err)
 	}
-	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", slog.Default())}
+	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", "raw", slog.Default())}
 	u := st.get("admin")
 	cl := sessionClaims{user: u.Username, gen: u.Gen, sid: "sid", exp: time.Now().Add(time.Minute).Unix()}
 	return s, st, &http.Cookie{Name: c.cookieName, Value: c.issueSession(cl)}
@@ -436,7 +437,7 @@ func TestIdleSessionExpiry(t *testing.T) {
 	if _, err := st.bootstrap("admin", "a-long-test-password", ""); err != nil {
 		t.Fatal(err)
 	}
-	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", slog.Default())}
+	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", "raw", slog.Default())}
 	u := st.get("admin")
 	mkReq := func(sid string) *http.Request {
 		cl := sessionClaims{user: u.Username, gen: u.Gen, sid: sid, exp: time.Now().Add(time.Hour).Unix()}
@@ -483,7 +484,7 @@ func TestBackupCodeRegeneration(t *testing.T) {
 	if _, err := st.bootstrap("admin", "a-long-test-password", "JBSWY3DPEHPK3PXP"); err != nil {
 		t.Fatal(err)
 	}
-	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", slog.Default())}
+	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", "raw", slog.Default())}
 
 	// seed an initial set of codes
 	oldPlain, oldHashed := newBackupCodes(8)
@@ -535,6 +536,106 @@ func TestBackupCodeRegeneration(t *testing.T) {
 	s.handleBackupCodes(w, r)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("bad form token: expected 403, got %d", w.Code)
+	}
+}
+
+func TestWebhookSeverityMapping(t *testing.T) {
+	for event, want := range map[string]string{
+		"login_ok":            "info",
+		"login_new_ip":        "info",
+		"locked_out":          "warn",
+		"bad_backup_code":     "warn",
+		"login_fail:bad_totp": "warn",
+		"backup_code_used":    "critical",
+		"enroll_ok":           "critical",
+	} {
+		if got := severityFor(event); got != want {
+			t.Errorf("severityFor(%q) = %q, want %q", event, got, want)
+		}
+	}
+}
+
+func TestWebhookSlackFormat(t *testing.T) {
+	p := webhookPayload{Event: "locked_out", Severity: "warn", User: "alice", IP: "1.2.3.4", Host: "auth.example.com", Detail: "5 fails", Timestamp: time.Now()}
+	body, headers, err := formatPayload("slack", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if headers != nil {
+		t.Fatal("slack should not set extra headers")
+	}
+	var out struct {
+		Attachments []struct {
+			Text  string `json:"text"`
+			Color string `json:"color"`
+		} `json:"attachments"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Attachments) != 1 {
+		t.Fatalf("expected 1 attachment, got %d", len(out.Attachments))
+	}
+	if out.Attachments[0].Color != "warning" {
+		t.Fatalf("warn severity should map to warning color, got %q", out.Attachments[0].Color)
+	}
+	if !strings.Contains(out.Attachments[0].Text, "locked_out") || !strings.Contains(out.Attachments[0].Text, "alice") {
+		t.Fatalf("attachment text missing event/user: %q", out.Attachments[0].Text)
+	}
+}
+
+func TestWebhookNtfyFormat(t *testing.T) {
+	p := webhookPayload{RequestID: "rid", Service: "forward-auth", Event: "backup_code_used", Severity: "critical", User: "alice", IP: "1.2.3.4", Host: "auth.example.com", Timestamp: time.Now()}
+	body, headers, err := formatPayload("ntfy", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if headers["Priority"] != "4" {
+		t.Fatalf("critical should map to ntfy priority 4, got %q", headers["Priority"])
+	}
+	if headers["Title"] == "" {
+		t.Fatal("ntfy Title header missing")
+	}
+	// ntfy body stays the raw envelope
+	var back webhookPayload
+	if err := json.Unmarshal(body, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.Event != "backup_code_used" || back.RequestID != "rid" || back.Severity != "critical" {
+		t.Fatalf("raw envelope not preserved: %+v", back)
+	}
+}
+
+func TestWebhookGotifyAndRawFormat(t *testing.T) {
+	p := webhookPayload{Event: "enroll_ok", Severity: "critical", User: "alice", IP: "1.2.3.4", Host: "auth.example.com", Timestamp: time.Now()}
+	body, _, err := formatPayload("gotify", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var g struct {
+		Title    string `json:"title"`
+		Message  string `json:"message"`
+		Priority int    `json:"priority"`
+	}
+	if err := json.Unmarshal(body, &g); err != nil {
+		t.Fatal(err)
+	}
+	if g.Priority != 8 || g.Title == "" || g.Message == "" {
+		t.Fatalf("bad gotify payload: %+v", g)
+	}
+	// raw (and unknown providers) produce the flat envelope
+	body, _, err = formatPayload("raw", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"request_id", "service", "event", "severity", "timestamp"} {
+		if _, ok := raw[k]; !ok {
+			t.Fatalf("raw payload missing %q", k)
+		}
 	}
 }
 
