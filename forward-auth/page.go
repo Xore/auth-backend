@@ -226,9 +226,9 @@ const enrollPage = pageHead + `
     <div class="notice"><span class="badge badge--orange">two-factor setup required</span></div>
     <div class="qr-wrap" title="Scan with your authenticator app">{{QR}}</div>
     <p class="copy-label">manual entry secret — tap to copy</p>
-    <div id="secret" onclick="copyText('secret')" title="Click to copy" class="copy-box copy-box--accent">{{SECRET}}</div>
+    <div id="secret" title="Click to copy" class="copy-box copy-box--accent">{{SECRET}}</div>
     <p class="copy-label">otpauth uri — for 1password &amp; co, tap to copy</p>
-    <div id="uri" onclick="copyText('uri')" title="Click to copy" class="copy-box copy-box--muted">{{URI}}</div>
+    <div id="uri" title="Click to copy" class="copy-box copy-box--muted">{{URI}}</div>
     <div class="copied" id="copied">&#10003; copied to clipboard</div>
     <form method="post" action="/_auth/enroll" class="form-spaced">
       <input type="hidden" name="ft" value="{{FT}}">
@@ -251,6 +251,8 @@ const enrollPage = pageHead + `
         setTimeout(function(){ c.style.display = 'none'; }, 2000);
       });
     }
+    document.getElementById('secret').addEventListener('click', function(){ copyText('secret'); });
+    document.getElementById('uri').addEventListener('click', function(){ copyText('uri'); });
   </script>
 </body>
 </html>`
@@ -266,7 +268,7 @@ const backupCodesPage = pageHead + `
       {{CODES}}
     </ul>
     <div class="auth-actions">
-      <button onclick="copyCodes()" class="btn btn-secondary auth-btn">copy all to clipboard</button>
+      <button id="copy-codes" class="btn btn-secondary auth-btn">copy all to clipboard</button>
       <a href="/_auth/ok" class="btn btn-primary auth-btn">i saved them — continue &rarr;</a>
     </div>
     <div class="copied" id="copied">&#10003; copied</div>
@@ -280,6 +282,7 @@ const backupCodesPage = pageHead + `
         setTimeout(function(){ c.style.display = 'none'; }, 2000);
       });
     }
+    document.getElementById('copy-codes').addEventListener('click', copyCodes);
   </script>
 </body>
 </html>`

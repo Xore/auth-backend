@@ -92,9 +92,9 @@ const adminPage = `<!doctype html>
         <a href="/_auth/logout">log out</a></div>
     </div>
     <div class="tabs">
-      <button id="tab-users" class="on" onclick="showTab('users')">users</button>
-      <button id="tab-logs" onclick="showTab('logs')">logs</button>
-      <button id="tab-sessions" onclick="showTab('sessions')">sessions</button>
+      <button id="tab-users" class="on" data-tab="users">users</button>
+      <button id="tab-logs" data-tab="logs">logs</button>
+      <button id="tab-sessions" data-tab="sessions">sessions</button>
     </div>
 
     <div id="pane-users">
@@ -105,7 +105,7 @@ const adminPage = `<!doctype html>
           <div><label>role</label><select class="form-input" id="nu-role"><option value="user">user</option><option value="admin">admin</option></select></div>
           <div><label>allowed hosts <span class="muted-inline">— blank = all; comma-sep, *.dom ok</span></label>
             <input class="form-input" id="nu-hosts" placeholder="grafana.xore.rocks, *.media.xore.rocks"></div>
-          <button class="btn btn-primary" onclick="createUser()">create</button>
+          <button class="btn btn-primary" id="create-user">create</button>
         </div>
       </div>
       <div class="card">
@@ -132,8 +132,8 @@ const adminPage = `<!doctype html>
       <div class="card">
         <h3>audit log</h3>
         <div class="filter">
-          <input class="form-input" id="lf-text" placeholder="filter: ip / user / host / event…" oninput="renderLogs()">
-          <select class="form-input" id="lf-kind" onchange="renderLogs()">
+          <input class="form-input" id="lf-text" placeholder="filter: ip / user / host / event…">
+          <select class="form-input" id="lf-kind">
             <option value="">all events</option>
             <option value="login_ok">login ok</option>
             <option value="login_fail">login failed</option>
@@ -221,15 +221,15 @@ function renderUsers(){var tb=document.getElementById('users-body');tb.innerHTML
       '<td class="mono hide-sm hosts-hint">'+hosts+'</td>'+
       '<td class="mono hide-sm last-info">'+last+'</td>'+
       '<td><div class="row-actions">'+
-      (u.disabled?'<button class="btn btn-secondary btn-sm" onclick="act(\'enable\',{username:\''+esc(u.username)+'\'})">enable</button>'
-        :'<button class="btn btn-secondary btn-sm" onclick="confirmAct(\'Disable '+esc(u.username)+'?\',\'disable\',{username:\''+esc(u.username)+'\'})">disable</button>')+
-      '<button class="btn btn-secondary btn-sm" onclick="confirmAct(\'Reset password for '+esc(u.username)+'?\',\'reset_password\',{username:\''+esc(u.username)+'\'})">reset pw</button>'+
-      '<button class="btn btn-secondary btn-sm" onclick="confirmAct(\'Reset 2FA for '+esc(u.username)+'? They will re-enroll on next login.\',\'reset_totp\',{username:\''+esc(u.username)+'\'})">reset 2fa</button>'+
-      (u.passkeys?'<button class="btn btn-secondary btn-sm" onclick="confirmAct(\'Remove all passkeys for '+esc(u.username)+'?\',\'reset_passkeys\',{username:\''+esc(u.username)+'\'})">reset keys</button>':'')+
-      '<button class="btn btn-secondary btn-sm" onclick="confirmAct(\'Log '+esc(u.username)+' out everywhere?\',\'logout_user\',{username:\''+esc(u.username)+'\'})">logout</button>'+
-      '<button class="btn btn-secondary btn-sm" onclick="editHosts(\''+esc(u.username)+'\',\''+esc((u.allowed_hosts||[]).join(', '))+'\')">hosts</button>'+
-      '<button class="btn btn-secondary btn-sm" onclick="act(\'set_role\',{username:\''+esc(u.username)+'\',role:\''+(u.role==='admin'?'user':'admin')+'\'})">'+(u.role==='admin'?'demote':'promote')+'</button>'+
-      '<button class="btn btn-danger btn-sm" onclick="confirmAct(\'DELETE '+esc(u.username)+'? This cannot be undone.\',\'delete\',{username:\''+esc(u.username)+'\'})">delete</button>'+
+      (u.disabled?'<button class="btn btn-secondary btn-sm" data-act="enable" data-user="'+esc(u.username)+'">enable</button>'
+        :'<button class="btn btn-secondary btn-sm" data-act="disable" data-msg="Disable '+esc(u.username)+'?" data-user="'+esc(u.username)+'">disable</button>')+
+      '<button class="btn btn-secondary btn-sm" data-act="reset_password" data-msg="Reset password for '+esc(u.username)+'?" data-user="'+esc(u.username)+'">reset pw</button>'+
+      '<button class="btn btn-secondary btn-sm" data-act="reset_totp" data-msg="Reset 2FA for '+esc(u.username)+'? They will re-enroll on next login." data-user="'+esc(u.username)+'">reset 2fa</button>'+
+      (u.passkeys?'<button class="btn btn-secondary btn-sm" data-act="reset_passkeys" data-msg="Remove all passkeys for '+esc(u.username)+'?" data-user="'+esc(u.username)+'">reset keys</button>':'')+
+      '<button class="btn btn-secondary btn-sm" data-act="logout_user" data-msg="Log '+esc(u.username)+' out everywhere?" data-user="'+esc(u.username)+'">logout</button>'+
+      '<button class="btn btn-secondary btn-sm" data-act="edit_hosts" data-user="'+esc(u.username)+'" data-hosts="'+esc((u.allowed_hosts||[]).join(', '))+'">hosts</button>'+
+      '<button class="btn btn-secondary btn-sm" data-act="set_role" data-user="'+esc(u.username)+'" data-role="'+(u.role==='admin'?'user':'admin')+'">'+(u.role==='admin'?'demote':'promote')+'</button>'+
+      '<button class="btn btn-danger btn-sm" data-act="delete" data-msg="DELETE '+esc(u.username)+'? This cannot be undone." data-user="'+esc(u.username)+'">delete</button>'+
       '</div></td>';
     tb.appendChild(tr);});}
 
@@ -243,7 +243,7 @@ function renderLogs(){
   state.locked.forEach(function(l){var tr=document.createElement('tr');
     tr.innerHTML='<td class="mono">'+esc(l.IP)+'</td><td class="mono">'+l.Fails+'</td>'+
       '<td class="mono">'+ts(l.Until)+'</td>'+
-      '<td><div class="row-actions"><button class="btn btn-secondary btn-sm" onclick="act(\'unlock\',{ip:\''+esc(l.IP)+'\'})">unlock</button></div></td>';
+      '<td><div class="row-actions"><button class="btn btn-secondary btn-sm" data-act="unlock" data-ip="'+esc(l.IP)+'">unlock</button></div></td>';
     lb.appendChild(tr);});
   var q=document.getElementById('lf-text').value.toLowerCase();
   var kind=document.getElementById('lf-kind').value;
@@ -270,13 +270,32 @@ function renderSessions(){var tb=document.getElementById('sess-body');tb.innerHT
     tr.innerHTML='<td class="mono">'+esc(s.user)+'</td><td class="mono">'+esc(s.ip)+'</td>'+
       '<td class="mono hide-sm session-agent">'+esc(s.ua)+'</td>'+
       '<td class="mono">'+ago(s.created)+'</td><td class="mono">'+ago(s.last_seen)+'</td>'+
-      '<td><div class="row-actions"><button class="btn btn-danger btn-sm" onclick="confirmAct(\'Revoke this session?\',\'revoke_session\',{sid:\''+esc(s.sid)+'\'})">revoke</button></div></td>';
+      '<td><div class="row-actions"><button class="btn btn-danger btn-sm" data-act="revoke_session" data-msg="Revoke this session?" data-sid="'+esc(s.sid)+'">revoke</button></div></td>';
     tb.appendChild(tr);});}
 
 function refresh(){fetch('/_auth/admin/api/state?n=300')
   .then(function(r){if(!r.ok)throw 'http '+r.status;return r.json()})
   .then(function(j){state=j;renderUsers();renderLogs();renderSessions();})
   .catch(function(e){/* transient poll error — keep last state */});}
+
+// Event wiring (no inline handlers — CSP script-src is nonce-only)
+document.getElementById('create-user').addEventListener('click', createUser);
+document.getElementById('lf-text').addEventListener('input', renderLogs);
+document.getElementById('lf-kind').addEventListener('change', renderLogs);
+document.addEventListener('click', function(e){
+  var t = e.target.closest('[data-tab]');
+  if (t) { showTab(t.getAttribute('data-tab')); return; }
+  var b = e.target.closest('button[data-act]');
+  if (!b) return;
+  var d = b.dataset;
+  if (d.act === 'edit_hosts') { editHosts(d.user, d.hosts); return; }
+  var extra = {};
+  if (d.user) extra.username = d.user;
+  if (d.ip) extra.ip = d.ip;
+  if (d.sid) extra.sid = d.sid;
+  if (d.role) extra.role = d.role;
+  if (d.msg) { confirmAct(d.msg, d.act, extra); } else { act(d.act, extra); }
+});
 
 refresh();
 setInterval(refresh,5000);

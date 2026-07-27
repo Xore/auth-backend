@@ -138,6 +138,18 @@ func (sr *sessionRegistry) list() []sessionInfo {
 	return out
 }
 
+// lastActive returns when the session was last seen, or the zero time if the
+// session is not in the registry (e.g. after a restart, before its first
+// touch — the caller treats that as "no idle data", not "idle").
+func (sr *sessionRegistry) lastActive(sid string) time.Time {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+	if s := sr.m[sid]; s != nil {
+		return s.LastSeen
+	}
+	return time.Time{}
+}
+
 func (sr *sessionRegistry) forUser(username string) []sessionInfo {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()

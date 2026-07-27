@@ -13,7 +13,7 @@ func (s *server) renderPasskeys(w http.ResponseWriter, u *User, csrf, nonce stri
 		if !key.LastUsed.IsZero() {
 			last = key.LastUsed.Format("2006-01-02 15:04 UTC")
 		}
-		rows.WriteString(`<div class="pk"><div><b>` + htmlEscape(key.Name) + `</b><small>created ` + key.Created.Format("2006-01-02") + ` · last used ` + last + `</small></div><button class="danger" data-id="` + hex.EncodeToString(key.Credential.ID) + `">remove</button></div>`)
+		rows.WriteString(`<div class="pk"><div><b>` + htmlEscape(key.Name) + `</b><small>created ` + key.Created.Format("2006-01-02") + ` · last used ` + last + `</small></div><button class="btn btn-danger btn-sm" data-id="` + hex.EncodeToString(key.Credential.ID) + `">remove</button></div>`)
 	}
 	if rows.Len() == 0 {
 		rows.WriteString(`<p class="empty">No passkeys enrolled yet.</p>`)
@@ -27,21 +27,24 @@ func (s *server) renderPasskeys(w http.ResponseWriter, u *User, csrf, nonce stri
 
 const passkeysPage = pageHead + `
 <meta name="csrf-token" content="{{CSRF}}">
-  <div class="gate gate--wide">` + brandHTML + `
+  <div class="card auth-card auth-card--wide">` + brandHTML + `
     <div class="sub">passkeys</div>
     <p class="text-muted">Passkeys provide phishing-resistant sign-in using your phone, computer, password manager, or hardware security key.</p>
     <div id="keys">{{KEYS}}</div>
-    <label for="pk-name" class="label-spaced">new passkey name</label>
-    <input id="pk-name" maxlength="64" placeholder="MacBook Touch ID">
-    <button id="add">add a passkey</button>
+    <div class="form-group">
+      <label class="form-label" for="pk-name">new passkey name</label>
+      <input class="form-input" id="pk-name" maxlength="64" placeholder="MacBook Touch ID">
+    </div>
+    <button id="add" class="btn btn-primary auth-btn">add a passkey</button>
     <div class="foot"><a href="/_auth/ok">back</a> <span class="dia">&#9670;</span> <a href="/_auth/logout">log out</a></div>
   </div>
   <style nonce="{{NONCE}}">
-    .pk{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line);padding:12px 0}
-    .pk b{font-family:var(--mono);font-size:.8rem}.pk small{display:block;color:var(--faint);font-size:.68rem;margin-top:4px}
-    .pk button{width:auto;padding:7px 10px;color:var(--red);border-color:rgba(248,113,113,.3);background:transparent}
-    .empty{font-family:var(--mono);color:var(--faint);font-size:.75rem;margin-bottom:12px}
-    .label-spaced{margin-top:20px}
+    .pk{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--border-subtle);padding:12px 0}
+    .pk b{font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:13px}
+    .pk small{display:block;color:var(--text-muted);font-size:11px;margin-top:4px}
+    .pk button{width:auto}
+    .empty{color:var(--text-muted);font-size:12px;margin-bottom:12px}
+    .auth-btn{margin-top:4px}
   </style>
   <script nonce="{{NONCE}}">
     const csrf=document.querySelector('meta[name="csrf-token"]').getAttribute('content');

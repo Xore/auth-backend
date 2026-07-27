@@ -106,7 +106,6 @@
       <button
         type="button"
         id="toggle-backup"
-        onclick="toggleBackup()"
         class="text-xs text-muted hover:text-white transition-colors underline underline-offset-2">
         Use a backup code instead
       </button>
@@ -155,7 +154,7 @@
         submit.disabled = code.length !== 6;
       }
 
-      window.toggleBackup = function () {
+      function toggleBackup() {
         backupMode = !backupMode;
         document.getElementById('otp-boxes').classList.toggle('hidden', backupMode);
         document.getElementById('backup-wrap').classList.toggle('hidden', !backupMode);
@@ -167,7 +166,8 @@
           : 'Use a backup code instead';
         if (backupMode) { backup.focus(); } else { boxes[0].focus(); }
         sync();
-      };
+      }
+      document.getElementById('toggle-backup').addEventListener('click', toggleBackup);;
     })();
   </script>
 </body>

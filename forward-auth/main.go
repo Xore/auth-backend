@@ -40,6 +40,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -75,6 +76,7 @@ type config struct {
 	requireTOTP  bool
 	trustDevDays int
 	ttl          time.Duration
+	idleTimeout  time.Duration
 	maxAttempts  int
 	lockout      time.Duration
 	minDwell     time.Duration
@@ -185,6 +187,7 @@ func loadConfig(logger *slog.Logger) config {
 		requireTOTP:  getenv("REQUIRE_TOTP", "true") != "false",
 		trustDevDays: atoi(os.Getenv("TRUST_DEVICE_DAYS"), 0),
 		ttl:          time.Duration(atoi(os.Getenv("SESSION_TTL_HOURS"), 12)) * time.Hour,
+		idleTimeout:  time.Duration(atoi(os.Getenv("IDLE_TIMEOUT_MINUTES"), 60)) * time.Minute,
 		maxAttempts:  atoi(os.Getenv("MAX_ATTEMPTS"), 5),
 		lockout:      time.Duration(atoi(os.Getenv("LOCKOUT_MINUTES"), 15)) * time.Minute,
 		minDwell:     time.Duration(atoi(os.Getenv("MIN_DWELL_SECONDS"), 2)) * time.Second,
@@ -435,18 +438,101 @@ type entry struct {
 }
 
 type throttle struct {
-	mu  sync.Mutex
-	m   map[string]*entry
-	cfg config
+	mu   sync.Mutex
+	m    map[string]*entry
+	cfg  config
+	path string
 }
 
 func newThrottle(cfg config) *throttle { return &throttle{m: map[string]*entry{}, cfg: cfg} }
+
+// throttleEntryJSON is the on-disk shape of an entry (entry's fields are
+// unexported, so encoding/json can't see them directly).
+type throttleEntryJSON struct {
+	Fails     int       `json:"fails"`
+	LockUntil time.Time `json:"lock_until"`
+}
+
+// load reads persisted throttle state from path (missing file is not an
+// error) and remembers the path for future persists.
+func (t *throttle) load(path string) error {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		t.mu.Lock()
+		t.path = path
+		t.mu.Unlock()
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var m map[string]throttleEntryJSON
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return err
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.path = path
+	for k, v := range m {
+		t.m[k] = &entry{fails: v.Fails, lockUntil: v.LockUntil}
+	}
+	t.pruneLocked(time.Now())
+	return nil
+}
+
+// persist writes the throttle map to path atomically (temp file + rename).
+func (t *throttle) persist(path string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.persistLocked(path)
+}
+
+// persistLocked persists with the caller holding t.mu. Expired entries are
+// pruned first — no point writing lockouts that have already cleared.
+func (t *throttle) persistLocked(path string) error {
+	t.pruneLocked(time.Now())
+	out := make(map[string]throttleEntryJSON, len(t.m))
+	for k, v := range t.m {
+		out[k] = throttleEntryJSON{Fails: v.fails, LockUntil: v.lockUntil}
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, ".throttle-*.tmp")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	defer func() { _ = os.Remove(name) }() // no-op once renamed on the success path
+	if err = f.Chmod(0o600); err == nil {
+		_, err = f.Write(append(raw, '\n'))
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(name, path)
+}
 
 func (t *throttle) locked(ip string) (bool, time.Duration) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	e := t.m[ip]
 	if e == nil {
+		return false, 0
+	}
+	if e.lockUntil.IsZero() {
+		// counting entry, no lock yet — keep it, the fails must accumulate
 		return false, 0
 	}
 	if d := time.Until(e.lockUntil); d > 0 {
@@ -477,6 +563,9 @@ func (t *throttle) fail(ip string) (lockedNow bool) {
 			d = 24 * time.Hour
 		}
 		e.lockUntil = time.Now().Add(d)
+		if t.path != "" {
+			_ = t.persistLocked(t.path) // durable lockout; best-effort
+		}
 		return true
 	}
 	return false
@@ -484,6 +573,9 @@ func (t *throttle) fail(ip string) (lockedNow bool) {
 
 func (t *throttle) pruneLocked(now time.Time) {
 	for key, e := range t.m {
+		if e.lockUntil.IsZero() {
+			continue // counting entry — no lock timestamp to expire
+		}
 		if !e.lockUntil.After(now) && now.Sub(e.lockUntil) > t.cfg.lockout {
 			delete(t.m, key)
 		}
@@ -642,7 +734,7 @@ func secHeaders(w http.ResponseWriter, n string) {
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("Cache-Control", "no-store")
 	h.Set("Content-Security-Policy",
-		"default-src 'none'; style-src 'self' 'nonce-"+n+"'; script-src 'nonce-"+n+"'; img-src data:; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+		"default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'nonce-"+n+"'; img-src data:; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 }
 
 func (s *server) setCookie(w http.ResponseWriter, cl sessionClaims) {
@@ -722,6 +814,14 @@ func (s *server) session(r *http.Request) (sessionClaims, *User, bool) {
 	u := s.users.get(cl.user)
 	if u == nil || u.Disabled || u.Gen != cl.gen {
 		return sessionClaims{}, nil, false
+	}
+	if s.cfg.idleTimeout > 0 {
+		if last := s.reg.lastActive(cl.sid); !last.IsZero() &&
+			time.Since(last) > s.cfg.idleTimeout {
+			_ = s.reg.revoke(cl.sid)
+			s.audit("idle_timeout", s.clientIP(r), cl.user, r)
+			return sessionClaims{}, nil, false
+		}
 	}
 	return cl, u, true
 }
@@ -1082,6 +1182,45 @@ func (s *server) enroll(w http.ResponseWriter, r *http.Request) {
 	s.renderEnroll(w, u, "", n)
 }
 
+// handleBackupCodes lets a signed-in user regenerate their one-time
+// recovery codes. Old codes are replaced and the device generation is
+// bumped, invalidating every trusted-device cookie.
+func (s *server) handleBackupCodes(w http.ResponseWriter, r *http.Request) {
+	n := nonce()
+	secHeaders(w, n)
+	cl, u, ok := s.session(r)
+	if !ok {
+		http.Redirect(w, r, "https://"+s.cfg.authHost+"/_auth/login", http.StatusFound)
+		return
+	}
+	if p := pendingRedirect(cl, s.cfg.authHost); p != "" {
+		http.Redirect(w, r, p, http.StatusFound)
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.maxBodyBytes)
+	if err := r.ParseForm(); err != nil || !s.cfg.checkForm(r.PostForm.Get("ft")) {
+		http.Error(w, "session expired — try again", http.StatusForbidden)
+		return
+	}
+	plain, hashed := newBackupCodes(8)
+	if err := s.users.mutate(u.Username, func(u *User) bool {
+		u.BackupCodes = hashed
+		u.DeviceGen++
+		return true
+	}); err != nil {
+		s.log.Error("persist backup code regeneration", "user", u.Username, "error", err)
+		http.Error(w, "authentication storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	s.audit("backup_codes_regenerated", s.clientIP(r), u.Username, r)
+	s.renderBackupCodes(w, plain, n)
+}
+
 // password serves self-service password change; forced first when the
 // session carries the must-change flag (temp passwords from user creation
 // or admin resets).
@@ -1119,6 +1258,10 @@ func (s *server) password(w http.ResponseWriter, r *http.Request) {
 	}
 	if newPW != r.PostForm.Get("new2") {
 		s.renderPassword(w, cl.has("c"), "Passwords don't match.", n)
+		return
+	}
+	if isCommonPassword(newPW) {
+		s.renderPassword(w, cl.has("c"), "That password appears in breach lists — choose a unique one.", n)
 		return
 	}
 	hash, err := hashPassword(newPW)
@@ -1257,6 +1400,11 @@ func main() {
 		log.Error("cannot load session revocations", "error", err)
 		os.Exit(1)
 	}
+	throttlePath := filepath.Join(filepath.Dir(cfg.usersFile), "throttle.json")
+	if err := s.tr.load(throttlePath); err != nil {
+		// losing lockout state on a corrupt file beats refusing to start
+		log.Error("cannot load throttle state — starting fresh", "path", throttlePath, "error", err)
+	}
 	wa, err := webauthn.New(&webauthn.Config{
 		RPDisplayName: cfg.totpIssuer,
 		RPID:          cfg.authHost,
@@ -1287,6 +1435,7 @@ func main() {
 	mux.HandleFunc("/_auth/logout", s.logout)
 	mux.HandleFunc("/_auth/enroll", s.enroll)
 	mux.HandleFunc("/_auth/password", s.password)
+	mux.HandleFunc("/_auth/backup-codes", s.handleBackupCodes)
 	mux.HandleFunc("/_auth/passkeys", s.passkeyPage)
 	mux.HandleFunc("/_auth/passkeys/register/begin", s.passkeyRegisterBegin)
 	mux.HandleFunc("/_auth/passkeys/register/finish", s.passkeyRegisterFinish)
@@ -1353,6 +1502,9 @@ func main() {
 		defer cancel()
 		if err := srv.Shutdown(ctx); err != nil {
 			log.Error("shutdown", "error", err)
+		}
+		if err := s.tr.persist(throttlePath); err != nil {
+			log.Error("persist throttle state", "error", err)
 		}
 		if aud.file != nil {
 			if err := aud.file.Close(); err != nil {

@@ -32,7 +32,7 @@
 <body>
   <div class="shell">
     <div class="shell__who">signed in as <b>{{.User}}</b></div>
-    <button class="btn btn-secondary" onclick="openSettings('account')" aria-label="Settings">
+    <button class="btn btn-secondary" id="open-settings" aria-label="Settings">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="3"/>
@@ -47,8 +47,7 @@
   </div>
 
   <!-- Backdrop -->
-  <div class="modal-backdrop" id="settings-backdrop"
-       onclick="closeSettings()" aria-hidden="true"></div>
+  <div class="modal-backdrop" id="settings-backdrop" aria-hidden="true"></div>
 
   <!-- Modal -->
   <dialog class="modal" id="settings-modal"
@@ -62,14 +61,14 @@
           <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
         </svg>
         <input type="search" id="sidebar-search" placeholder="Search"
-               aria-label="Search settings" oninput="filterSidebar(this.value)" />
+               aria-label="Search settings" />
       </div>
       <nav id="settings-nav" aria-label="Settings navigation"></nav>
     </aside>
 
     <!-- Content -->
     <div class="modal__content" id="settings-content">
-      <button class="modal__close" onclick="closeSettings()" aria-label="Close settings">
+      <button class="modal__close" aria-label="Close settings">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
              stroke="currentColor" stroke-width="2.5" aria-hidden="true">
           <path d="M18 6 6 18M6 6l12 12"/>
@@ -83,6 +82,7 @@
 var IS_ADMIN = {{.IsAdmin}};
 var CURRENT_USER = "{{.User}}";
 var CSRF_TOKEN = "{{.CSRF}}";
+var FORM_TOKEN = "{{.FT}}";
 
 var activePane = 'account';
 var state = {users: [], audit: {Recent: [], Total: 0, Success: 0, Failed: 0}, locked: [], sessions: []};
@@ -144,13 +144,13 @@ function renderNav() {
   var html = '<div class="sidebar__section-label">Settings</div>';
   SETTINGS_NAV.forEach(function (item) {
     html += '<button class="sidebar__item' + (activePane === item.id ? ' active' : '') +
-      '" onclick="showPane(\'' + item.id + '\')">' + item.icon + ' ' + item.label + '</button>';
+      '" data-pane="' + item.id + '">' + item.icon + ' ' + item.label + '</button>';
   });
   if (IS_ADMIN) {
     html += '<div class="sidebar__section-label" style="margin-top:12px">Administration</div>';
     ADMIN_NAV.forEach(function (item) {
       html += '<button class="sidebar__item' + (activePane === item.id ? ' active' : '') +
-        '" onclick="showPane(\'' + item.id + '\')">' + item.icon + ' ' + item.label + '</button>';
+        '" data-pane="' + item.id + '">' + item.icon + ' ' + item.label + '</button>';
     });
   }
   nav.innerHTML = html;
@@ -190,6 +190,13 @@ var PANE_TEMPLATES = {
         '<div><div class="card__label">Log out</div>' +
         '<div class="card__value">End this session.</div></div>' +
         '<a class="btn btn-secondary btn-sm" href="/_auth/logout">Log out</a>' +
+      '</div>' +
+      '<div class="card__row">' +
+        '<div><div class="card__label">Regenerate backup codes</div>' +
+        '<div class="card__value">Issues 8 new recovery codes — invalidates the old ones and all trusted devices.</div></div>' +
+        '<form method="post" action="/_auth/backup-codes">' +
+        '<input type="hidden" name="ft" value="' + FORM_TOKEN + '">' +
+        '<button type="submit" class="btn btn-secondary btn-sm">Regenerate</button></form>' +
       '</div>' +
     '</div>' +
     '<h3 class="pane__h3">Trusted devices</h3>' +
@@ -251,8 +258,8 @@ var PANE_TEMPLATES = {
     '<div class="card">' +
       '<div class="card__title">Events</div>' +
       '<div class="filter-row">' +
-        '<input class="form-input" id="lf-text" placeholder="filter: ip / user / host / event…" oninput="loadAdminLogs()">' +
-        '<select class="form-input" id="lf-kind" onchange="loadAdminLogs()">' +
+        '<input class="form-input" id="lf-text" placeholder="filter: ip / user / host / event…">' +
+        '<select class="form-input" id="lf-kind">' +
           '<option value="">all events</option>' +
           '<option value="login_ok">login ok</option>' +
           '<option value="login_fail">login failed</option>' +
@@ -465,6 +472,24 @@ function closeSettings() {
 document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape') closeSettings();
 });
+
+// Event wiring (no inline handlers — CSP script-src is nonce-only)
+document.getElementById('open-settings').addEventListener('click', function () { openSettings('account'); });
+document.getElementById('settings-backdrop').addEventListener('click', closeSettings);
+document.getElementById('sidebar-search').addEventListener('input', function () { filterSidebar(this.value); });
+
+// Delegated: modal close button (re-inserted on every pane switch) and
+// sidebar nav items (re-rendered by renderNav)
+document.addEventListener('click', function (e) {
+  if (e.target.closest('.modal__close')) { closeSettings(); return; }
+  var item = e.target.closest('#settings-nav .sidebar__item');
+  if (item && item.dataset.pane) showPane(item.dataset.pane);
+});
+
+// Delegated: audit-log filter row (re-created with the pane skeleton)
+var contentEl = document.getElementById('settings-content');
+contentEl.addEventListener('input', function (e) { if (e.target.id === 'lf-text') loadAdminLogs(); });
+contentEl.addEventListener('change', function (e) { if (e.target.id === 'lf-kind') loadAdminLogs(); });
 
 setInterval(fetchState, 5000);
 

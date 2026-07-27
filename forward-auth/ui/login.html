@@ -79,7 +79,7 @@
         </div>
         <button
           type="button"
-          onclick="nextStep()"
+          id="btn-continue"
           class="w-full bg-white text-black rounded-xl px-4 py-3
                  text-sm font-semibold hover:bg-gray-100 transition-colors">
           Continue
@@ -90,7 +90,7 @@
       <div id="step-pass" class="hidden">
         <div class="mb-4 flex items-center justify-between text-xs">
           <span class="text-muted">signing in as <span id="who" class="text-white font-medium"></span></span>
-          <button type="button" onclick="prevStep()"
+          <button type="button" id="btn-back"
                   class="text-muted hover:text-white underline underline-offset-2 transition-colors">
             change
           </button>
@@ -152,6 +152,8 @@
       document.getElementById('step-user').classList.remove('hidden');
       document.getElementById('u').focus();
     }
+    document.getElementById('btn-continue').addEventListener('click', nextStep);
+    document.getElementById('btn-back').addEventListener('click', prevStep);
     document.getElementById('u').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); nextStep(); }
     });

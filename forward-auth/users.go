@@ -8,10 +8,12 @@ package main
 // which keeps the parsed users in memory under a mutex — with a handful of
 // users there is no need for anything heavier.
 //
-// Passwords are stored as bcrypt hashes. TOTP secrets are per-user; a secret
-// generated during enrollment sits in PendingTOTP until the user confirms a
-// code, so a half-finished enrollment never locks anyone out. Backup codes
-// are stored as SHA-256 hashes and removed on use.
+// Passwords are stored as Argon2id hashes (PHC format). Existing bcrypt
+// hashes are still accepted and transparently upgraded to Argon2id on the
+// next successful login. TOTP secrets are per-user; a secret generated
+// during enrollment sits in PendingTOTP until the user confirms a code, so
+// a half-finished enrollment never locks anyone out. Backup codes are
+// stored as SHA-256 hashes and removed on use.
 //
 // lastStep (TOTP replay protection) is now persisted in the same JSON file
 // under "last_step" so that replay protection survives container restarts.
@@ -19,7 +21,9 @@ package main
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base32"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -32,6 +36,7 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
+	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -116,9 +121,9 @@ type userStore struct {
 	lastStep map[string]int64
 }
 
-// dummyHash is compared against when the username doesn't exist, so a login
-// attempt takes the same time whether or not the user is real.
-var dummyHash = []byte("$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy")
+// dummyArgon2Hash is compared against when the username doesn't exist, so a
+// login attempt takes the same time whether or not the user is real.
+var dummyArgon2Hash = "$argon2id$v=19$m=65536,t=3,p=4$AqEs8VKjYucHBmGSPfqyVQ$A8ilJSZbSUHYrR86d+hLXr4xA8z3DIpvZpaTdICHNLA"
 
 func newUserStore(path string) *userStore {
 	return &userStore{path: path, users: map[string]*User{}, lastStep: map[string]int64{}}
@@ -228,11 +233,11 @@ func (st *userStore) bootstrap(username, password, totpSecret string) (created b
 	}
 	hash := password
 	if !looksLikeBcrypt(password) {
-		h, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		h, err := hashPassword(password)
 		if err != nil {
 			return false, err
 		}
-		hash = string(h)
+		hash = h
 	}
 	st.users[username] = &User{
 		Username:      username,
@@ -342,15 +347,29 @@ func (st *userStore) delete(name string) error {
 	return nil
 }
 
-// checkPassword performs the bcrypt comparison, burning comparable time on
-// unknown users so the response can't be used for enumeration.
+// checkPassword verifies the password against the stored hash, burning
+// comparable time on unknown users so the response can't be used for
+// enumeration. Existing bcrypt hashes are accepted and transparently
+// upgraded to Argon2id on successful login.
 func (st *userStore) checkPassword(name, password string) bool {
 	u := st.get(name)
 	if u == nil {
-		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
+		_, _ = verifyArgon2id(password, dummyArgon2Hash)
 		return false
 	}
-	return bcrypt.CompareHashAndPassword([]byte(u.Hash), []byte(password)) == nil
+	if looksLikeBcrypt(u.Hash) {
+		if bcrypt.CompareHashAndPassword([]byte(u.Hash), []byte(password)) != nil {
+			return false
+		}
+		// Transparent upgrade: re-hash with Argon2id and persist. A persist
+		// failure is non-fatal — the upgrade is retried on the next login.
+		if newHash, err := hashPassword(password); err == nil {
+			_ = st.mutate(name, func(u *User) bool { u.Hash = newHash; return true })
+		}
+		return true
+	}
+	ok, _ := verifyArgon2id(password, u.Hash)
+	return ok
 }
 
 // checkTOTP validates a code against the user's committed secret with replay
@@ -457,7 +476,58 @@ func hashBackupCode(code string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// --- Argon2id password hashing (PHC format) ----------------------------------
+
+const (
+	argon2Time    = 3
+	argon2Memory  = 64 * 1024 // 64 MB
+	argon2Threads = 4
+	argon2KeyLen  = 32
+	argon2SaltLen = 16
+)
+
 func hashPassword(pw string) (string, error) {
-	h, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
-	return string(h), err
+	salt := randomBytes(argon2SaltLen)
+	hash := argon2.IDKey([]byte(pw), salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
+	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
+		argon2.Version, argon2Memory, argon2Time, argon2Threads,
+		base64.RawStdEncoding.EncodeToString(salt),
+		base64.RawStdEncoding.EncodeToString(hash)), nil
+}
+
+// verifyArgon2id checks a password against an argon2id PHC string.
+func verifyArgon2id(pw, encoded string) (bool, error) {
+	salt, hash, time, memory, threads, keyLen, err := parseArgon2idPHC(encoded)
+	if err != nil {
+		return false, err
+	}
+	other := argon2.IDKey([]byte(pw), salt, time, memory, threads, keyLen)
+	return subtle.ConstantTimeCompare(hash, other) == 1, nil
+}
+
+// parseArgon2idPHC decodes "$argon2id$v=19$m=…,t=…,p=…$salt$hash" (inline
+// parser — short enough to avoid an extra dependency). Parameters are
+// sanity-capped so a corrupt store can't cause an unbounded allocation.
+func parseArgon2idPHC(encoded string) (salt, hash []byte, time, memory uint32, threads uint8, keyLen uint32, err error) {
+	parts := strings.Split(encoded, "$")
+	if len(parts) != 6 || parts[0] != "" || parts[1] != "argon2id" {
+		return nil, nil, 0, 0, 0, 0, errors.New("not an argon2id PHC string")
+	}
+	var version int
+	if _, err = fmt.Sscanf(parts[2], "v=%d", &version); err != nil || version != argon2.Version {
+		return nil, nil, 0, 0, 0, 0, errors.New("unsupported argon2 version")
+	}
+	if _, err = fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &time, &threads); err != nil {
+		return nil, nil, 0, 0, 0, 0, errors.New("bad argon2 parameters")
+	}
+	if memory == 0 || memory > 1<<20 || time == 0 || time > 10 || threads == 0 {
+		return nil, nil, 0, 0, 0, 0, errors.New("argon2 parameters out of range")
+	}
+	if salt, err = base64.RawStdEncoding.DecodeString(parts[4]); err != nil || len(salt) == 0 {
+		return nil, nil, 0, 0, 0, 0, errors.New("bad argon2 salt")
+	}
+	if hash, err = base64.RawStdEncoding.DecodeString(parts[5]); err != nil || len(hash) == 0 {
+		return nil, nil, 0, 0, 0, 0, errors.New("bad argon2 hash")
+	}
+	return salt, hash, time, memory, threads, uint32(len(hash)), nil
 }

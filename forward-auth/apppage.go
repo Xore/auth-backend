@@ -26,6 +26,7 @@ type AppPageData struct {
 	User    string
 	IsAdmin bool
 	CSRF    string
+	FT      string // form token for in-shell POST forms (backup codes)
 	Nonce   string
 }
 
@@ -42,6 +43,7 @@ func (s *server) renderApp(w http.ResponseWriter, r *http.Request) {
 		User:    u.Username,
 		IsAdmin: u.Role == roleAdmin,
 		CSRF:    s.cfg.csrfToken(cl.sid),
+		FT:      s.cfg.issueForm(),
 		Nonce:   n,
 	}); err != nil {
 		s.log.Error("render app shell", "error", err)
