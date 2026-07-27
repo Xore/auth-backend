@@ -43,6 +43,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -105,6 +106,22 @@ func getenvFile(k, def string) string {
 	return getenv(k, def)
 }
 
+func requireEnv(k string) string {
+	v := os.Getenv(k)
+	if v == "" {
+		log.Fatalf("required env var %s is not set", k)
+	}
+	return v
+}
+
+func requireEnvFile(k string) string {
+	v := getenvFile(k, "")
+	if v == "" {
+		log.Fatalf("required env var %s is not set", k)
+	}
+	return v
+}
+
 func atoi(s string, def int) int {
 	if n, err := strconv.Atoi(s); err == nil {
 		return n
@@ -116,7 +133,7 @@ func atoi(s string, def int) int {
 // Traefik connects from. Forwarded-for headers are only honored from these.
 const defaultTrustedProxies = "127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7,::1/128"
 
-func parseCIDRs(s string, log *slog.Logger) []*net.IPNet {
+func parseCIDRs(s string, logger *slog.Logger) []*net.IPNet {
 	var nets []*net.IPNet
 	for _, part := range strings.Split(s, ",") {
 		part = strings.TrimSpace(part)
@@ -126,20 +143,25 @@ func parseCIDRs(s string, log *slog.Logger) []*net.IPNet {
 		if _, n, err := net.ParseCIDR(part); err == nil {
 			nets = append(nets, n)
 		} else {
-			log.Warn("ignoring invalid TRUSTED_PROXIES entry", "entry", part)
+			logger.Warn("ignoring invalid TRUSTED_PROXIES entry", "entry", part)
 		}
 	}
 	return nets
 }
 
-func loadConfig(log *slog.Logger) config {
+func loadConfig(logger *slog.Logger) config {
 	secret := []byte(getenvFile("COOKIE_SECRET", ""))
 	if len(secret) == 0 {
 		secret = make([]byte, 32)
-		_, _ = rand.Read(secret)
-		log.Warn("COOKIE_SECRET not set — generated a random key; sessions drop on restart and won't match across replicas")
+		if _, err := rand.Read(secret); err != nil {
+			panic("crypto/rand failed: " + err.Error())
+		}
+		logger.Warn("COOKIE_SECRET not set — generated a random key; sessions drop on restart and won't match across replicas")
 	}
-	authHost := getenv("AUTH_HOST", "auth.xore.rocks")
+	authHost := getenv("AUTH_HOST", "")
+	if authHost == "" {
+		log.Fatal("AUTH_HOST must be set")
+	}
 	var oldSecrets [][]byte
 	for _, old := range strings.Split(getenvFile("COOKIE_SECRET_PREVIOUS", ""), ",") {
 		if old = strings.TrimSpace(old); old != "" {
@@ -153,8 +175,8 @@ func loadConfig(log *slog.Logger) config {
 		cookieDom:    getenv("COOKIE_DOMAIN", ""),
 		secret:       secret,
 		oldSecrets:   oldSecrets,
-		username:     getenv("AUTH_USERNAME", "admin"),
-		password:     getenvFile("AUTH_PASSWORD", "change-me-auth"),
+		username:     requireEnv("AUTH_USERNAME"),
+		password:     requireEnvFile("AUTH_PASSWORD"),
 		totpSecret:   normalizeB32(getenvFile("TOTP_SECRET", "")),
 		totpIssuer:   getenv("TOTP_ISSUER", authHost),
 		usersFile:    getenv("USERS_FILE", "/data/users.json"),
@@ -170,7 +192,7 @@ func loadConfig(log *slog.Logger) config {
 		ringCap:      atoi(os.Getenv("AUDIT_RING"), 500),
 		webhookURL:   getenv("WEBHOOK_URL", ""),
 		metricsToken: getenvFile("METRICS_TOKEN", ""),
-		trustedNets:  parseCIDRs(getenv("TRUSTED_PROXIES", defaultTrustedProxies), log),
+		trustedNets:  parseCIDRs(getenv("TRUSTED_PROXIES", defaultTrustedProxies), logger),
 		maxBodyBytes: int64(atoi(os.Getenv("MAX_BODY_KB"), 64)) * 1024,
 	}
 }
@@ -262,7 +284,9 @@ func (cl sessionClaims) has(flag string) bool { return strings.Contains(cl.flags
 
 func newSID() string {
 	b := make([]byte, 12)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 	return hex.EncodeToString(b)
 }
 
@@ -326,9 +350,11 @@ func (c config) validDevice(tok, user string, gen int) bool {
 // --- form (CSRF + timing) tokens --------------------------------------------
 
 func (c config) issueForm() string {
-	nonce := make([]byte, 8)
-	_, _ = rand.Read(nonce)
-	body := strconv.FormatInt(time.Now().Unix(), 10) + "|" + hex.EncodeToString(nonce)
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
+	body := strconv.FormatInt(time.Now().Unix(), 10) + "|" + hex.EncodeToString(b)
 	return body + "|" + c.mac(body)
 }
 
@@ -562,14 +588,22 @@ func (c config) safeRedirect(raw string) string {
 	return out
 }
 
-func secHeaders(w http.ResponseWriter) {
+func nonce() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
+	return hex.EncodeToString(b)
+}
+
+func secHeaders(w http.ResponseWriter, n string) {
 	h := w.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("Cache-Control", "no-store")
 	h.Set("Content-Security-Policy",
-		"default-src 'none'; style-src 'unsafe-inline'; img-src data:; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+		"default-src 'none'; style-src 'nonce-"+n+"'; script-src 'nonce-"+n+"'; img-src data:; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 }
 
 func (s *server) setCookie(w http.ResponseWriter, cl sessionClaims) {
@@ -659,7 +693,8 @@ func pendingRedirect(cl sessionClaims, authHost string) string {
 // --- handlers ---------------------------------------------------------------
 
 func (s *server) verify(w http.ResponseWriter, r *http.Request) {
-	secHeaders(w)
+	n := nonce()
+	secHeaders(w, n)
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -678,10 +713,10 @@ func (s *server) verify(w http.ResponseWriter, r *http.Request) {
 		}
 		if !u.hostAllowed(host) {
 			s.audit("forbidden_host", s.clientIP(r), u.Username, r)
-			secHeaders(w)
+			secHeaders(w, n)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusForbidden)
-			s.renderForbidden(w, normalizeHost(host))
+			s.renderForbidden(w, normalizeHost(host), n)
 			return
 		}
 		s.reg.touch(cl.sid, u.Username, s.clientIP(r), r.UserAgent())
@@ -694,12 +729,14 @@ func (s *server) verify(w http.ResponseWriter, r *http.Request) {
 	host := r.Header.Get("X-Forwarded-Host")
 	uri := r.Header.Get("X-Forwarded-Uri")
 	orig := proto + "://" + host + uri
-	login := "https://" + s.cfg.authHost + "/_auth/login?rd=" + url.QueryEscape(orig)
+	rd := s.cfg.safeRedirect(orig)
+	login := "https://" + s.cfg.authHost + "/_auth/login?rd=" + url.QueryEscape(rd)
 	http.Redirect(w, r, login, http.StatusFound)
 }
 
 func (s *server) login(w http.ResponseWriter, r *http.Request) {
-	secHeaders(w)
+	n := nonce()
+	secHeaders(w, n)
 	rd := s.cfg.safeRedirect(r.URL.Query().Get("rd"))
 	ip := s.clientIP(r)
 
@@ -712,7 +749,7 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, rd, http.StatusFound)
 			return
 		}
-		s.renderLogin(w, rd, "")
+		s.renderLogin(w, rd, "", n)
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -724,37 +761,37 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 
 	if locked, d := s.tr.locked(ip); locked {
 		s.audit("locked_out", ip, "", r)
-		s.renderLogin(w, rd, "Too many attempts. Try again in "+d.Round(time.Second).String()+".")
+		s.renderLogin(w, rd, "Too many attempts. Try again in "+d.Round(time.Second).String()+".", n)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		s.fail(w, r, ip, rd, "bad_request")
+		s.fail(w, r, ip, rd, "bad_request", n)
 		return
 	}
 	rd = s.cfg.safeRedirect(r.PostForm.Get("rd"))
 
 	if r.PostForm.Get("website") != "" {
-		s.fail(w, r, ip, rd, "honeypot")
+		s.fail(w, r, ip, rd, "honeypot", n)
 		return
 	}
 	if !s.cfg.checkForm(r.PostForm.Get("ft")) {
-		s.fail(w, r, ip, rd, "bad_form_token")
+		s.fail(w, r, ip, rd, "bad_form_token", n)
 		return
 	}
 
 	username := r.PostForm.Get("username")
 	if locked, d := s.tr.locked("user:" + strings.ToLower(username)); locked {
 		s.audit("locked_out", ip, "", r)
-		s.renderLogin(w, rd, "Too many attempts. Try again in "+d.Round(time.Second).String()+".")
+		s.renderLogin(w, rd, "Too many attempts. Try again in "+d.Round(time.Second).String()+".", n)
 		return
 	}
 	if !s.users.checkPassword(username, r.PostForm.Get("password")) {
-		s.fail(w, r, ip, rd, "bad_credentials")
+		s.fail(w, r, ip, rd, "bad_credentials", n)
 		return
 	}
 	u := s.users.get(username)
 	if u.Disabled {
-		s.fail(w, r, ip, rd, "disabled_user")
+		s.fail(w, r, ip, rd, "disabled_user", n)
 		return
 	}
 	if u.TOTPSecret != "" && !s.trustedDevice(r, username) {
@@ -762,7 +799,7 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case len(code) >= 8 && strings.Contains(code, "-"):
 			if !s.users.checkBackupCode(username, code) {
-				s.fail(w, r, ip, rd, "bad_backup_code")
+				s.fail(w, r, ip, rd, "bad_backup_code", n)
 				return
 			}
 			s.audit("backup_code_used", ip, username, r)
@@ -770,7 +807,7 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 				fmt.Sprintf("%d backup codes remain", len(s.users.get(username).BackupCodes)))
 		default:
 			if !s.users.checkTOTP(username, code) {
-				s.fail(w, r, ip, rd, "bad_totp")
+				s.fail(w, r, ip, rd, "bad_totp", n)
 				return
 			}
 		}
@@ -812,7 +849,7 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, rd, http.StatusFound)
 }
 
-func (s *server) fail(w http.ResponseWriter, r *http.Request, ip, rd, reason string) {
+func (s *server) fail(w http.ResponseWriter, r *http.Request, ip, rd, reason, nonce string) {
 	username := strings.ToLower(strings.TrimSpace(r.PostForm.Get("username")))
 	locked := s.tr.fail(ip)
 	if username != "" && s.tr.fail("user:"+username) {
@@ -822,11 +859,11 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, ip, rd, reason str
 		s.ntf.send("locked_out", r.PostForm.Get("username"), ip, s.cfg.authHost, reason)
 	}
 	s.audit("login_fail:"+reason, ip, r.PostForm.Get("username"), r)
-	s.renderLogin(w, rd, "Invalid credentials.")
+	s.renderLogin(w, rd, "Invalid credentials.", nonce)
 }
 
 func (s *server) logout(w http.ResponseWriter, r *http.Request) {
-	secHeaders(w)
+	secHeaders(w, nonce())
 	if c, err := r.Cookie(s.cfg.cookieName); err == nil {
 		if cl, ok := s.cfg.parseSession(c.Value); ok {
 			if err := s.reg.revoke(cl.sid); err != nil {
@@ -843,7 +880,8 @@ func (s *server) logout(w http.ResponseWriter, r *http.Request) {
 // the QR, and commits only once the user proves their app generates valid
 // codes. Session-gated — unlike the old FIRST_RUN page, never public.
 func (s *server) enroll(w http.ResponseWriter, r *http.Request) {
-	secHeaders(w)
+	n := nonce()
+	secHeaders(w, n)
 	cl, u, ok := s.session(r)
 	if !ok {
 		http.Redirect(w, r, "https://"+s.cfg.authHost+"/_auth/login", http.StatusFound)
@@ -867,13 +905,13 @@ func (s *server) enroll(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		r.Body = http.MaxBytesReader(w, r.Body, s.cfg.maxBodyBytes)
 		if err := r.ParseForm(); err != nil || !s.cfg.checkForm(r.PostForm.Get("ft")) {
-			s.renderEnroll(w, u, "Session expired — try again.")
+			s.renderEnroll(w, u, "Session expired — try again.", n)
 			return
 		}
 		pending := u.PendingTOTP
 		okCode, _ := totpValidStep(pending, r.PostForm.Get("totp"))
 		if pending == "" || !okCode {
-			s.renderEnroll(w, u, "That code didn't match — scan again and retry.")
+			s.renderEnroll(w, u, "That code didn't match — scan again and retry.", n)
 			return
 		}
 		plain, hashed := newBackupCodes(8)
@@ -895,7 +933,7 @@ func (s *server) enroll(w http.ResponseWriter, r *http.Request) {
 		fresh := s.users.get(u.Username)
 		cl2 := sessionClaims{user: u.Username, gen: fresh.Gen, sid: cl.sid, flags: s.flagsFor(fresh), exp: cl.exp}
 		s.setCookie(w, cl2)
-		s.renderBackupCodes(w, plain)
+		s.renderBackupCodes(w, plain, n)
 		return
 	}
 
@@ -909,21 +947,22 @@ func (s *server) enroll(w http.ResponseWriter, r *http.Request) {
 		}
 		u = s.users.get(u.Username)
 	}
-	s.renderEnroll(w, u, "")
+	s.renderEnroll(w, u, "", n)
 }
 
 // password serves self-service password change; forced first when the
 // session carries the must-change flag (temp passwords from user creation
 // or admin resets).
 func (s *server) password(w http.ResponseWriter, r *http.Request) {
-	secHeaders(w)
+	n := nonce()
+	secHeaders(w, n)
 	cl, u, ok := s.session(r)
 	if !ok {
 		http.Redirect(w, r, "https://"+s.cfg.authHost+"/_auth/login", http.StatusFound)
 		return
 	}
 	if r.Method == http.MethodGet {
-		s.renderPassword(w, cl.has("c"), "")
+		s.renderPassword(w, cl.has("c"), "", n)
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -933,26 +972,26 @@ func (s *server) password(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.maxBodyBytes)
 	if err := r.ParseForm(); err != nil || !s.cfg.checkForm(r.PostForm.Get("ft")) {
-		s.renderPassword(w, cl.has("c"), "Session expired — try again.")
+		s.renderPassword(w, cl.has("c"), "Session expired — try again.", n)
 		return
 	}
 	if !s.users.checkPassword(u.Username, r.PostForm.Get("current")) {
 		s.audit("pw_change_fail", s.clientIP(r), u.Username, r)
-		s.renderPassword(w, cl.has("c"), "Current password is wrong.")
+		s.renderPassword(w, cl.has("c"), "Current password is wrong.", n)
 		return
 	}
 	newPW := r.PostForm.Get("new1")
 	if len(newPW) < 10 {
-		s.renderPassword(w, cl.has("c"), "New password must be at least 10 characters.")
+		s.renderPassword(w, cl.has("c"), "New password must be at least 10 characters.", n)
 		return
 	}
 	if newPW != r.PostForm.Get("new2") {
-		s.renderPassword(w, cl.has("c"), "Passwords don't match.")
+		s.renderPassword(w, cl.has("c"), "Passwords don't match.", n)
 		return
 	}
 	hash, err := hashPassword(newPW)
 	if err != nil {
-		s.renderPassword(w, cl.has("c"), "Internal error — try again.")
+		s.renderPassword(w, cl.has("c"), "Internal error — try again.", n)
 		return
 	}
 	// bump the generation: a password change invalidates every other session
@@ -1121,9 +1160,10 @@ func main() {
 	mux.HandleFunc("/_auth/passkeys/login/finish", s.passkeyLoginFinish)
 	mux.HandleFunc("/_auth/metrics", s.metrics)
 	mux.HandleFunc("/_auth/ok", func(w http.ResponseWriter, r *http.Request) {
-		secHeaders(w)
+		n := nonce()
+		secHeaders(w, n)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(okPage))
+		_, _ = w.Write([]byte(strings.ReplaceAll(okPage, "{{NONCE}}", n)))
 	})
 	mux.HandleFunc("/_auth/admin", s.adminPanel)
 	mux.HandleFunc("/_auth/admin/api/state", s.adminState)

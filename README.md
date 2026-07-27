@@ -65,12 +65,12 @@ Add a proxied DNS record for `AUTH_HOST` (and each protected subdomain).
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `AUTH_HOST` | `auth.xore.rocks` | Hostname the login page lives at |
+| `AUTH_HOST` | *(required)* | Hostname the login page lives at |
 | `COOKIE_DOMAIN` | `.xore.rocks` | Cookie scope — SSO across every subdomain |
 | `COOKIE_NAME` | `xore_sso` | Session cookie name |
 | `COOKIE_SECRET` | *(required)* | HMAC signing key, `openssl rand -hex 32`. Keep stable across restarts/replicas |
 | `COOKIE_SECRET_PREVIOUS` | *(empty)* | Previous key during rotation — remove once old sessions expire |
-| `AUTH_USERNAME` | `admin` | Bootstrap-only initial admin username |
+| `AUTH_USERNAME` | *(required)* | Bootstrap-only initial admin username |
 | `AUTH_PASSWORD` | *(required)* | Bootstrap-only initial admin password — ignored once `users.json` is non-empty |
 | `TOTP_SECRET` | *(empty)* | Optional bootstrap TOTP secret for the initial admin |
 | `TOTP_ISSUER` | `auth.xore.rocks` | Issuer name shown in authenticator apps |

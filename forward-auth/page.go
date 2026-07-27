@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-func (s *server) renderLogin(w http.ResponseWriter, rd, errMsg string) {
+func (s *server) renderLogin(w http.ResponseWriter, rd, errMsg, nonce string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	errHTML := ""
@@ -29,10 +29,11 @@ func (s *server) renderLogin(w http.ResponseWriter, rd, errMsg string) {
 	page = strings.ReplaceAll(page, "{{FT}}", s.cfg.issueForm())
 	page = strings.ReplaceAll(page, "{{ERROR}}", errHTML)
 	page = strings.ReplaceAll(page, "{{REMEMBER}}", rememberHTML)
+	page = strings.ReplaceAll(page, "{{NONCE}}", nonce)
 	_, _ = w.Write([]byte(page))
 }
 
-func (s *server) renderEnroll(w http.ResponseWriter, u *User, errMsg string) {
+func (s *server) renderEnroll(w http.ResponseWriter, u *User, errMsg, nonce string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	errHTML := ""
 	if errMsg != "" {
@@ -46,20 +47,22 @@ func (s *server) renderEnroll(w http.ResponseWriter, u *User, errMsg string) {
 	page = strings.ReplaceAll(page, "{{USER}}", htmlEscape(u.Username))
 	page = strings.ReplaceAll(page, "{{FT}}", s.cfg.issueForm())
 	page = strings.ReplaceAll(page, "{{ERROR}}", errHTML)
+	page = strings.ReplaceAll(page, "{{NONCE}}", nonce)
 	_, _ = w.Write([]byte(page))
 }
 
-func (s *server) renderBackupCodes(w http.ResponseWriter, codes []string) {
+func (s *server) renderBackupCodes(w http.ResponseWriter, codes []string, nonce string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	var b strings.Builder
 	for _, c := range codes {
 		b.WriteString(`<li>` + htmlEscape(c) + `</li>`)
 	}
 	page := strings.ReplaceAll(backupCodesPage, "{{CODES}}", b.String())
+	page = strings.ReplaceAll(page, "{{NONCE}}", nonce)
 	_, _ = w.Write([]byte(page))
 }
 
-func (s *server) renderPassword(w http.ResponseWriter, mustChange bool, errMsg string) {
+func (s *server) renderPassword(w http.ResponseWriter, mustChange bool, errMsg, nonce string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	errHTML := ""
 	if errMsg != "" {
@@ -73,11 +76,13 @@ func (s *server) renderPassword(w http.ResponseWriter, mustChange bool, errMsg s
 	page = strings.ReplaceAll(page, "{{FT}}", s.cfg.issueForm())
 	page = strings.ReplaceAll(page, "{{ERROR}}", errHTML)
 	page = strings.ReplaceAll(page, "{{NOTICE}}", notice)
+	page = strings.ReplaceAll(page, "{{NONCE}}", nonce)
 	_, _ = w.Write([]byte(page))
 }
 
-func (s *server) renderForbidden(w http.ResponseWriter, host string) {
+func (s *server) renderForbidden(w http.ResponseWriter, host, nonce string) {
 	page := strings.ReplaceAll(forbiddenPage, "{{HOST}}", htmlEscape(host))
+	page = strings.ReplaceAll(page, "{{NONCE}}", nonce)
 	_, _ = w.Write([]byte(page))
 }
 
@@ -117,6 +122,7 @@ const baseCSS = `
     border:1px solid var(--line-2);border-radius:var(--radius);padding:34px 32px;
     box-shadow:0 30px 80px -30px rgba(0,0,0,.7)}
   .gate--wide{max-width:480px}
+  .gate--center{text-align:center}
   .brand{display:flex;align-items:center;justify-content:center;gap:11px;margin-bottom:6px}
   .brand__mark{filter:drop-shadow(0 0 10px rgba(56,189,248,.5))}
   .brand__text{font-weight:800;letter-spacing:.12em;font-size:1.15rem}
@@ -153,7 +159,23 @@ const baseCSS = `
     letter-spacing:.1em;color:var(--faint);text-transform:uppercase}
   .foot .dia{color:var(--cyan);font-size:.55rem}
   .foot a{color:var(--faint)}
-  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+  .foot-flat{margin-top:0}
+  .trap{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+  .qr-wrap{display:flex;justify-content:center;margin:0 0 22px;padding:20px;background:#fff;isolation:isolate}
+  .copy-box{background:#080b10;border:1px solid var(--line-2);border-radius:8px;padding:10px 14px;font-family:var(--mono);letter-spacing:.1em;word-break:break-all;margin-bottom:14px;text-align:center;cursor:pointer}
+  .copy-box--cyan{color:var(--cyan);font-size:.78rem}
+  .copy-box--muted{color:var(--muted);font-size:.66rem}
+  .copied{display:none;font-family:var(--mono);font-size:.65rem;color:var(--green);text-align:center;margin-bottom:14px}
+  .codes-grid{list-style:none;display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:18px;font-family:var(--mono);font-size:.85rem;color:var(--cyan);letter-spacing:.08em;text-align:center}
+  .btn-spaced{margin-bottom:10px}
+  .btn-link{display:block;text-align:center;font-family:var(--mono);font-size:.72rem;letter-spacing:.08em;color:var(--cyan);text-decoration:none;padding:11px;border-radius:8px;border:1px solid rgba(56,189,248,.25);background:rgba(56,189,248,.08)}
+  .status-ok{font-family:var(--mono);color:var(--green);font-size:.9rem;margin-bottom:18px}
+  .status-err{font-family:var(--mono);color:var(--red);font-size:.85rem;margin-bottom:14px}
+  .text-muted{font-size:.8rem;color:var(--muted);line-height:1.6;margin-bottom:18px}
+  .label-hint{text-transform:none;color:var(--faint)}
+  .form-spaced{margin-top:10px}
+  .copy-label{font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;color:var(--faint);text-transform:uppercase;margin-bottom:6px;text-align:center}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 `
 
 const pageHead = `<!doctype html>
@@ -163,7 +185,7 @@ const pageHead = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>xore//auth</title>
-<style>` + baseCSS + `</style>
+<style nonce="{{NONCE}}">` + baseCSS + `</style>
 </head>
 <body>
   <div class="scene" aria-hidden="true">
@@ -189,7 +211,7 @@ const loginPage = pageHead + `
     <div class="sub"><span class="status__led"></span>single sign-on</div>
     <input type="hidden" name="rd" value="{{RD}}">
     <input type="hidden" name="ft" value="{{FT}}">
-    <div class="trap" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden">
+    <div class="trap" aria-hidden="true">
       <label>Leave this field empty</label>
       <input type="text" name="website" tabindex="-1" autocomplete="off">
     </div>
@@ -198,7 +220,7 @@ const loginPage = pageHead + `
     <input id="u" name="username" autocomplete="off" autocapitalize="none" spellcheck="false" autofocus>
     <label for="p">password</label>
     <input id="p" name="password" type="password" autocomplete="new-password">
-    <label for="totp">2fa code <span style="text-transform:none;color:var(--faint)">— or backup code, if enrolled</span></label>
+    <label for="totp">2fa code <span class="label-hint">— or backup code, if enrolled</span></label>
     <input id="totp" name="totp" inputmode="numeric" autocomplete="one-time-code"
            maxlength="12" placeholder="000000">
     {{REMEMBER}}
@@ -210,7 +232,7 @@ const loginPage = pageHead + `
       <span>cgnat gateway</span>
     </div>
   </form>
-  <script>
+  <script nonce="{{NONCE}}">
     const b64buf = s => { s=s.replace(/-/g,'+').replace(/_/g,'/');s+='='.repeat((4-s.length%4)%4);return Uint8Array.from(atob(s),c=>c.charCodeAt(0)); };
     const b64url = b => { let s=''; new Uint8Array(b).forEach(v=>s+=String.fromCharCode(v)); return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); };
     const credentialJSON = c => ({id:c.id,type:c.type,rawId:b64url(c.rawId),response:{
@@ -239,10 +261,10 @@ const loginPage = pageHead + `
 </html>`
 
 const okPage = pageHead + `
-  <div class="gate" style="max-width:340px;text-align:center">` + brandHTML + `
+  <div class="gate gate--center">` + brandHTML + `
     <div class="sub"><span class="status__led"></span>session active</div>
-    <p style="font-family:var(--mono);color:var(--green);font-size:.9rem;margin-bottom:18px">&#10003; signed in</p>
-    <div class="foot" style="margin-top:0">
+    <p class="status-ok">&#10003; signed in</p>
+    <div class="foot foot-flat">
       <a href="/_auth/password">change password</a> <span class="dia">&#9670;</span>
       <a href="/_auth/passkeys">passkeys</a> <span class="dia">&#9670;</span>
       <a href="/_auth/admin">admin</a> <span class="dia">&#9670;</span>
@@ -258,16 +280,13 @@ const enrollPage = pageHead + `
     <div class="badge"><span class="badge__dot"></span>two-factor setup required</div>
     <!-- white, unrounded, isolated: rounded corners clip the finder patterns
          and background glow bleeding breaks camera detection -->
-    <div style="display:flex;justify-content:center;margin:0 0 22px;padding:20px;background:#fff;isolation:isolate"
-         title="Scan with your authenticator app">{{QR}}</div>
-    <p style="font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;color:var(--faint);text-transform:uppercase;margin-bottom:6px;text-align:center">manual entry secret — tap to copy</p>
-    <div id="secret" onclick="copyText('secret')" title="Click to copy"
-         style="background:#080b10;border:1px solid var(--line-2);border-radius:8px;padding:10px 14px;font-family:var(--mono);font-size:.78rem;color:var(--cyan);letter-spacing:.1em;word-break:break-all;margin-bottom:14px;text-align:center;cursor:pointer">{{SECRET}}</div>
-    <p style="font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;color:var(--faint);text-transform:uppercase;margin-bottom:6px;text-align:center">otpauth uri — for 1password &amp; co, tap to copy</p>
-    <div id="uri" onclick="copyText('uri')" title="Click to copy"
-         style="background:#080b10;border:1px solid var(--line-2);border-radius:8px;padding:10px 14px;font-family:var(--mono);font-size:.66rem;color:var(--muted);word-break:break-all;margin-bottom:8px;text-align:center;cursor:pointer">{{URI}}</div>
-    <div class="copied" id="copied" style="display:none;font-family:var(--mono);font-size:.65rem;color:var(--green);text-align:center;margin-bottom:14px">&#10003; copied to clipboard</div>
-    <form method="post" action="/_auth/enroll" style="margin-top:10px">
+    <div class="qr-wrap" title="Scan with your authenticator app">{{QR}}</div>
+    <p class="copy-label">manual entry secret — tap to copy</p>
+    <div id="secret" onclick="copyText('secret')" title="Click to copy" class="copy-box copy-box--cyan">{{SECRET}}</div>
+    <p class="copy-label">otpauth uri — for 1password &amp; co, tap to copy</p>
+    <div id="uri" onclick="copyText('uri')" title="Click to copy" class="copy-box copy-box--muted">{{URI}}</div>
+    <div class="copied" id="copied">&#10003; copied to clipboard</div>
+    <form method="post" action="/_auth/enroll" class="form-spaced">
       <input type="hidden" name="ft" value="{{FT}}">
       {{ERROR}}
       <label for="totp">enter the 6-digit code from your app to activate</label>
@@ -277,7 +296,7 @@ const enrollPage = pageHead + `
     </form>
     <div class="foot"><a href="/_auth/logout">cancel &amp; log out</a></div>
   </div>
-  <script>
+  <script nonce="{{NONCE}}">
     function copyText(id) {
       var s = document.getElementById(id).innerText.replace(/\s/g,'');
       navigator.clipboard && navigator.clipboard.writeText(s).then(function(){
@@ -294,18 +313,17 @@ const backupCodesPage = pageHead + `
   <div class="gate gate--wide">` + brandHTML + `
     <div class="sub">recovery codes</div>
     <div class="badge"><span class="badge__dot"></span>shown once — store them now</div>
-    <p style="font-size:.82rem;color:var(--muted);line-height:1.6;margin-bottom:18px">
+    <p class="text-muted">
       Two-factor is active. If you lose your authenticator, any of these one-time
       codes signs you in (enter it in the 2fa field). Each works once.</p>
-    <ul id="codes" style="list-style:none;display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:18px;
-        font-family:var(--mono);font-size:.85rem;color:var(--cyan);letter-spacing:.08em;text-align:center">
+    <ul id="codes" class="codes-grid">
       {{CODES}}
     </ul>
-    <button onclick="copyCodes()" style="margin-bottom:10px">copy all to clipboard</button>
-    <div class="copied" id="copied" style="display:none;font-family:var(--mono);font-size:.65rem;color:var(--green);text-align:center;margin-bottom:10px">&#10003; copied</div>
-    <a href="/_auth/ok" style="display:block;text-align:center;font-family:var(--mono);font-size:.72rem;letter-spacing:.08em;color:var(--cyan);text-decoration:none;padding:11px;border-radius:8px;border:1px solid rgba(56,189,248,.25);background:rgba(56,189,248,.08)">i saved them — continue &rarr;</a>
+    <button onclick="copyCodes()" class="btn-spaced">copy all to clipboard</button>
+    <div class="copied" id="copied">&#10003; copied</div>
+    <a href="/_auth/ok" class="btn-link">i saved them — continue &rarr;</a>
   </div>
-  <script>
+  <script nonce="{{NONCE}}">
     function copyCodes() {
       var t = Array.from(document.querySelectorAll('#codes li')).map(function(li){return li.innerText}).join('\n');
       navigator.clipboard && navigator.clipboard.writeText(t).then(function(){
@@ -326,7 +344,7 @@ const passwordPage = pageHead + `
     {{ERROR}}
     <label for="cur">current password</label>
     <input id="cur" name="current" type="password" autocomplete="current-password" autofocus>
-    <label for="n1">new password <span style="text-transform:none;color:var(--faint)">— min 10 chars</span></label>
+    <label for="n1">new password <span class="label-hint">— min 10 chars</span></label>
     <input id="n1" name="new1" type="password" autocomplete="new-password">
     <label for="n2">repeat new password</label>
     <input id="n2" name="new2" type="password" autocomplete="new-password">
@@ -337,13 +355,13 @@ const passwordPage = pageHead + `
 </html>`
 
 const forbiddenPage = pageHead + `
-  <div class="gate" style="max-width:420px;text-align:center">` + brandHTML + `
+  <div class="gate gate--center">` + brandHTML + `
     <div class="sub">access denied</div>
-    <p style="font-family:var(--mono);color:var(--red);font-size:.85rem;margin-bottom:14px">&#10007; not authorized for {{HOST}}</p>
-    <p style="font-size:.8rem;color:var(--muted);line-height:1.6;margin-bottom:18px">
+    <p class="status-err">&#10007; not authorized for {{HOST}}</p>
+    <p class="text-muted">
       Your account doesn't have access to this service. If it should,
       ask an admin to add it to your allowed hosts.</p>
-    <div class="foot" style="margin-top:0"><a href="/_auth/logout">switch account</a></div>
+    <div class="foot foot-flat"><a href="/_auth/logout">switch account</a></div>
   </div>
 </body>
 </html>`

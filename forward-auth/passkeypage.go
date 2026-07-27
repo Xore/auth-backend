@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func (s *server) renderPasskeys(w http.ResponseWriter, u *User, csrf string) {
+func (s *server) renderPasskeys(w http.ResponseWriter, u *User, csrf, nonce string) {
 	var rows strings.Builder
 	for _, key := range u.Passkeys {
 		last := "never"
@@ -20,28 +20,31 @@ func (s *server) renderPasskeys(w http.ResponseWriter, u *User, csrf string) {
 	}
 	page := strings.ReplaceAll(passkeysPage, "{{KEYS}}", rows.String())
 	page = strings.ReplaceAll(page, "{{CSRF}}", csrf)
+	page = strings.ReplaceAll(page, "{{NONCE}}", nonce)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(page))
 }
 
 const passkeysPage = pageHead + `
+<meta name="csrf-token" content="{{CSRF}}">
   <div class="gate gate--wide">` + brandHTML + `
     <div class="sub">passkeys</div>
-    <p style="font-size:.82rem;color:var(--muted);line-height:1.6;margin-bottom:18px">Passkeys provide phishing-resistant sign-in using your phone, computer, password manager, or hardware security key.</p>
+    <p class="text-muted">Passkeys provide phishing-resistant sign-in using your phone, computer, password manager, or hardware security key.</p>
     <div id="keys">{{KEYS}}</div>
-    <label for="pk-name" style="margin-top:20px">new passkey name</label>
+    <label for="pk-name" class="label-spaced">new passkey name</label>
     <input id="pk-name" maxlength="64" placeholder="MacBook Touch ID">
     <button id="add">add a passkey</button>
     <div class="foot"><a href="/_auth/ok">back</a> <span class="dia">&#9670;</span> <a href="/_auth/logout">log out</a></div>
   </div>
-  <style>
+  <style nonce="{{NONCE}}">
     .pk{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line);padding:12px 0}
     .pk b{font-family:var(--mono);font-size:.8rem}.pk small{display:block;color:var(--faint);font-size:.68rem;margin-top:4px}
     .pk button{width:auto;padding:7px 10px;color:var(--red);border-color:rgba(248,113,113,.3);background:transparent}
     .empty{font-family:var(--mono);color:var(--faint);font-size:.75rem;margin-bottom:12px}
+    .label-spaced{margin-top:20px}
   </style>
-  <script>
-    const csrf='{{CSRF}}';
+  <script nonce="{{NONCE}}">
+    const csrf=document.querySelector('meta[name="csrf-token"]').getAttribute('content');
     const b64buf = s => { s=s.replace(/-/g,'+').replace(/_/g,'/');s+='='.repeat((4-s.length%4)%4);return Uint8Array.from(atob(s),c=>c.charCodeAt(0)); };
     const b64url = b => { let s=''; new Uint8Array(b).forEach(v=>s+=String.fromCharCode(v)); return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); };
     const credentialJSON = c => ({id:c.id,type:c.type,rawId:b64url(c.rawId),response:{clientDataJSON:b64url(c.response.clientDataJSON),attestationObject:b64url(c.response.attestationObject),transports:c.response.getTransports?c.response.getTransports():[]}});

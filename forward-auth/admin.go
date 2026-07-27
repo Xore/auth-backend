@@ -68,8 +68,9 @@ func (s *server) adminPanel(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	secHeaders(w)
-	s.renderAdmin(w, u.Username, s.cfg.csrfToken(cl.sid))
+	n := nonce()
+	secHeaders(w, n)
+	s.renderAdmin(w, u.Username, s.cfg.csrfToken(cl.sid), n)
 }
 
 func (s *server) adminState(w http.ResponseWriter, r *http.Request) {
@@ -77,7 +78,7 @@ func (s *server) adminState(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	secHeaders(w)
+	secHeaders(w, nonce())
 	n := min(max(atoi(r.URL.Query().Get("n"), 100), 0), 1000)
 	views := []adminUserView{}
 	for _, u := range s.users.list() {
@@ -329,7 +330,7 @@ func (s *server) adminAudit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	secHeaders(w)
+	secHeaders(w, nonce())
 	n := min(max(atoi(r.URL.Query().Get("n"), 50), 0), 1000)
 	jsonOut(w, http.StatusOK, map[string]any{
 		"audit":  s.aud.snapshot(n),

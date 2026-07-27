@@ -81,12 +81,13 @@ func (s *server) passkeyPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	secHeaders(w)
-	s.renderPasskeys(w, u, s.cfg.csrfToken(cl.sid))
+	n := nonce()
+	secHeaders(w, n)
+	s.renderPasskeys(w, u, s.cfg.csrfToken(cl.sid), n)
 }
 
 func (s *server) passkeyRegisterBegin(w http.ResponseWriter, r *http.Request) {
-	secHeaders(w)
+	secHeaders(w, nonce())
 	cl, u, ok := s.passkeyGate(w, r)
 	if !ok {
 		return
@@ -116,7 +117,7 @@ func (s *server) passkeyRegisterBegin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request) {
-	secHeaders(w)
+	secHeaders(w, nonce())
 	cl, u, ok := s.passkeyGate(w, r)
 	if !ok {
 		return
@@ -152,7 +153,7 @@ func (s *server) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) passkeyLoginBegin(w http.ResponseWriter, r *http.Request) {
-	secHeaders(w)
+	secHeaders(w, nonce())
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -187,7 +188,7 @@ func (s *server) passkeyLoginBegin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
-	secHeaders(w)
+	secHeaders(w, nonce())
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -255,7 +256,7 @@ func (s *server) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) passkeyDelete(w http.ResponseWriter, r *http.Request) {
-	secHeaders(w)
+	secHeaders(w, nonce())
 	_, u, ok := s.passkeyGate(w, r)
 	if !ok {
 		return

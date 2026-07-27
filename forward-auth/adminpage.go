@@ -9,11 +9,12 @@ import (
 	"strings"
 )
 
-func (s *server) renderAdmin(w http.ResponseWriter, adminUser, csrf string) {
+func (s *server) renderAdmin(w http.ResponseWriter, adminUser, csrf, nonce string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	page := adminPage
 	page = strings.ReplaceAll(page, "{{ADMIN}}", htmlEscape(adminUser))
 	page = strings.ReplaceAll(page, "{{CSRF}}", csrf)
+	page = strings.ReplaceAll(page, "{{NONCE}}", nonce)
 	_, _ = w.Write([]byte(page))
 }
 
@@ -23,8 +24,9 @@ const adminPage = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
+<meta name="csrf-token" content="{{CSRF}}">
 <title>xore//auth — admin</title>
-<style>` + baseCSS + `
+<style nonce="{{NONCE}}">` + baseCSS + `
   body{align-items:flex-start;padding:32px 20px}
   .panel{width:100%;max-width:1060px;margin:0 auto}
   .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;flex-wrap:wrap;gap:10px}
@@ -77,6 +79,18 @@ const adminPage = `<!doctype html>
   #flash.err{border-color:rgba(248,113,113,.5)}
   #flash b{color:var(--green)}
   .empty{color:var(--faint);font-family:var(--mono);font-size:.72rem;padding:14px 10px}
+  .muted-inline{color:var(--faint);text-transform:none;letter-spacing:0}
+  .user-cyan{color:var(--cyan)}
+  .hosts-hint{font-size:.65rem}
+  .last-info{font-size:.65rem}
+  .agent-cell{font-size:.62rem;color:var(--faint);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .session-agent{font-size:.62rem;color:var(--faint);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .nowrap{white-space:nowrap}
+  .hidden{display:none}
+  .stat-ok{color:var(--green)}
+  .stat-fail{color:var(--red)}
+  .stat-locked{color:var(--orange)}
+  .small{font-size:.65rem}
   @media(max-width:760px){.newuser{grid-template-columns:1fr}.hide-sm{display:none}}
 </style>
 </head>
@@ -90,7 +104,7 @@ const adminPage = `<!doctype html>
   <div id="flash"></div>
   <div class="panel">
     <div class="top">` + brandHTML + `
-      <div class="top__who">signed in as <span style="color:var(--cyan)">{{ADMIN}}</span>
+      <div class="top__who">signed in as <span class="user-cyan">{{ADMIN}}</span>
         <a href="/_auth/password">password</a>
         <a href="/_auth/logout">log out</a></div>
     </div>
@@ -106,7 +120,7 @@ const adminPage = `<!doctype html>
         <div class="newuser">
           <div><label>username</label><input id="nu-name" autocomplete="off" autocapitalize="none" spellcheck="false"></div>
           <div><label>role</label><select id="nu-role"><option value="user">user</option><option value="admin">admin</option></select></div>
-          <div><label>allowed hosts <span style="text-transform:none;color:var(--faint)">— blank = all; comma-sep, *.dom ok</span></label>
+          <div><label>allowed hosts <span class="muted-inline">— blank = all; comma-sep, *.dom ok</span></label>
             <input id="nu-hosts" placeholder="grafana.xore.rocks, *.media.xore.rocks"></div>
           <button onclick="createUser()">create</button>
         </div>
@@ -120,12 +134,12 @@ const adminPage = `<!doctype html>
       </div>
     </div>
 
-    <div id="pane-logs" style="display:none">
+    <div id="pane-logs" class="hidden">
       <div class="stats">
         <div class="stat"><div class="stat__n" id="st-total">–</div><div class="stat__l">attempts</div></div>
-        <div class="stat"><div class="stat__n" id="st-ok" style="color:var(--green)">–</div><div class="stat__l">successful</div></div>
-        <div class="stat"><div class="stat__n" id="st-fail" style="color:var(--red)">–</div><div class="stat__l">failed</div></div>
-        <div class="stat"><div class="stat__n" id="st-locked" style="color:var(--orange)">–</div><div class="stat__l">locked ips</div></div>
+        <div class="stat"><div class="stat__n stat-ok" id="st-ok">–</div><div class="stat__l">successful</div></div>
+        <div class="stat"><div class="stat__n stat-fail" id="st-fail">–</div><div class="stat__l">failed</div></div>
+        <div class="stat"><div class="stat__n stat-locked" id="st-locked">–</div><div class="stat__l">locked ips</div></div>
       </div>
       <div class="card">
         <h3>locked out</h3>
@@ -151,9 +165,9 @@ const adminPage = `<!doctype html>
       </div>
     </div>
 
-    <div id="pane-sessions" style="display:none">
+    <div id="pane-sessions" class="hidden">
       <div class="card">
-        <h3>active sessions <span style="text-transform:none;letter-spacing:0;color:var(--faint)">(best effort — repopulates after restart)</span></h3>
+        <h3>active sessions <span class="muted-inline">(best effort — repopulates after restart)</span></h3>
         <table><thead><tr>
           <th>user</th><th>ip</th><th class="hide-sm">agent</th><th>signed in</th><th>last seen</th><th></th>
         </tr></thead><tbody id="sess-body"></tbody></table>
@@ -161,8 +175,8 @@ const adminPage = `<!doctype html>
     </div>
   </div>
 
-<script>
-var CSRF = "{{CSRF}}";
+<script nonce="{{NONCE}}">
+var CSRF = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
 var state = {users:[], audit:{Recent:[],Total:0,Success:0,Failed:0}, locked:[], sessions:[]};
 
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){
@@ -214,15 +228,15 @@ function renderUsers(){var tb=document.getElementById('users-body');tb.innerHTML
     var tr=document.createElement('tr');
     var status=u.disabled?'<span class="tag tag--err">disabled</span>':
       (u.must_change?'<span class="tag tag--warn">temp pw</span>':'<span class="tag tag--ok">active</span>');
-    var totp=u.totp_enrolled?'<span class="tag tag--ok">on</span> <span style="color:var(--faint);font-size:.65rem">'+u.backup_codes+' codes · '+u.passkeys+' keys</span>'
+    var totp=u.totp_enrolled?'<span class="tag tag--ok">on</span> <span class="muted-inline small">'+u.backup_codes+' codes · '+u.passkeys+' keys</span>'
       :'<span class="tag tag--warn">pending</span>';
-    var hosts=(u.allowed_hosts&&u.allowed_hosts.length)?esc(u.allowed_hosts.join(', ')):'<span style="color:var(--faint)">all</span>';
-    var last=u.last_ip?ts(u.last_login)+' <span style="color:var(--faint)">('+esc(u.last_ip)+')</span>':'–';
+    var hosts=(u.allowed_hosts&&u.allowed_hosts.length)?esc(u.allowed_hosts.join(', ')):'<span class="faint">all</span>';
+    var last=u.last_ip?ts(u.last_login)+' <span class="muted-inline">('+esc(u.last_ip)+')</span>':'–';
     tr.innerHTML='<td class="mono">'+esc(u.username)+'</td>'+
       '<td><span class="tag tag--'+(u.role==='admin'?'admin':'user')+'">'+esc(u.role)+'</span></td>'+
       '<td>'+status+'</td><td>'+totp+'</td>'+
-      '<td class="mono hide-sm" style="font-size:.65rem">'+hosts+'</td>'+
-      '<td class="mono hide-sm" style="font-size:.65rem">'+last+'</td>'+
+      '<td class="mono hide-sm hosts-hint">'+hosts+'</td>'+
+      '<td class="mono hide-sm last-info">'+last+'</td>'+
       '<td><div class="row-actions">'+
       (u.disabled?'<button onclick="act(\'enable\',{username:\''+esc(u.username)+'\'})">enable</button>'
         :'<button onclick="confirmAct(\'Disable '+esc(u.username)+'?\',\'disable\',{username:\''+esc(u.username)+'\'})">disable</button>')+
@@ -260,18 +274,18 @@ function renderLogs(){
   rows.forEach(function(e){var tr=document.createElement('tr');
     var cls=e.event==='login_ok'?'tag--ok':(e.event.indexOf('login_fail')===0||e.event==='locked_out'?'tag--err':
       (e.event.indexOf('admin_')===0?'tag--admin':'tag--warn'));
-    tr.innerHTML='<td class="mono" style="white-space:nowrap">'+ts(e.time)+'</td>'+
+    tr.innerHTML='<td class="mono nowrap">'+ts(e.time)+'</td>'+
       '<td><span class="tag '+cls+'">'+esc(e.event)+'</span></td>'+
       '<td class="mono">'+esc(e.ip)+'</td><td class="mono">'+esc(e.user||'–')+'</td>'+
-      '<td class="mono hide-sm" style="font-size:.65rem">'+esc(e.host||'–')+'</td>'+
-      '<td class="mono hide-sm" style="font-size:.62rem;color:var(--faint);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(e.ua||'')+'</td>';
+      '<td class="mono hide-sm hosts-hint">'+esc(e.host||'–')+'</td>'+
+      '<td class="mono hide-sm agent-cell">'+esc(e.ua||'')+'</td>';
     tb.appendChild(tr);});}
 
 function renderSessions(){var tb=document.getElementById('sess-body');tb.innerHTML='';
   if(!state.sessions.length){tb.innerHTML='<tr><td colspan="6" class="empty">no sessions seen yet</td></tr>';return;}
   state.sessions.forEach(function(s){var tr=document.createElement('tr');
     tr.innerHTML='<td class="mono">'+esc(s.user)+'</td><td class="mono">'+esc(s.ip)+'</td>'+
-      '<td class="mono hide-sm" style="font-size:.62rem;color:var(--faint);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(s.ua)+'</td>'+
+      '<td class="mono hide-sm session-agent">'+esc(s.ua)+'</td>'+
       '<td class="mono">'+ago(s.created)+'</td><td class="mono">'+ago(s.last_seen)+'</td>'+
       '<td><div class="row-actions"><button class="danger" onclick="confirmAct(\'Revoke this session?\',\'revoke_session\',{sid:\''+esc(s.sid)+'\'})">revoke</button></div></td>';
     tb.appendChild(tr);});}
