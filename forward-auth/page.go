@@ -1,43 +1,86 @@
 package main
 
-// page.go — HTML rendering for the user-facing pages. All pages are inline
-// (no assets, no external requests) and share the same dark design system.
-// The admin panel lives in adminpage.go.
+// page.go — HTML rendering for the user-facing pages. All pages link the
+// shared Claude design system (/static/claude-theme.css, embedded under ui/)
+// plus a small nonce'd pageCSS block with layout-only rules — every colour
+// comes from the theme's custom properties. The admin panel lives in
+// adminpage.go.
 
 import (
 	"html"
+	"html/template"
 	"net/http"
-	"strconv"
 	"strings"
 )
 
+// tmplFuncs are shared by the file-based templates in ui/ (login, verify).
+var tmplFuncs = template.FuncMap{
+	"seq": func(n int) []int {
+		s := make([]int, n)
+		for i := range s {
+			s[i] = i
+		}
+		return s
+	},
+	"add": func(a, b int) int { return a + b },
+}
+
+var (
+	loginTmpl  = template.Must(template.New("login").Funcs(tmplFuncs).Parse(string(mustReadUI("login.html"))))
+	verifyTmpl = template.Must(template.New("verify").Funcs(tmplFuncs).Parse(string(mustReadUI("verify.html"))))
+)
+
+// LoginPageData is passed to ui/login.html.
+type LoginPageData struct {
+	Nonce      string
+	FT         string // form (CSRF + timing) token
+	RD         string // redirect target, already safeRedirect'ed
+	Error      string
+	Remember   bool // show the "trust this device" checkbox
+	TrustDays  int
+	SSOEnabled bool
+}
+
+// VerifyPageData is passed to ui/verify.html (the post-password 2FA step).
+type VerifyPageData struct {
+	Nonce string
+	RD    string
+	Error string
+}
+
 func (s *server) renderLogin(w http.ResponseWriter, rd, errMsg, nonce string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-	errHTML := ""
-	if errMsg != "" {
-		errHTML = `<p class="err">` + htmlEscape(errMsg) + `</p>`
+	if err := loginTmpl.Execute(w, LoginPageData{
+		Nonce:      nonce,
+		FT:         s.cfg.issueForm(),
+		RD:         rd,
+		Error:      errMsg,
+		Remember:   s.cfg.trustDevDays > 0,
+		TrustDays:  s.cfg.trustDevDays,
+		SSOEnabled: s.cfg.ssoURL != "",
+	}); err != nil {
+		s.log.Error("render login page", "error", err)
 	}
-	rememberHTML := ""
-	if s.cfg.trustDevDays > 0 {
-		rememberHTML = `<label class="check"><input type="checkbox" name="remember" value="1">
-      trust this device for ` + strconv.Itoa(s.cfg.trustDevDays) + ` days (skips 2fa)</label>`
-	}
+}
 
-	page := loginPage
-	page = strings.ReplaceAll(page, "{{RD}}", htmlEscape(rd))
-	page = strings.ReplaceAll(page, "{{FT}}", s.cfg.issueForm())
-	page = strings.ReplaceAll(page, "{{ERROR}}", errHTML)
-	page = strings.ReplaceAll(page, "{{REMEMBER}}", rememberHTML)
-	page = strings.ReplaceAll(page, "{{NONCE}}", nonce)
-	_, _ = w.Write([]byte(page))
+// renderVerify shows the post-password 2FA page (pending cookie is set by
+// the caller before rendering).
+func (s *server) renderVerify(w http.ResponseWriter, rd, errMsg, nonce string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := verifyTmpl.Execute(w, VerifyPageData{
+		Nonce: nonce,
+		RD:    rd,
+		Error: errMsg,
+	}); err != nil {
+		s.log.Error("render verify page", "error", err)
+	}
 }
 
 func (s *server) renderEnroll(w http.ResponseWriter, u *User, errMsg, nonce string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	errHTML := ""
 	if errMsg != "" {
-		errHTML = `<p class="err">` + htmlEscape(errMsg) + `</p>`
+		errHTML = `<p class="form-error">` + htmlEscape(errMsg) + `</p>`
 	}
 	uri := s.cfg.totpURI(u.Username, u.PendingTOTP)
 	page := enrollPage
@@ -66,11 +109,11 @@ func (s *server) renderPassword(w http.ResponseWriter, mustChange bool, errMsg, 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	errHTML := ""
 	if errMsg != "" {
-		errHTML = `<p class="err">` + htmlEscape(errMsg) + `</p>`
+		errHTML = `<p class="form-error">` + htmlEscape(errMsg) + `</p>`
 	}
 	notice := ""
 	if mustChange {
-		notice = `<div class="badge"><span class="badge__dot"></span>temporary password — change required</div>`
+		notice = `<div class="notice"><span class="badge badge--orange">temporary password — change required</span></div>`
 	}
 	page := passwordPage
 	page = strings.ReplaceAll(page, "{{FT}}", s.cfg.issueForm())
@@ -90,91 +133,53 @@ func htmlEscape(s string) string {
 	return html.EscapeString(s)
 }
 
-// baseCSS is shared by every page: dark backdrop, card, brand, form fields.
-const baseCSS = `
-  :root{
-    --bg:#06080b;--panel:#0f141b;--line:rgba(255,255,255,.07);--line-2:rgba(255,255,255,.11);
-    --text:#e8edf3;--muted:#8a97a8;--faint:#5c697a;--cyan:#38bdf8;--green:#34d399;
-    --red:#f87171;--orange:#fb923c;
-    --radius:14px;--ease:cubic-bezier(.22,1,.36,1);
-    --font:"Inter",system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,monospace;
-  }
-  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-  body{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
-    font-family:var(--font);color:var(--text);-webkit-font-smoothing:antialiased;
-    background:radial-gradient(120% 80% at 50% -10%,#131a24 0%,#090c11 55%,#06080b 100%);}
-  svg{display:block}
-  .scene{position:fixed;inset:0;z-index:-1;overflow:hidden}
-  .scene__glow{position:absolute;border-radius:50%;filter:blur(120px)}
-  .scene__glow--warm{width:620px;height:620px;right:-180px;bottom:-140px;
-    background:radial-gradient(circle,rgba(255,176,92,.22),transparent 70%)}
-  .scene__glow--cool{width:720px;height:720px;left:-200px;top:-160px;
-    background:radial-gradient(circle,rgba(56,189,248,.16),transparent 70%)}
-  .scene__grid{position:absolute;inset:0;
-    background-image:linear-gradient(rgba(255,255,255,.028) 1px,transparent 1px),
-      linear-gradient(90deg,rgba(255,255,255,.028) 1px,transparent 1px);
-    background-size:60px 60px;
-    -webkit-mask-image:radial-gradient(ellipse 75% 60% at 50% 30%,#000 30%,transparent 78%);
-    mask-image:radial-gradient(ellipse 75% 60% at 50% 30%,#000 30%,transparent 78%)}
-  .scene__vignette{position:absolute;inset:0;
-    background:radial-gradient(120% 100% at 50% 40%,transparent 55%,rgba(0,0,0,.6) 100%)}
-  .gate{width:100%;max-width:400px;background:linear-gradient(180deg,#0c1119,#080b10);
-    border:1px solid var(--line-2);border-radius:var(--radius);padding:34px 32px;
-    box-shadow:0 30px 80px -30px rgba(0,0,0,.7)}
-  .gate--wide{max-width:480px}
-  .gate--center{text-align:center}
-  .brand{display:flex;align-items:center;justify-content:center;gap:11px;margin-bottom:6px}
-  .brand__mark{filter:drop-shadow(0 0 10px rgba(56,189,248,.5))}
-  .brand__text{font-weight:800;letter-spacing:.12em;font-size:1.15rem}
-  .brand__slash{color:var(--cyan)}
-  .sub{text-align:center;font-family:var(--mono);font-size:.7rem;letter-spacing:.14em;
-    color:var(--muted);text-transform:uppercase;margin-bottom:28px}
-  .status__led{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);
-    box-shadow:0 0 10px var(--green);margin-right:7px;vertical-align:middle;
-    animation:pulse 2.2s var(--ease) infinite}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
-  label{display:block;font-family:var(--mono);font-size:.72rem;letter-spacing:.08em;
-    color:var(--muted);text-transform:uppercase;margin:0 0 6px}
-  input{width:100%;background:#080b10;border:1px solid var(--line-2);border-radius:8px;
-    color:var(--text);font-family:var(--mono);font-size:.88rem;padding:11px 14px;outline:none;
-    margin-bottom:16px;transition:border-color .2s}
-  input:focus{border-color:rgba(56,189,248,.4)}
-  button{width:100%;font-family:var(--mono);font-size:.78rem;letter-spacing:.08em;
-    padding:12px;border-radius:8px;cursor:pointer;color:var(--cyan);
-    background:rgba(56,189,248,.12);border:1px solid rgba(56,189,248,.3);
-    transition:all .2s var(--ease)}
-  button:hover{background:rgba(56,189,248,.2);border-color:var(--cyan)}
-  button.secondary{margin-top:10px;background:transparent;color:var(--green);border-color:rgba(52,211,153,.3)}
-  .err{font-family:var(--mono);font-size:.75rem;color:var(--red);margin-bottom:16px;text-align:center}
-  .check{display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;
-    font-size:.72rem;color:var(--muted);margin-bottom:16px;cursor:pointer}
-  .check input{width:auto;margin:0;accent-color:var(--cyan)}
-  .badge{display:inline-flex;align-items:center;gap:6px;background:rgba(251,146,60,.12);
-    border:1px solid rgba(251,146,60,.3);border-radius:6px;padding:5px 10px;
-    font-family:var(--mono);font-size:.68rem;letter-spacing:.08em;color:var(--orange);
-    text-transform:uppercase;margin-bottom:24px;width:100%;justify-content:center}
-  .badge__dot{width:6px;height:6px;border-radius:50%;background:var(--orange);
-    box-shadow:0 0 8px var(--orange);animation:pulse 2s var(--ease) infinite}
-  .foot{margin-top:24px;text-align:center;font-family:var(--mono);font-size:.66rem;
-    letter-spacing:.1em;color:var(--faint);text-transform:uppercase}
-  .foot .dia{color:var(--cyan);font-size:.55rem}
-  .foot a{color:var(--faint)}
+// pageCSS holds the page-specific layout rules shared by every user-facing
+// page. All colours reference the claude-theme.css custom properties — the
+// theme palette is never redefined here. The QR wrapper keeps its functional
+// white background (camera detection requires it).
+const pageCSS = `
+  .auth-body{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .auth-card{width:100%;max-width:400px}
+  .auth-card--wide{max-width:480px}
+  .auth-center{text-align:center}
+  .auth-actions{display:flex;flex-direction:column;gap:10px;margin-top:4px}
+  .auth-btn{width:100%;text-decoration:none}
+  .brand{display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:4px}
+  .brand__text{font-weight:600;letter-spacing:.12em;font-size:1.05rem}
+  .brand__slash{color:var(--accent)}
+  .sub{text-align:center;font-size:11px;font-weight:500;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--text-muted);margin-bottom:24px}
+  .check{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary);
+    margin-bottom:16px;cursor:pointer}
+  .check input{width:auto;margin:0;accent-color:var(--accent)}
+  .notice{display:flex;justify-content:center;margin-bottom:20px}
+  .foot{margin-top:20px;text-align:center;font-size:11px;letter-spacing:.06em;
+    color:var(--text-muted);text-transform:uppercase}
+  .foot a{color:var(--text-muted)}
+  .foot .dia{color:var(--accent);font-size:.55rem}
   .foot-flat{margin-top:0}
   .trap{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
-  .qr-wrap{display:flex;justify-content:center;margin:0 0 22px;padding:20px;background:#fff;isolation:isolate}
-  .copy-box{background:#080b10;border:1px solid var(--line-2);border-radius:8px;padding:10px 14px;font-family:var(--mono);letter-spacing:.1em;word-break:break-all;margin-bottom:14px;text-align:center;cursor:pointer}
-  .copy-box--cyan{color:var(--cyan);font-size:.78rem}
-  .copy-box--muted{color:var(--muted);font-size:.66rem}
-  .copied{display:none;font-family:var(--mono);font-size:.65rem;color:var(--green);text-align:center;margin-bottom:14px}
-  .codes-grid{list-style:none;display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:18px;font-family:var(--mono);font-size:.85rem;color:var(--cyan);letter-spacing:.08em;text-align:center}
-  .btn-spaced{margin-bottom:10px}
-  .btn-link{display:block;text-align:center;font-family:var(--mono);font-size:.72rem;letter-spacing:.08em;color:var(--cyan);text-decoration:none;padding:11px;border-radius:8px;border:1px solid rgba(56,189,248,.25);background:rgba(56,189,248,.08)}
-  .status-ok{font-family:var(--mono);color:var(--green);font-size:.9rem;margin-bottom:18px}
-  .status-err{font-family:var(--mono);color:var(--red);font-size:.85rem;margin-bottom:14px}
-  .text-muted{font-size:.8rem;color:var(--muted);line-height:1.6;margin-bottom:18px}
-  .label-hint{text-transform:none;color:var(--faint)}
+  /* white, unrounded, isolated: rounded corners clip the finder patterns
+     and a dark background breaks camera detection */
+  .qr-wrap{display:flex;justify-content:center;margin:0 0 20px;padding:20px;background:#fff;isolation:isolate}
+  .copy-box{background:var(--surface-2);border:1px solid var(--border-subtle);
+    border-radius:var(--radius-sm);padding:10px 14px;
+    font-family:'SF Mono','Fira Code','Cascadia Code',monospace;word-break:break-all;
+    margin-bottom:14px;text-align:center;cursor:pointer;transition:background var(--transition)}
+  .copy-box:hover{background:var(--surface-3)}
+  .copy-box--accent{color:var(--accent);font-size:12px;letter-spacing:.06em}
+  .copy-box--muted{color:var(--text-muted);font-size:11px}
+  .copy-label{font-size:11px;letter-spacing:.06em;color:var(--text-muted);
+    text-transform:uppercase;margin-bottom:6px;text-align:center}
+  .copied{display:none;font-size:11px;color:var(--green);text-align:center;margin-bottom:14px}
+  .codes-grid{list-style:none;display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:0 0 18px;
+    padding:0;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:13px;
+    color:var(--accent);letter-spacing:.06em;text-align:center}
+  .status-ok{color:var(--green);font-size:15px;margin-bottom:18px}
+  .status-err{color:var(--red);font-size:13px;margin-bottom:14px}
+  .text-muted{font-size:13px;color:var(--text-secondary);line-height:1.6;margin-bottom:18px}
+  .label-hint{text-transform:none;color:var(--text-muted)}
   .form-spaced{margin-top:10px}
-  .copy-label{font-family:var(--mono);font-size:.66rem;letter-spacing:.08em;color:var(--faint);text-transform:uppercase;margin-bottom:6px;text-align:center}
   @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 `
 
@@ -185,84 +190,25 @@ const pageHead = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>xore//auth</title>
-<style nonce="{{NONCE}}">` + baseCSS + `</style>
+<link rel="stylesheet" href="/static/claude-theme.css">
+<style nonce="{{NONCE}}">` + pageCSS + `</style>
 </head>
-<body>
-  <div class="scene" aria-hidden="true">
-    <div class="scene__glow scene__glow--warm"></div>
-    <div class="scene__glow scene__glow--cool"></div>
-    <div class="scene__grid"></div>
-    <div class="scene__vignette"></div>
-  </div>`
+<body class="auth-body">`
 
 const brandHTML = `
     <div class="brand">
       <svg class="brand__mark" viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
         <path d="M6 6l20 20M26 6L6 26" stroke="url(#bg)" stroke-width="3.4" stroke-linecap="round"/>
         <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#38bdf8"/><stop offset="1" stop-color="#34d399"/>
+          <stop offset="0" stop-color="#d4764e"/><stop offset="1" stop-color="#c4673f"/>
         </linearGradient></defs>
       </svg>
       <span class="brand__text">XORE<span class="brand__slash">//</span>AUTH</span>
     </div>`
 
-const loginPage = pageHead + `
-  <form class="gate" method="post" action="/_auth/login" autocomplete="off">` + brandHTML + `
-    <div class="sub"><span class="status__led"></span>single sign-on</div>
-    <input type="hidden" name="rd" value="{{RD}}">
-    <input type="hidden" name="ft" value="{{FT}}">
-    <div class="trap" aria-hidden="true">
-      <label>Leave this field empty</label>
-      <input type="text" name="website" tabindex="-1" autocomplete="off">
-    </div>
-    {{ERROR}}
-    <label for="u">username</label>
-    <input id="u" name="username" autocomplete="off" autocapitalize="none" spellcheck="false" autofocus>
-    <label for="p">password</label>
-    <input id="p" name="password" type="password" autocomplete="new-password">
-    <label for="totp">2fa code <span class="label-hint">— or backup code, if enrolled</span></label>
-    <input id="totp" name="totp" inputmode="numeric" autocomplete="one-time-code"
-           maxlength="12" placeholder="000000">
-    {{REMEMBER}}
-    <button type="submit">authenticate</button>
-    <button type="button" class="secondary" id="passkey-login">sign in with a passkey</button>
-    <div class="foot">
-      <span>protected</span> <span class="dia">&#9670;</span>
-      <span>all activity logged</span> <span class="dia">&#9670;</span>
-      <span>cgnat gateway</span>
-    </div>
-  </form>
-  <script nonce="{{NONCE}}">
-    const b64buf = s => { s=s.replace(/-/g,'+').replace(/_/g,'/');s+='='.repeat((4-s.length%4)%4);return Uint8Array.from(atob(s),c=>c.charCodeAt(0)); };
-    const b64url = b => { let s=''; new Uint8Array(b).forEach(v=>s+=String.fromCharCode(v)); return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); };
-    const credentialJSON = c => ({id:c.id,type:c.type,rawId:b64url(c.rawId),response:{
-      authenticatorData:c.response.authenticatorData?b64url(c.response.authenticatorData):undefined,
-      clientDataJSON:b64url(c.response.clientDataJSON),signature:c.response.signature?b64url(c.response.signature):undefined,
-      userHandle:c.response.userHandle?b64url(c.response.userHandle):null,
-      attestationObject:c.response.attestationObject?b64url(c.response.attestationObject):undefined,
-      transports:c.response.getTransports?c.response.getTransports():undefined}});
-    document.getElementById('passkey-login').onclick = async function(){
-      const user=document.getElementById('u').value.trim();
-      if(!user){ document.getElementById('u').focus(); return; }
-      this.disabled=true;
-      try {
-        const begin=await fetch('/_auth/passkeys/login/begin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:user,redirect:document.querySelector('[name=rd]').value})});
-        if(!begin.ok) throw new Error('Passkey sign-in is unavailable.');
-        const data=await begin.json(), opts=data.options.publicKey;
-        opts.challenge=b64buf(opts.challenge); (opts.allowCredentials||[]).forEach(x=>x.id=b64buf(x.id));
-        const cred=await navigator.credentials.get({publicKey:opts});
-        const finish=await fetch('/_auth/passkeys/login/finish',{method:'POST',headers:{'Content-Type':'application/json','X-WebAuthn-Transaction':data.transaction},body:JSON.stringify(credentialJSON(cred))});
-        const result=await finish.json(); if(!finish.ok) throw new Error(result.error||'Passkey sign-in failed.');
-        location.assign(result.redirect);
-      } catch(e) { alert(e.message||'Passkey sign-in failed.'); this.disabled=false; }
-    };
-  </script>
-</body>
-</html>`
-
 const okPage = pageHead + `
-  <div class="gate gate--center">` + brandHTML + `
-    <div class="sub"><span class="status__led"></span>session active</div>
+  <div class="card auth-card auth-center">` + brandHTML + `
+    <div class="sub">session active</div>
     <p class="status-ok">&#10003; signed in</p>
     <div class="foot foot-flat">
       <a href="/_auth/password">change password</a> <span class="dia">&#9670;</span>
@@ -275,24 +221,24 @@ const okPage = pageHead + `
 </html>`
 
 const enrollPage = pageHead + `
-  <div class="gate gate--wide">` + brandHTML + `
+  <div class="card auth-card auth-card--wide">` + brandHTML + `
     <div class="sub">2fa enrollment — {{USER}}</div>
-    <div class="badge"><span class="badge__dot"></span>two-factor setup required</div>
-    <!-- white, unrounded, isolated: rounded corners clip the finder patterns
-         and background glow bleeding breaks camera detection -->
+    <div class="notice"><span class="badge badge--orange">two-factor setup required</span></div>
     <div class="qr-wrap" title="Scan with your authenticator app">{{QR}}</div>
     <p class="copy-label">manual entry secret — tap to copy</p>
-    <div id="secret" onclick="copyText('secret')" title="Click to copy" class="copy-box copy-box--cyan">{{SECRET}}</div>
+    <div id="secret" onclick="copyText('secret')" title="Click to copy" class="copy-box copy-box--accent">{{SECRET}}</div>
     <p class="copy-label">otpauth uri — for 1password &amp; co, tap to copy</p>
     <div id="uri" onclick="copyText('uri')" title="Click to copy" class="copy-box copy-box--muted">{{URI}}</div>
     <div class="copied" id="copied">&#10003; copied to clipboard</div>
     <form method="post" action="/_auth/enroll" class="form-spaced">
       <input type="hidden" name="ft" value="{{FT}}">
       {{ERROR}}
-      <label for="totp">enter the 6-digit code from your app to activate</label>
-      <input id="totp" name="totp" inputmode="numeric" autocomplete="one-time-code"
-             pattern="[0-9]*" maxlength="6" placeholder="000000" autofocus>
-      <button type="submit">verify &amp; activate</button>
+      <div class="form-group">
+        <label class="form-label" for="totp">enter the 6-digit code from your app to activate</label>
+        <input class="form-input" id="totp" name="totp" inputmode="numeric" autocomplete="one-time-code"
+               pattern="[0-9]*" maxlength="6" placeholder="000000" autofocus>
+      </div>
+      <button type="submit" class="btn btn-primary auth-btn">verify &amp; activate</button>
     </form>
     <div class="foot"><a href="/_auth/logout">cancel &amp; log out</a></div>
   </div>
@@ -310,18 +256,20 @@ const enrollPage = pageHead + `
 </html>`
 
 const backupCodesPage = pageHead + `
-  <div class="gate gate--wide">` + brandHTML + `
+  <div class="card auth-card auth-card--wide">` + brandHTML + `
     <div class="sub">recovery codes</div>
-    <div class="badge"><span class="badge__dot"></span>shown once — store them now</div>
+    <div class="notice"><span class="badge badge--orange">shown once — store them now</span></div>
     <p class="text-muted">
       Two-factor is active. If you lose your authenticator, any of these one-time
       codes signs you in (enter it in the 2fa field). Each works once.</p>
     <ul id="codes" class="codes-grid">
       {{CODES}}
     </ul>
-    <button onclick="copyCodes()" class="btn-spaced">copy all to clipboard</button>
+    <div class="auth-actions">
+      <button onclick="copyCodes()" class="btn btn-secondary auth-btn">copy all to clipboard</button>
+      <a href="/_auth/ok" class="btn btn-primary auth-btn">i saved them — continue &rarr;</a>
+    </div>
     <div class="copied" id="copied">&#10003; copied</div>
-    <a href="/_auth/ok" class="btn-link">i saved them — continue &rarr;</a>
   </div>
   <script nonce="{{NONCE}}">
     function copyCodes() {
@@ -337,25 +285,31 @@ const backupCodesPage = pageHead + `
 </html>`
 
 const passwordPage = pageHead + `
-  <form class="gate" method="post" action="/_auth/password">` + brandHTML + `
+  <form class="card auth-card" method="post" action="/_auth/password">` + brandHTML + `
     <div class="sub">change password</div>
     {{NOTICE}}
     <input type="hidden" name="ft" value="{{FT}}">
     {{ERROR}}
-    <label for="cur">current password</label>
-    <input id="cur" name="current" type="password" autocomplete="current-password" autofocus>
-    <label for="n1">new password <span class="label-hint">— min 10 chars</span></label>
-    <input id="n1" name="new1" type="password" autocomplete="new-password">
-    <label for="n2">repeat new password</label>
-    <input id="n2" name="new2" type="password" autocomplete="new-password">
-    <button type="submit">change password</button>
+    <div class="form-group">
+      <label class="form-label" for="cur">current password</label>
+      <input class="form-input" id="cur" name="current" type="password" autocomplete="current-password" autofocus>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="n1">new password <span class="label-hint">— min 10 chars</span></label>
+      <input class="form-input" id="n1" name="new1" type="password" autocomplete="new-password">
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="n2">repeat new password</label>
+      <input class="form-input" id="n2" name="new2" type="password" autocomplete="new-password">
+    </div>
+    <button type="submit" class="btn btn-primary auth-btn">change password</button>
     <div class="foot"><a href="/_auth/logout">log out</a></div>
   </form>
 </body>
 </html>`
 
 const forbiddenPage = pageHead + `
-  <div class="gate gate--center">` + brandHTML + `
+  <div class="card auth-card auth-center">` + brandHTML + `
     <div class="sub">access denied</div>
     <p class="status-err">&#10007; not authorized for {{HOST}}</p>
     <p class="text-muted">

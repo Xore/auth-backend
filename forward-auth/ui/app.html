@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>xore//auth — app</title>
+<link rel="stylesheet" href="/static/claude-theme.css">
+<style nonce="{{.Nonce}}">
+  .shell{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px}
+  .shell__who{font-size:12px;color:var(--text-secondary);letter-spacing:.06em;text-transform:uppercase}
+  .shell__who b{color:var(--text-primary);font-weight:600}
+  .shell__links{display:flex;gap:16px;font-size:12px}
+  .shell__links a{color:var(--text-muted);text-decoration:none}
+  .shell__links a:hover{color:var(--text-primary)}
+  a.btn{text-decoration:none}
+  .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+  .stat-grid .card{padding:16px;margin-bottom:0}
+  .stat__n{font-size:24px;font-weight:700;color:var(--text-primary)}
+  .stat__l{font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;margin-top:4px}
+  .pane__h3{margin-bottom:4px}
+  .pane__desc{font-size:13px;color:var(--text-secondary);margin-bottom:16px}
+  .filter-row{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+  .filter-row .form-input{flex:1;min-width:160px;width:auto}
+  .filter-row select.form-input{flex:0 0 auto}
+  .cell-mono{font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:11px}
+  .cell-agent{font-size:11px;color:var(--text-muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .empty-row{color:var(--text-muted);font-size:12px}
+  @media(max-width:600px){.stat-grid{grid-template-columns:repeat(2,1fr)}.hide-sm{display:none}}
+</style>
+</head>
+<body>
+  <div class="shell">
+    <div class="shell__who">signed in as <b>{{.User}}</b></div>
+    <button class="btn btn-secondary" onclick="openSettings('account')" aria-label="Settings">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
+      Settings
+    </button>
+    <div class="shell__links">
+      <a href="/_auth/password">change password</a>
+      <a href="/_auth/logout">log out</a>
+    </div>
+  </div>
+
+  <!-- Backdrop -->
+  <div class="modal-backdrop" id="settings-backdrop"
+       onclick="closeSettings()" aria-hidden="true"></div>
+
+  <!-- Modal -->
+  <dialog class="modal" id="settings-modal"
+          aria-modal="true" aria-labelledby="settings-title">
+
+    <!-- Sidebar -->
+    <aside class="modal__sidebar">
+      <div class="sidebar__search">
+        <svg class="sidebar__search-icon" width="14" height="14" viewBox="0 0 24 24"
+             fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+        </svg>
+        <input type="search" id="sidebar-search" placeholder="Search"
+               aria-label="Search settings" oninput="filterSidebar(this.value)" />
+      </div>
+      <nav id="settings-nav" aria-label="Settings navigation"></nav>
+    </aside>
+
+    <!-- Content -->
+    <div class="modal__content" id="settings-content">
+      <button class="modal__close" onclick="closeSettings()" aria-label="Close settings">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+          <path d="M18 6 6 18M6 6l12 12"/>
+        </svg>
+      </button>
+      <!-- Panes rendered here by showPane() -->
+    </div>
+  </dialog>
+
+<script nonce="{{.Nonce}}">
+var IS_ADMIN = {{.IsAdmin}};
+var CURRENT_USER = "{{.User}}";
+var CSRF_TOKEN = "{{.CSRF}}";
+
+var activePane = 'account';
+var state = {users: [], audit: {Recent: [], Total: 0, Success: 0, Failed: 0}, locked: [], sessions: []};
+
+var CLOSE_BTN_HTML = document.querySelector('.modal__close').outerHTML;
+
+// ── helpers ──────────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+  });
+}
+function ts(s) {
+  if (!s || s.startsWith('0001')) return '–';
+  var d = new Date(s);
+  return d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
+}
+function ago(s) {
+  if (!s || s.startsWith('0001')) return '–';
+  var ms = Date.now() - new Date(s).getTime();
+  var m = Math.floor(ms / 60000);
+  if (m < 1) return 'now';
+  if (m < 60) return m + 'm ago';
+  var h = Math.floor(m / 60);
+  if (h < 24) return h + 'h ago';
+  return Math.floor(h / 24) + 'd ago';
+}
+function copyToClipboard(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text);
+    return;
+  }
+  // Fallback for non-secure contexts / older browsers
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); } catch (e) { /* no clipboard access */ }
+  document.body.removeChild(ta);
+}
+
+// ── sidebar nav ──────────────────────────────────────────────────────────
+var SETTINGS_NAV = [
+  {id: 'account',  label: 'Account',  icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></svg>'},
+  {id: 'privacy',  label: 'Privacy',  icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v5c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-3z"/></svg>'},
+  {id: 'sessions', label: 'Sessions', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>'}
+];
+var ADMIN_NAV = [
+  {id: 'admin-users',    label: 'Users',           icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.3 2.9-5.5 6.5-5.5s6.5 2.2 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M17.8 15.3c2.3.7 3.7 2.2 3.7 4.7"/></svg>'},
+  {id: 'admin-logs',     label: 'Audit Log',       icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>'},
+  {id: 'admin-sessions', label: 'Active Sessions', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>'},
+  {id: 'admin-system',   label: 'System',          icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>'}
+];
+
+function renderNav() {
+  var nav = document.getElementById('settings-nav');
+  var html = '<div class="sidebar__section-label">Settings</div>';
+  SETTINGS_NAV.forEach(function (item) {
+    html += '<button class="sidebar__item' + (activePane === item.id ? ' active' : '') +
+      '" onclick="showPane(\'' + item.id + '\')">' + item.icon + ' ' + item.label + '</button>';
+  });
+  if (IS_ADMIN) {
+    html += '<div class="sidebar__section-label" style="margin-top:12px">Administration</div>';
+    ADMIN_NAV.forEach(function (item) {
+      html += '<button class="sidebar__item' + (activePane === item.id ? ' active' : '') +
+        '" onclick="showPane(\'' + item.id + '\')">' + item.icon + ' ' + item.label + '</button>';
+    });
+  }
+  nav.innerHTML = html;
+}
+
+function filterSidebar(query) {
+  var q = query.toLowerCase();
+  document.querySelectorAll('#settings-nav .sidebar__item').forEach(function (btn) {
+    btn.style.display = btn.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
+  });
+  // Hide section labels whose items are all filtered out
+  document.querySelectorAll('#settings-nav .sidebar__section-label').forEach(function (label) {
+    var el = label.nextElementSibling, visible = false;
+    while (el && !el.classList.contains('sidebar__section-label')) {
+      if (el.classList.contains('sidebar__item') && el.style.display !== 'none') visible = true;
+      el = el.nextElementSibling;
+    }
+    label.style.display = visible ? '' : 'none';
+  });
+}
+
+// ── pane skeletons ───────────────────────────────────────────────────────
+var PANE_TEMPLATES = {
+  'account':
+    '<h2 id="settings-title">Account</h2>' +
+    '<div class="card">' +
+      '<div class="card__row">' +
+        '<div><div class="card__label">Signed in as</div>' +
+        '<div class="card__value" id="account-user"></div></div>' +
+      '</div>' +
+      '<div class="card__row">' +
+        '<div><div class="card__label">Change password</div>' +
+        '<div class="card__value">Update your account password.</div></div>' +
+        '<a class="btn btn-secondary btn-sm" href="/_auth/password">Change</a>' +
+      '</div>' +
+      '<div class="card__row">' +
+        '<div><div class="card__label">Log out</div>' +
+        '<div class="card__value">End this session.</div></div>' +
+        '<a class="btn btn-secondary btn-sm" href="/_auth/logout">Log out</a>' +
+      '</div>' +
+    '</div>' +
+    '<h3 class="pane__h3">Trusted devices</h3>' +
+    '<p class="pane__desc">Devices that skip two-factor authentication on sign-in.</p>' +
+    '<table class="data-table" id="trusted-devices-table">' +
+      '<thead><tr><th>Device</th><th>Added</th><th></th></tr></thead>' +
+      '<tbody id="trusted-devices-body"></tbody>' +
+    '</table>',
+
+  'privacy':
+    '<h2 id="settings-title">Privacy</h2>' +
+    '<div class="card">' +
+      '<div class="card__row">' +
+        '<div><div class="card__label">Security logging</div>' +
+        '<div class="card__value">Sign-in and security events are recorded in the audit log, ' +
+        'visible to administrators. No usage content is tracked.</div></div>' +
+      '</div>' +
+      '<div class="card__row">' +
+        '<div><div class="card__label">Session data</div>' +
+        '<div class="card__value">Active sessions store IP address and browser agent — ' +
+        'see the Sessions pane for what is currently held.</div></div>' +
+      '</div>' +
+    '</div>',
+
+  'sessions':
+    '<h2 id="settings-title">Active sessions</h2>' +
+    '<table class="data-table">' +
+      '<thead><tr><th>Device</th><th>IP</th><th>Created</th><th>Last seen</th><th></th></tr></thead>' +
+      '<tbody id="my-sessions-body">' +
+        '<tr><td colspan="5" class="empty-row">session data unavailable</td></tr>' +
+      '</tbody>' +
+    '</table>',
+
+  'admin-users':
+    '<h2 id="settings-title">Users</h2>' +
+    '<div class="card">' +
+      '<table class="data-table">' +
+        '<thead><tr><th>User</th><th>Role</th><th>Status</th><th>2FA</th>' +
+        '<th class="hide-sm">Allowed hosts</th><th class="hide-sm">Last login</th></tr></thead>' +
+        '<tbody id="admin-users-body"></tbody>' +
+      '</table>' +
+    '</div>',
+
+  'admin-logs':
+    '<h2 id="settings-title">Audit Log</h2>' +
+    '<div class="stat-grid">' +
+      '<div class="card"><div class="stat__n" id="st-total">–</div><div class="stat__l">Attempts</div></div>' +
+      '<div class="card"><div class="stat__n" id="st-ok">–</div><div class="stat__l">Successful</div></div>' +
+      '<div class="card"><div class="stat__n" id="st-fail">–</div><div class="stat__l">Failed</div></div>' +
+      '<div class="card"><div class="stat__n" id="st-locked">–</div><div class="stat__l">Locked IPs</div></div>' +
+    '</div>' +
+    '<div class="card">' +
+      '<div class="card__title">Locked out</div>' +
+      '<table class="data-table">' +
+        '<thead><tr><th>IP</th><th>Fails</th><th>Until</th></tr></thead>' +
+        '<tbody id="admin-locked-body"></tbody>' +
+      '</table>' +
+    '</div>' +
+    '<div class="card">' +
+      '<div class="card__title">Events</div>' +
+      '<div class="filter-row">' +
+        '<input class="form-input" id="lf-text" placeholder="filter: ip / user / host / event…" oninput="loadAdminLogs()">' +
+        '<select class="form-input" id="lf-kind" onchange="loadAdminLogs()">' +
+          '<option value="">all events</option>' +
+          '<option value="login_ok">login ok</option>' +
+          '<option value="login_fail">login failed</option>' +
+          '<option value="locked_out">lockouts</option>' +
+          '<option value="admin_">admin actions</option>' +
+          '<option value="enroll">enrollment</option>' +
+        '</select>' +
+      '</div>' +
+      '<table class="data-table">' +
+        '<thead><tr><th>Time</th><th>Event</th><th>IP</th><th>User</th>' +
+        '<th class="hide-sm">Host</th><th class="hide-sm">Agent</th></tr></thead>' +
+        '<tbody id="admin-logs-body"></tbody>' +
+      '</table>' +
+    '</div>',
+
+  'admin-sessions':
+    '<h2 id="settings-title">Active Sessions</h2>' +
+    '<div class="card">' +
+      '<div class="card__desc">All users, best effort — repopulates after restart.</div>' +
+      '<table class="data-table">' +
+        '<thead><tr><th>User</th><th>IP</th><th class="hide-sm">Agent</th>' +
+        '<th>Signed in</th><th>Last seen</th></tr></thead>' +
+        '<tbody id="admin-sessions-body"></tbody>' +
+      '</table>' +
+    '</div>',
+
+  'admin-system':
+    '<h2 id="settings-title">System</h2>' +
+    '<div class="card">' +
+      '<div class="card__row"><span class="card__label">Version</span>' +
+        '<span class="card__value--mono" id="sys-version">–</span></div>' +
+      '<div class="card__row"><span class="card__label">Uptime</span>' +
+        '<span class="card__value" id="sys-uptime">–</span></div>' +
+      '<div class="card__row"><span class="card__label">Auth host</span>' +
+        '<span class="card__value--mono" id="sys-host">–</span></div>' +
+      '<div class="card__row"><span class="card__label">Session TTL</span>' +
+        '<span class="card__value" id="sys-session-ttl">–</span></div>' +
+      '<div class="card__row"><span class="card__label">TOTP required</span>' +
+        '<span id="sys-totp">–</span></div>' +
+    '</div>' +
+    '<div class="card">' +
+      '<div class="card__row"><span class="card__label">Total users</span>' +
+        '<span class="card__value" id="sys-user-count">–</span></div>' +
+      '<div class="card__row"><span class="card__label">Admin users</span>' +
+        '<span class="card__value" id="sys-admin-count">–</span></div>' +
+      '<div class="card__row"><span class="card__label">Registered passkeys</span>' +
+        '<span class="card__value" id="sys-passkey-count">–</span></div>' +
+      '<div class="card__row"><span class="card__label">Server started</span>' +
+        '<span class="card__value" id="sys-started">–</span></div>' +
+    '</div>'
+};
+
+// ── pane loaders ─────────────────────────────────────────────────────────
+function loadAccount() {
+  var el = document.getElementById('account-user');
+  if (el) el.textContent = CURRENT_USER;
+}
+
+function loadAdminUsers() {
+  var tb = document.getElementById('admin-users-body');
+  if (!tb) return;
+  var users = state.users || [];
+  if (!users.length) {
+    tb.innerHTML = '<tr><td colspan="6" class="empty-row">no users</td></tr>';
+    return;
+  }
+  tb.innerHTML = users.map(function (u) {
+    var status = u.disabled ? '<span class="badge badge--red">disabled</span>'
+      : u.must_change ? '<span class="badge badge--orange">temp pw</span>'
+      : '<span class="badge badge--green">active</span>';
+    var totp = u.totp_enrolled
+      ? '<span class="badge badge--green">2FA on</span>'
+      : '<span class="badge badge--orange">pending</span>';
+    return '<tr>' +
+      '<td class="cell-mono">' + esc(u.username) + '</td>' +
+      '<td><span class="badge ' + (u.role === 'admin' ? 'badge--blue' : 'badge--muted') + '">' + esc(u.role) + '</span></td>' +
+      '<td>' + status + '</td>' +
+      '<td>' + totp + '</td>' +
+      '<td class="cell-mono hide-sm">' + esc((u.allowed_hosts || []).join(', ') || 'all') + '</td>' +
+      '<td class="cell-mono hide-sm">' + (u.last_ip ? ts(u.last_login) + ' (' + esc(u.last_ip) + ')' : '–') + '</td>' +
+      '</tr>';
+  }).join('');
+}
+
+function loadAdminLogs() {
+  var audit = state.audit || {Recent: [], Total: 0, Success: 0, Failed: 0};
+  var locked = state.locked || [];
+  var el;
+  if ((el = document.getElementById('st-total')))  el.textContent = audit.Total;
+  if ((el = document.getElementById('st-ok')))     el.textContent = audit.Success;
+  if ((el = document.getElementById('st-fail')))   el.textContent = audit.Failed;
+  if ((el = document.getElementById('st-locked'))) el.textContent = locked.length;
+
+  var lb = document.getElementById('admin-locked-body');
+  if (lb) {
+    lb.innerHTML = locked.length ? locked.map(function (l) {
+      return '<tr><td class="cell-mono">' + esc(l.IP) + '</td>' +
+        '<td class="cell-mono">' + l.Fails + '</td>' +
+        '<td class="cell-mono">' + ts(l.Until) + '</td></tr>';
+    }).join('') : '<tr><td colspan="3" class="empty-row">nothing locked out</td></tr>';
+  }
+
+  var qEl = document.getElementById('lf-text');
+  var kindEl = document.getElementById('lf-kind');
+  var q = qEl ? qEl.value.toLowerCase() : '';
+  var kind = kindEl ? kindEl.value : '';
+  var tb = document.getElementById('admin-logs-body');
+  if (!tb) return;
+  var rows = (audit.Recent || []).filter(function (e) {
+    if (kind && e.event.indexOf(kind) !== 0) return false;
+    if (q) {
+      var hay = (e.event + ' ' + e.ip + ' ' + (e.user || '') + ' ' + (e.host || '')).toLowerCase();
+      if (hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+  if (!rows.length) {
+    tb.innerHTML = '<tr><td colspan="6" class="empty-row">no matching events</td></tr>';
+    return;
+  }
+  tb.innerHTML = rows.map(function (e) {
+    var cls = e.event === 'login_ok' ? 'badge--green'
+      : (e.event.indexOf('login_fail') === 0 || e.event === 'locked_out') ? 'badge--red'
+      : e.event.indexOf('admin_') === 0 ? 'badge--blue'
+      : 'badge--orange';
+    return '<tr>' +
+      '<td class="cell-mono">' + ts(e.time) + '</td>' +
+      '<td><span class="badge ' + cls + '">' + esc(e.event) + '</span></td>' +
+      '<td class="cell-mono">' + esc(e.ip) + '</td>' +
+      '<td class="cell-mono">' + esc(e.user || '–') + '</td>' +
+      '<td class="cell-mono hide-sm">' + esc(e.host || '–') + '</td>' +
+      '<td class="cell-agent hide-sm">' + esc(e.ua || '') + '</td>' +
+      '</tr>';
+  }).join('');
+}
+
+function loadAdminSessions() {
+  var tb = document.getElementById('admin-sessions-body');
+  if (!tb) return;
+  var sessions = state.sessions || [];
+  if (!sessions.length) {
+    tb.innerHTML = '<tr><td colspan="5" class="empty-row">no sessions seen yet</td></tr>';
+    return;
+  }
+  tb.innerHTML = sessions.map(function (s) {
+    return '<tr>' +
+      '<td class="cell-mono">' + esc(s.user) + '</td>' +
+      '<td class="cell-mono">' + esc(s.ip) + '</td>' +
+      '<td class="cell-agent hide-sm">' + esc(s.ua) + '</td>' +
+      '<td class="cell-mono">' + ago(s.created) + '</td>' +
+      '<td class="cell-mono">' + ago(s.last_seen) + '</td>' +
+      '</tr>';
+  }).join('');
+}
+
+var PANE_LOADERS = {
+  'account':        loadAccount,
+  'admin-users':    loadAdminUsers,
+  'admin-logs':     loadAdminLogs,
+  'admin-sessions': loadAdminSessions
+};
+
+function showPane(id) {
+  activePane = id;
+  renderNav(); // re-render sidebar to update .active class
+
+  var content = document.getElementById('settings-content');
+  content.innerHTML = PANE_TEMPLATES[id] || PANE_TEMPLATES['account'];
+  content.scrollTop = 0;
+
+  // Re-insert close button after innerHTML replacement
+  content.insertAdjacentHTML('afterbegin', CLOSE_BTN_HTML);
+
+  if (PANE_LOADERS[id]) PANE_LOADERS[id]();
+}
+
+// ── state polling (admin only) ───────────────────────────────────────────
+function fetchState() {
+  if (!IS_ADMIN) return;
+  fetch('/_auth/admin/api/state?n=300')
+    .then(function (r) { if (!r.ok) throw 'http ' + r.status; return r.json(); })
+    .then(function (j) {
+      state = j;
+      if (PANE_LOADERS[activePane]) PANE_LOADERS[activePane]();
+    })
+    .catch(function (e) { /* transient poll error — keep last state */ });
+}
+
+// ── modal open/close ─────────────────────────────────────────────────────
+function openSettings(pane) {
+  document.getElementById('settings-backdrop').classList.add('open');
+  var modal = document.getElementById('settings-modal');
+  modal.classList.add('open');
+  if (modal.showModal) modal.showModal();
+  document.body.style.overflow = 'hidden';
+  renderNav();
+  showPane(pane || 'account');
+  fetchState();
+}
+
+function closeSettings() {
+  document.getElementById('settings-backdrop').classList.remove('open');
+  var modal = document.getElementById('settings-modal');
+  modal.classList.remove('open');
+  if (modal.close) modal.close();
+  document.body.style.overflow = '';
+}
+
+// Keyboard: Esc closes
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') closeSettings();
+});
+
+setInterval(fetchState, 5000);
+
+window.onload = function () { openSettings('account'); };
+</script>
+</body>
+</html>

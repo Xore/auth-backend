@@ -86,6 +86,8 @@ type config struct {
 	metricsToken string
 	trustedNets  []*net.IPNet
 	maxBodyBytes int64
+	orgID        string
+	ssoURL       string
 }
 
 func getenv(k, def string) string {
@@ -194,6 +196,8 @@ func loadConfig(logger *slog.Logger) config {
 		metricsToken: getenvFile("METRICS_TOKEN", ""),
 		trustedNets:  parseCIDRs(getenv("TRUSTED_PROXIES", defaultTrustedProxies), logger),
 		maxBodyBytes: int64(atoi(os.Getenv("MAX_BODY_KB"), 64)) * 1024,
+		orgID:        getenv("ORG_ID", ""),
+		ssoURL:       getenv("SSO_URL", ""),
 	}
 }
 
@@ -347,6 +351,40 @@ func (c config) validDevice(tok, user string, gen int) bool {
 	return err == nil && time.Now().Unix() < exp
 }
 
+// --- pending (post-password, pre-TOTP) tokens --------------------------------
+//
+// After a correct password for a TOTP-enrolled user the server sets a
+// short-lived pending cookie; only /_auth/totp accepts it. The cookie proves
+// "password OK a moment ago" and carries the remember-device choice.
+
+const pendingTTL = 5 * time.Minute
+
+func (c config) issuePending(user string, remember bool) string {
+	exp := strconv.FormatInt(time.Now().Add(pendingTTL).Unix(), 10)
+	rem := "0"
+	if remember {
+		rem = "1"
+	}
+	body := "pend|" + exp + "|" + user + "|" + rem
+	return body + "|" + c.mac(body)
+}
+
+func (c config) parsePending(tok string) (user string, remember bool, ok bool) {
+	parts := strings.Split(tok, "|")
+	if len(parts) != 5 || parts[0] != "pend" {
+		return "", false, false
+	}
+	body := strings.Join(parts[:4], "|")
+	if !c.validMAC(body, parts[4]) {
+		return "", false, false
+	}
+	exp, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || time.Now().Unix() >= exp {
+		return "", false, false
+	}
+	return parts[2], parts[3] == "1", true
+}
+
 // --- form (CSRF + timing) tokens --------------------------------------------
 
 func (c config) issueForm() string {
@@ -483,6 +521,7 @@ type server struct {
 	ntf        *notifier
 	wa         *webauthn.WebAuthn
 	ceremonies *ceremonyStore
+	startedAt  time.Time
 }
 
 // clientIP returns the real client address. Forwarded headers are only
@@ -603,7 +642,7 @@ func secHeaders(w http.ResponseWriter, n string) {
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("Cache-Control", "no-store")
 	h.Set("Content-Security-Policy",
-		"default-src 'none'; style-src 'nonce-"+n+"'; script-src 'nonce-"+n+"'; img-src data:; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+		"default-src 'none'; style-src 'self' 'nonce-"+n+"'; script-src 'nonce-"+n+"'; img-src data:; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 }
 
 func (s *server) setCookie(w http.ResponseWriter, cl sessionClaims) {
@@ -636,6 +675,26 @@ func (s *server) setDeviceCookie(w http.ResponseWriter, user string) {
 		Secure:   s.cfg.secure,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   s.cfg.trustDevDays * 24 * 3600,
+	})
+}
+
+func (s *server) setPendingCookie(w http.ResponseWriter, user string, remember bool) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     s.cfg.cookieName + "_pend",
+		Value:    s.cfg.issuePending(user, remember),
+		Path:     "/_auth",
+		Domain:   "", // host-only: the 2FA step never leaves the auth host
+		HttpOnly: true,
+		Secure:   s.cfg.secure,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int(pendingTTL.Seconds()),
+	})
+}
+
+func (s *server) clearPendingCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name: s.cfg.cookieName + "_pend", Value: "", Path: "/_auth", Domain: "",
+		HttpOnly: true, Secure: s.cfg.secure, SameSite: http.SameSiteLaxMode, MaxAge: -1,
 	})
 }
 
@@ -795,53 +854,48 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if u.TOTPSecret != "" && !s.trustedDevice(r, username) {
-		code := strings.TrimSpace(r.PostForm.Get("totp"))
-		switch {
-		case len(code) >= 8 && strings.Contains(code, "-"):
-			if !s.users.checkBackupCode(username, code) {
-				s.fail(w, r, ip, rd, "bad_backup_code", n)
-				return
-			}
-			s.audit("backup_code_used", ip, username, r)
-			s.ntf.send("backup_code_used", username, ip, s.cfg.authHost,
-				fmt.Sprintf("%d backup codes remain", len(s.users.get(username).BackupCodes)))
-		default:
-			if !s.users.checkTOTP(username, code) {
-				s.fail(w, r, ip, rd, "bad_totp", n)
-				return
-			}
-		}
-		if r.PostForm.Get("remember") == "1" && s.cfg.trustDevDays > 0 {
-			s.setDeviceCookie(w, username)
-		}
+		// password OK — the second factor happens on the verify page,
+		// gated by a short-lived pending cookie
+		s.setPendingCookie(w, username, r.PostForm.Get("remember") == "1")
+		s.renderVerify(w, rd, "", n)
+		return
 	}
+	s.finishLogin(w, r, u, ip, rd, r.PostForm.Get("remember") == "1")
+}
 
+// finishLogin completes a successful authentication: clears the throttles,
+// records the login, issues the session cookie and redirects. remember
+// controls the trusted-device cookie (only meaningful for TOTP users).
+func (s *server) finishLogin(w http.ResponseWriter, r *http.Request, u *User, ip, rd string, remember bool) {
+	if remember && s.cfg.trustDevDays > 0 && u.TOTPSecret != "" {
+		s.setDeviceCookie(w, u.Username)
+	}
 	s.tr.reset(ip)
-	s.tr.reset("user:" + strings.ToLower(username))
+	s.tr.reset("user:" + strings.ToLower(u.Username))
 	prevIP := u.LastIP
-	if err := s.users.mutate(username, func(u *User) bool {
+	if err := s.users.mutate(u.Username, func(u *User) bool {
 		u.LastLogin = time.Now().UTC()
 		u.LastIP = ip
 		return true
 	}); err != nil {
-		s.log.Error("persist last login", "user", username, "error", err)
+		s.log.Error("persist last login", "user", u.Username, "error", err)
 		http.Error(w, "authentication storage unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	if prevIP != "" && prevIP != ip {
-		s.ntf.send("login_new_ip", username, ip, s.cfg.authHost, "previous ip "+prevIP)
+		s.ntf.send("login_new_ip", u.Username, ip, s.cfg.authHost, "previous ip "+prevIP)
 	}
 
 	cl := sessionClaims{
-		user:  username,
+		user:  u.Username,
 		gen:   u.Gen,
 		sid:   newSID(),
 		flags: s.flagsFor(u),
 		exp:   time.Now().Add(s.cfg.ttl).Unix(),
 	}
 	s.setCookie(w, cl)
-	s.reg.touch(cl.sid, username, ip, r.UserAgent())
-	s.audit("login_ok", ip, username, r)
+	s.reg.touch(cl.sid, u.Username, ip, r.UserAgent())
+	s.audit("login_ok", ip, u.Username, r)
 	if p := pendingRedirect(cl, s.cfg.authHost); p != "" {
 		http.Redirect(w, r, p, http.StatusFound)
 		return
@@ -860,6 +914,84 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, ip, rd, reason, no
 	}
 	s.audit("login_fail:"+reason, ip, r.PostForm.Get("username"), r)
 	s.renderLogin(w, rd, "Invalid credentials.", nonce)
+}
+
+// totp is the second step of the two-step login: a valid pending cookie
+// (set after a correct password) plus a TOTP or backup code completes the
+// sign-in. Anything else redirects back to the login page.
+func (s *server) totp(w http.ResponseWriter, r *http.Request) {
+	n := nonce()
+	secHeaders(w, n)
+	loginURL := "https://" + s.cfg.authHost + "/_auth/login"
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, loginURL, http.StatusSeeOther)
+		return
+	}
+	user, remember, ok := "", false, false
+	if c, err := r.Cookie(s.cfg.cookieName + "_pend"); err == nil {
+		user, remember, ok = s.cfg.parsePending(c.Value)
+	}
+	if !ok {
+		http.Redirect(w, r, loginURL, http.StatusSeeOther)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.maxBodyBytes)
+	if err := r.ParseForm(); err != nil {
+		http.Redirect(w, r, loginURL, http.StatusSeeOther)
+		return
+	}
+	rd := s.cfg.safeRedirect(r.PostForm.Get("rd"))
+	ip := s.clientIP(r)
+	u := s.users.get(user)
+	if u == nil || u.Disabled || u.TOTPSecret == "" {
+		s.clearPendingCookie(w)
+		http.Redirect(w, r, loginURL, http.StatusSeeOther)
+		return
+	}
+	if locked, d := s.tr.locked(ip); locked {
+		s.audit("locked_out", ip, user, r)
+		s.renderVerify(w, rd, "Too many attempts. Try again in "+d.Round(time.Second).String()+".", n)
+		return
+	}
+	if locked, d := s.tr.locked("user:" + strings.ToLower(user)); locked {
+		s.audit("locked_out", ip, user, r)
+		s.renderVerify(w, rd, "Too many attempts. Try again in "+d.Round(time.Second).String()+".", n)
+		return
+	}
+
+	code := strings.TrimSpace(r.PostForm.Get("code"))
+	switch {
+	case len(code) >= 8 && strings.Contains(code, "-"):
+		if !s.users.checkBackupCode(user, code) {
+			s.totpFail(w, r, ip, user, rd, "bad_backup_code", n)
+			return
+		}
+		s.audit("backup_code_used", ip, user, r)
+		s.ntf.send("backup_code_used", user, ip, s.cfg.authHost,
+			fmt.Sprintf("%d backup codes remain", len(s.users.get(user).BackupCodes)))
+	default:
+		if !s.users.checkTOTP(user, code) {
+			s.totpFail(w, r, ip, user, rd, "bad_totp", n)
+			return
+		}
+	}
+
+	s.clearPendingCookie(w)
+	s.finishLogin(w, r, u, ip, rd, remember)
+}
+
+// totpFail is s.fail for the 2FA step: throttle, audit, re-render the
+// verify page with a generic error.
+func (s *server) totpFail(w http.ResponseWriter, r *http.Request, ip, user, rd, reason, nonce string) {
+	locked := s.tr.fail(ip)
+	if user != "" && s.tr.fail("user:"+strings.ToLower(user)) {
+		locked = true
+	}
+	if locked {
+		s.ntf.send("locked_out", user, ip, s.cfg.authHost, reason)
+	}
+	s.audit("login_fail:"+reason, ip, user, r)
+	s.renderVerify(w, rd, "Invalid code.", nonce)
 }
 
 func (s *server) logout(w http.ResponseWriter, r *http.Request) {
@@ -1118,6 +1250,8 @@ func main() {
 		users: users,
 		reg:   newSessionRegistry(cfg.ttl, filepath.Join(filepath.Dir(cfg.usersFile), "revoked-sessions.json")),
 		ntf:   newNotifier(cfg.webhookURL, log),
+
+		startedAt: time.Now(),
 	}
 	if err := s.reg.load(); err != nil {
 		log.Error("cannot load session revocations", "error", err)
@@ -1149,6 +1283,7 @@ func main() {
 	})
 	mux.HandleFunc("/_auth/verify", s.verify)
 	mux.HandleFunc("/_auth/login", s.login)
+	mux.HandleFunc("/_auth/totp", s.totp)
 	mux.HandleFunc("/_auth/logout", s.logout)
 	mux.HandleFunc("/_auth/enroll", s.enroll)
 	mux.HandleFunc("/_auth/password", s.password)
@@ -1169,11 +1304,27 @@ func main() {
 	mux.HandleFunc("/_auth/admin/api/state", s.adminState)
 	mux.HandleFunc("/_auth/admin/api/user", s.adminCreateUser)
 	mux.HandleFunc("/_auth/admin/api/action", s.adminAction)
+	mux.HandleFunc("/_auth/admin/api/system", s.handleAdminSystem)
+	mux.HandleFunc("POST /_auth/admin/api/sessions/{sid}/revoke", s.adminRevokeSession)
+	mux.HandleFunc("/_auth/sessions/mine", s.handleMySessions)
+	mux.HandleFunc("/_auth/sessions/trusted", s.handleTrustedDevices)
 	mux.HandleFunc("/_auth/admin/audit", s.adminAudit) // legacy JSON endpoint
 	mux.HandleFunc("/_auth/setup", func(w http.ResponseWriter, r *http.Request) {
 		// the old public FIRST_RUN page; enrollment is session-gated now
 		http.Redirect(w, r, "https://"+cfg.authHost+"/_auth/enroll", http.StatusFound)
 	})
+	if cfg.ssoURL != "" {
+		mux.HandleFunc("/_auth/sso", func(w http.ResponseWriter, r *http.Request) {
+			rd := r.URL.Query().Get("rd")
+			sep := "?"
+			if strings.Contains(cfg.ssoURL, "?") {
+				sep = "&"
+			}
+			http.Redirect(w, r, cfg.ssoURL+sep+"rd="+url.QueryEscape(rd), http.StatusFound)
+		})
+	}
+	mux.HandleFunc("/auth/app", s.renderApp)
+	mux.Handle("/static/", staticHandler())
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/_auth/login", http.StatusFound)
 	})

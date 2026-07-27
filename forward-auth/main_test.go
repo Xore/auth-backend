@@ -1,13 +1,16 @@
 package main
 
 import (
+	"encoding/base32"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -159,5 +162,115 @@ func TestConfigRejectsPlaceholders(t *testing.T) {
 	c.secret = []byte("CHANGE_ME_openssl_rand_hex_32")
 	if err := c.validate(); err == nil {
 		t.Fatal("placeholder configuration accepted")
+	}
+}
+
+func TestPendingTokenRoundTrip(t *testing.T) {
+	c := testConfig(t)
+	tok := c.issuePending("alice", true)
+	user, remember, ok := c.parsePending(tok)
+	if !ok || user != "alice" || !remember {
+		t.Fatal("valid pending token rejected")
+	}
+	if _, _, ok := c.parsePending(tok + "x"); ok {
+		t.Fatal("tampered pending token accepted")
+	}
+	body := "pend|" + strconv.FormatInt(time.Now().Add(-time.Minute).Unix(), 10) + "|alice|0"
+	expired := body + "|" + c.mac(body)
+	if _, _, ok := c.parsePending(expired); ok {
+		t.Fatal("expired pending token accepted")
+	}
+}
+
+// TestTwoStepLoginFlow drives the password → pending cookie → TOTP pipeline
+// end to end against the real handlers.
+func TestTwoStepLoginFlow(t *testing.T) {
+	c := testConfig(t)
+	path := filepath.Join(t.TempDir(), "users.json")
+	st := newUserStore(path)
+	if _, err := st.bootstrap("admin", "a-long-test-password", "JBSWY3DPEHPK3PXP"); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", slog.Default())}
+
+	// Step 1: correct password → verify page + pending cookie, no session yet
+	form := url.Values{}
+	form.Set("ft", c.issueForm())
+	form.Set("username", "admin")
+	form.Set("password", "a-long-test-password")
+	r := httptest.NewRequest("POST", "http://auth/_auth/login", strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.login(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected verify page (200), got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), `action="/_auth/totp"`) {
+		t.Fatal("verify page not rendered after password")
+	}
+	var pend *http.Cookie
+	for _, ck := range w.Result().Cookies() {
+		if ck.Name == c.cookieName+"_pend" {
+			pend = ck
+		}
+		if ck.Name == c.cookieName {
+			t.Fatal("session cookie issued before 2FA")
+		}
+	}
+	if pend == nil {
+		t.Fatal("no pending cookie issued")
+	}
+
+	postCode := func(code string) *httptest.ResponseRecorder {
+		f := url.Values{}
+		f.Set("code", code)
+		r := httptest.NewRequest("POST", "http://auth/_auth/totp", strings.NewReader(f.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.AddCookie(pend)
+		w := httptest.NewRecorder()
+		s.totp(w, r)
+		return w
+	}
+
+	// Step 2a: wrong code → generic error re-render, throttle incremented
+	if w := postCode("000000"); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Invalid code.") {
+		t.Fatalf("wrong code: expected error re-render, got %d", w.Code)
+	}
+
+	// Step 2b: correct code → session cookie + redirect, pending cookie cleared
+	key, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString("JBSWY3DPEHPK3PXP")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w = postCode(hotp(key, time.Now().Unix()/30))
+	if w.Code != http.StatusFound {
+		t.Fatalf("correct code: expected 302, got %d", w.Code)
+	}
+	var sess *http.Cookie
+	for _, ck := range w.Result().Cookies() {
+		if ck.Name == c.cookieName {
+			sess = ck
+		}
+		if ck.Name == c.cookieName+"_pend" && ck.MaxAge != -1 {
+			t.Fatal("pending cookie not cleared after 2FA")
+		}
+	}
+	if sess == nil {
+		t.Fatal("no session cookie after 2FA")
+	}
+
+	// The issued session is accepted
+	r = httptest.NewRequest("GET", "http://auth/_auth/verify", nil)
+	r.AddCookie(sess)
+	if _, _, ok := s.session(r); !ok {
+		t.Fatal("session issued after 2FA rejected")
+	}
+
+	// A request to /_auth/totp without a pending cookie bounces to login
+	r = httptest.NewRequest("POST", "http://auth/_auth/totp", nil)
+	w = httptest.NewRecorder()
+	s.totp(w, r)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("missing pending cookie: expected 303, got %d", w.Code)
 	}
 }

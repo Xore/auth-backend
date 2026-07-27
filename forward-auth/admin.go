@@ -8,8 +8,10 @@ package main
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"regexp"
 	"time"
 )
@@ -336,4 +338,80 @@ func (s *server) adminAudit(w http.ResponseWriter, r *http.Request) {
 		"audit":  s.aud.snapshot(n),
 		"locked": s.tr.snapshot(),
 	})
+}
+
+// version is the build identifier shown on the admin System pane; override
+// at build time with -ldflags "-X main.version=<tag>".
+var version = "dev"
+
+// SystemInfo backs GET /_auth/admin/api/system (ADMIN-UI-GUIDE.md §11).
+type SystemInfo struct {
+	Version      string    `json:"version"`
+	Uptime       string    `json:"uptime"`
+	DataDir      string    `json:"data_dir"`
+	AuthHost     string    `json:"auth_host"`
+	SessionTTL   string    `json:"session_ttl"`
+	OrgID        string    `json:"org_id"`
+	TotpRequired bool      `json:"totp_required"`
+	PasskeyCount int       `json:"passkey_count"`
+	UserCount    int       `json:"user_count"`
+	AdminCount   int       `json:"admin_count"`
+	StartedAt    time.Time `json:"started_at"`
+}
+
+// handleAdminSystem returns system-level information for the System pane.
+func (s *server) handleAdminSystem(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := s.adminGate(w, r, false); !ok {
+		return
+	}
+	secHeaders(w, nonce())
+	passkeyCount := 0
+	for _, u := range s.users.list() {
+		passkeyCount += len(u.Passkeys)
+	}
+	jsonOut(w, http.StatusOK, SystemInfo{
+		Version:      version,
+		Uptime:       formatUptime(time.Since(s.startedAt)),
+		DataDir:      filepath.Dir(s.cfg.usersFile),
+		AuthHost:     s.cfg.authHost,
+		SessionTTL:   s.cfg.ttl.String(),
+		OrgID:        s.cfg.orgID,
+		TotpRequired: s.cfg.requireTOTP,
+		PasskeyCount: passkeyCount,
+		UserCount:    s.users.count(),
+		AdminCount:   s.users.adminCount(),
+		StartedAt:    s.startedAt,
+	})
+}
+
+func formatUptime(d time.Duration) string {
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	if days > 0 {
+		return fmt.Sprintf("%dd %dh", days, hours)
+	}
+	return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
+}
+
+// adminRevokeSession revokes a single session by SID.
+// Route: POST /_auth/admin/api/sessions/{sid}/revoke
+func (s *server) adminRevokeSession(w http.ResponseWriter, r *http.Request) {
+	_, actor, ok := s.adminGate(w, r, true)
+	if !ok {
+		return
+	}
+	sid := r.PathValue("sid")
+	if sid == "" {
+		jsonErr(w, "sid required")
+		return
+	}
+	if err := s.reg.revoke(sid); err != nil {
+		s.log.Error("persist session revocation", "sid", sid, "error", err)
+		http.Error(w, "authentication storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	ip := s.clientIP(r)
+	s.audit("admin_revoke_session:"+sid, ip, actor.Username, r)
+	s.ntf.send("admin_revoke_session", actor.Username, ip, s.cfg.authHost, "sid "+sid)
+	jsonOut(w, http.StatusOK, map[string]string{"ok": "1"})
 }

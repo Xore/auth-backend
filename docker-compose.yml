@@ -42,6 +42,9 @@ services:
       - FORM_TTL_MINUTES=${FORM_TTL_MINUTES:-15}
       - COOKIE_SECURE=${COOKIE_SECURE:-true}
       - MAX_BODY_KB=${MAX_BODY_KB:-64}
+      # optional: enterprise SSO redirect target + org identifier (admin UI)
+      - SSO_URL=${SSO_URL:-}
+      - ORG_ID=${ORG_ID:-}
     volumes:
       - auth-data:/data
     read_only: true
@@ -64,6 +67,35 @@ services:
         limits:
           cpus: "0.5"
           memory: 32M
+
+  # One-shot Tailwind CSS builder. Excluded from normal startup by its
+  # profile; regenerates forward-auth/ui/tailwind.min.css (used by the
+  # login and 2FA pages) from the templates + tailwind.config.js:
+  #   docker compose --profile build run --rm tailwind-build
+  tailwind-build:
+    image: alpine:3.20
+    profiles: [build]
+    restart: "no"
+    working_dir: /src
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        apk add --no-cache curl >/dev/null
+        curl -sfL -o /tmp/tailwindcss \
+          https://github.com/tailwindlabs/tailwindcss/releases/download/v3.4.17/tailwindcss-linux-x64
+        echo "7d24f7fa191d2193b78cd5f5a42a6093e14409521908529f42d80b11fde1f1d4  /tmp/tailwindcss" | sha256sum -c -
+        chmod +x /tmp/tailwindcss
+        /tmp/tailwindcss -c tailwind.config.js -i tailwind.input.css -o ui/tailwind.min.css --minify
+    volumes:
+      - ./forward-auth:/src
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
 
   # Guarded one-shot recovery tool. Excluded from normal startup by its
   # profile; can access only the auth-data volume plus a local backup folder.

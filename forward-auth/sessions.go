@@ -138,6 +138,18 @@ func (sr *sessionRegistry) list() []sessionInfo {
 	return out
 }
 
+func (sr *sessionRegistry) forUser(username string) []sessionInfo {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+	var out []sessionInfo
+	for _, s := range sr.m {
+		if s.User == username {
+			out = append(out, *s)
+		}
+	}
+	return out
+}
+
 func (sr *sessionRegistry) active() int {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()

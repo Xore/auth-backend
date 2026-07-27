@@ -48,6 +48,29 @@ Steps in the same phase can be parallelised if there are no `Blocked by` depende
 
 ---
 
+## Implementation status
+
+| Step | Status | Notes |
+|---|---|---|
+| Step 1 — CSS design system | ✅ done (2026-07-27) | `forward-auth/ui/claude-theme.css`; dark-mode block, keyframes, mobile breakpoints |
+| Step 2 — Restyle login/enroll/password | ✅ done (2026-07-27) | `page.go` on `claude-theme.css`; `/static/` route via `static.go`; CSP `style-src 'self'` added |
+| Step 3 — App shell page | ✅ done (2026-07-27) | `ui/app.html`, `apppage.go`, `/auth/app` route |
+| Step 4 — Settings modal panes | ✅ done (2026-07-27) | Nav, `PANE_TEMPLATES`, loaders on `/api/state`, 5 s polling, sidebar search |
+| Step 4b — Legacy admin panel restyle | ✅ done (2026-07-27) | `adminpage.go` on Claude theme; `baseCSS` removed; API/JS contract unchanged |
+| Step 5 — New Go routes | ✅ done (2026-07-27) | `/_auth/sessions/mine|trusted`, `/api/system`, `POST /api/sessions/{sid}/revoke`; `startedAt`, `ORG_ID` |
+| Step 5b — Tailwind two-step login | ✅ done (2026-07-27) | See deviation notes below |
+
+**Step 5b deviation notes (approved design):**
+- Login is a **two-step UI** (username → password/passkey, client-side) followed by a
+  **server-side 2FA page** (`ui/verify.html`) gated by a 5-minute HMAC pending cookie
+  (`pend|exp|user|remember|mac`), instead of the guide's single-step form.
+- Routes are under the repo's `/_auth/` prefix (`/_auth/totp`, `/_auth/sso`), not `/auth/*`.
+- Tailwind is built locally with the pinned standalone CLI v3.4.17 (sha256-verified) into
+  `ui/tailwind.min.css`; rebuild via `docker compose --profile build run --rm tailwind-build`.
+- Deferred: Google OAuth button (Step 22), email magic-link/OTP mode + `/auth/resend` (Step 21).
+
+---
+
 ## Phase 1 — UI Foundation
 
 > Goal: establish the design system and restyle all existing pages before touching any security
@@ -228,6 +251,43 @@ Add all sidebar nav items and right-pane HTML shells. Wire them to the existing
 
 ---
 
+### Step 4b — Restyle the legacy admin panel to the Claude theme
+
+**Phase:** UI 
+**Guide:** `CLAUDE-THEME-GUIDE.md`, `ADMIN-UI-GUIDE.md` 
+**Reads:** `forward-auth/adminpage.go`, `forward-auth/ui/claude-theme.css` 
+**Edits:** `forward-auth/adminpage.go` 
+**Blocked by:** Step 1 (Step 4 recommended first — the app shell then shares the design language)
+
+The legacy `/_auth/admin` panel still uses the pre-Claude dark palette (`baseCSS`,
+which moved into `adminpage.go` during Step 2). Restyle it onto the Claude design
+system so the old panel and the new `/auth/app` shell look like one product.
+
+**Implementation instructions:**
+
+1. Read `forward-auth/adminpage.go` fully before editing. Keep every JS function,
+   API call (`/_auth/admin/api/*`), CSRF wiring, and polling behaviour exactly
+   as-is — this is a visual refactor only.
+2. Replace the `baseCSS`-based `<style>` block with
+   `<link rel="stylesheet" href="/static/claude-theme.css">` plus a small nonce'd
+   layout-only style block that references theme custom properties (no hex colours,
+   mirroring the `pageCSS` pattern in `page.go`).
+3. Map existing elements onto theme components: panels → `.card`, tables →
+   `.data-table`, status pills → `.badge` variants, buttons → `.btn` family,
+   inputs/selects → `.form-input`.
+4. Remove the `baseCSS` constant from `adminpage.go` once nothing references it.
+5. Keep the `{{ADMIN}}`, `{{CSRF}}`, `{{NONCE}}` placeholder contract unchanged.
+
+**Verification:**
+- `go build ./...` succeeds; `go test ./...` passes.
+- `GET /_auth/admin` (admin session) returns HTML linking `/static/claude-theme.css`
+  and containing `class="card"` / `class="data-table"`, with no hex palette in the
+  `<style>` block.
+- Admin actions (create user, revoke session, toggle flags) still work against the
+  unchanged JSON API.
+
+---
+
 ### Step 5 — Add the new Go routes required by the UI
 
 **Phase:** UI + Backend 
@@ -293,6 +353,49 @@ Add the four backend routes the UI panes depend on.
 - `GET /_auth/admin/api/system` returns JSON with `auth_host`, `user_count`, `uptime`.
 - `GET /_auth/admin/api/system` returns 403 for a non-admin session.
 - `go test ./...` passes.
+
+---
+
+### Step 5b — Full Tailwind-based login/verify redesign with new routes
+
+**Phase:** UI + Backend 
+**Guide:** `UI-REDESIGN-GUIDE.md` §0–§16 (the large redesign deferred from Step 2) 
+**Reads:** `forward-auth/ui/login.html`, `forward-auth/ui/verify.html`, `forward-auth/page.go`, `forward-auth/main.go`, `forward-auth/totp.go`, `forward-auth/notify.go` 
+**Edits:** `forward-auth/ui/login.html`, `forward-auth/ui/verify.html`, `forward-auth/page.go`, `forward-auth/main.go`, `forward-auth/totp.go`, `forward-auth/notify.go`, `.env.example` 
+**Blocked by:** Step 2
+
+Step 2 restyled the existing inline templates only. This step implements the full
+`UI-REDESIGN-GUIDE.md`: file-based templates (`ui/login.html`, `ui/verify.html`)
+embedded via `//go:embed`, in the Claude dark style (same token values as
+`claude-theme.css`, Georgia serif headline), plus the supporting routes.
+
+**Implementation instructions:**
+
+1. Review `ui/login.html` and `ui/verify.html` (already present in the repo) against
+   guide §0 (the "diff vs live" table) and fix any drift.
+2. Embed templates per guide §3 (`//go:embed ui/*.html`, `template.ParseFS`,
+   `tmplFuncs` with `seq`/`add` per §7).
+3. Add `LoginPageData` / `VerifyPageData` structs (§4) and the `loginPage()` /
+   `verifyPage()` render helpers (§5–§6), mapped onto this repo's existing
+   `server`/`config` types — adapt the guide's `s.config.*` calls to the `s.cfg`
+   patterns actually present.
+4. Wire `POST /auth/totp` (§8), `POST /auth/resend` with rate limiting (§10),
+   the optional Google OAuth button (§11) and the `SSO_URL` redirect (§12) — all
+   gated behind env vars and hidden when unset. Add `GOOGLE_CLIENT_ID`,
+   `GOOGLE_CLIENT_SECRET`, `SSO_URL` to `.env.example`.
+5. Update CSP per §13 (prefer the pre-built Tailwind route from §15 over the CDN).
+6. Preserve every existing security control: form token, honeypot, dwell time,
+   throttle, TOTP replay protection. The new pages are a presentation layer over
+   the same login pipeline.
+7. Decide the cut-over: either the new pages replace the Step-2 templates outright,
+   or they coexist behind a feature flag — do not leave two divergent login UIs.
+
+**Verification:**
+- `go build ./...` succeeds; `go test ./...` passes.
+- The login page serves the file-based template (Google/SSO buttons hidden when env
+  unset, lowercase `or` divider, three legal links, labelled email field).
+- Full login flow (password → TOTP → session cookie) works end-to-end via the new pages.
+- `POST /auth/resend` enforces its rate limit (429 after 3 requests / 10 min).
 
 ---
 

@@ -3,32 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Verify — {{.AppName}}</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            bg:      '#1a1a1a',
-            surface: '#242424',
-            border:  '#2e2e2e',
-            muted:   '#8a8a8a',
-            primary: '#d4764e',
-            inputbg: '#1f1f1f',
-          },
-          fontFamily: {
-            serif: ['Georgia', 'Cambria', 'serif'],
-            sans:  ['Inter', 'system-ui', 'sans-serif'],
-          },
-        },
-      },
-    }
-  </script>
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+  <meta name="robots" content="noindex, nofollow" />
+  <title>Two-factor — xore//auth</title>
+  <link rel="stylesheet" href="/static/tailwind.min.css" />
+  <style nonce="{{.Nonce}}">
     html { background: #1a1a1a; }
-    /* OTP box individual inputs */
     .otp-box {
       width: 3rem; height: 3.5rem;
       background: #1f1f1f;
@@ -46,107 +25,40 @@
       border-color: #d4764e;
       box-shadow: 0 0 0 2px rgba(212,118,78,0.35);
     }
-    /* Mailbox SVG animation */
-    @keyframes bounce-flag {
-      0%,100% { transform: rotate(0deg); }
-      40%      { transform: rotate(-15deg); }
-      70%      { transform: rotate(5deg); }
-    }
-    .flag-anim { animation: bounce-flag 2.4s ease-in-out infinite; transform-origin: bottom left; }
+    input:focus { outline: none; }
   </style>
 </head>
 <body class="h-full font-sans bg-bg text-white flex flex-col items-center justify-center px-4">
 
   <!-- Brand -->
   <div class="mb-8 text-center select-none">
-    <h1 class="font-serif text-4xl sm:text-5xl font-normal leading-tight">Question what's<br>next</h1>
-    <p class="mt-3 text-sm text-muted tracking-wide">Your thinking partner for big ambitions</p>
+    <h1 class="font-serif text-4xl sm:text-5xl font-normal leading-tight">
+      xore<span class="text-primary">//</span>auth
+    </h1>
+    <p class="mt-3 text-sm text-muted tracking-wide">one more step</p>
   </div>
 
   <!-- Card -->
   <div class="w-full max-w-sm bg-surface border border-border rounded-2xl p-7 shadow-xl text-center">
-
-    {{if eq .Mode "email"}}
-    <!-- ── EMAIL MAGIC-LINK / OTP MODE ───────────────── -->
-
-    <!-- Animated mailbox icon -->
-    <div class="flex justify-center mb-5">
-      <svg class="w-14 h-14" viewBox="0 0 56 56" fill="none">
-        <!-- box body -->
-        <rect x="4" y="22" width="38" height="26" rx="3" stroke="#3b82f6" stroke-width="2"/>
-        <!-- lid open -->
-        <path d="M4 28 Q23 18 42 28" stroke="#3b82f6" stroke-width="2" fill="none"/>
-        <!-- flag pole -->
-        <line x1="42" y1="22" x2="42" y2="36" stroke="#3b82f6" stroke-width="2" stroke-linecap="round"/>
-        <!-- flag waving -->
-        <rect class="flag-anim" x="42" y="22" width="10" height="7" rx="1" fill="#3b82f6" opacity="0.9"/>
-        <!-- letter slot -->
-        <line x1="14" y1="36" x2="28" y2="36" stroke="#3b82f6" stroke-width="1.5" stroke-linecap="round" opacity="0.5"/>
-      </svg>
-    </div>
-
-    <p class="text-sm text-muted mb-1">To continue, click the link sent to</p>
-    <p class="font-semibold text-white mb-6">{{.Email}}</p>
-
-    <!-- 6-digit OTP fallback -->
-    <form id="otp-form" method="POST" action="/auth/verify" class="mb-4">
-      <input type="hidden" name="_csrf"  value="{{.CSRFToken}}" />
-      <input type="hidden" name="rd"     value="{{.Redirect}}" />
-      <input type="hidden" name="mode"   value="otp" />
-      <input type="hidden" id="otp-hidden" name="code" value="" />
-
-      <p class="text-xs text-muted mb-3">Or enter the 6-digit code from the email</p>
-      <div class="flex justify-center gap-2 mb-5" id="otp-boxes">
-        {{range $i := seq 6}}
-        <input
-          class="otp-box"
-          type="text"
-          inputmode="numeric"
-          maxlength="1"
-          pattern="[0-9]"
-          autocomplete="one-time-code"
-          aria-label="Digit {{add $i 1}}"
-        />
-        {{end}}
-      </div>
-
-      {{if .Error}}
-      <p class="mb-3 text-xs text-red-400">{{.Error}}</p>
-      {{end}}
-
-      <button
-        type="submit"
-        id="otp-submit"
-        disabled
-        class="w-full bg-white text-black rounded-xl px-4 py-3 text-sm font-semibold
-               opacity-40 cursor-not-allowed transition-all
-               enabled:opacity-100 enabled:cursor-pointer enabled:hover:bg-gray-100">
-        Verify code
-      </button>
-    </form>
-
-    {{else}}
-    <!-- ── TOTP 2FA MODE ──────────────────────────────── -->
 
     <!-- Shield icon -->
     <div class="flex justify-center mb-5">
       <svg class="w-12 h-12" viewBox="0 0 48 48" fill="none">
         <path d="M24 4L8 10v14c0 9.4 6.8 18.2 16 20 9.2-1.8 16-10.6 16-20V10L24 4z"
               stroke="#d4764e" stroke-width="2" fill="none"/>
-        <!-- check -->
         <path d="M16 24l5 5 11-11" stroke="#d4764e" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </div>
 
     <h2 class="text-lg font-semibold mb-1">Two-factor authentication</h2>
-    <p class="text-sm text-muted mb-6">Enter the 6-digit code from your authenticator app</p>
+    <p class="text-sm text-muted mb-6" id="mode-desc">Enter the 6-digit code from your authenticator app</p>
 
-    <form method="POST" action="/auth/totp" class="mb-4">
-      <input type="hidden" name="_csrf" value="{{.CSRFToken}}" />
-      <input type="hidden" name="rd"    value="{{.Redirect}}" />
-      <input type="hidden" id="totp-hidden" name="code" value="" />
+    <form method="POST" action="/_auth/totp" class="mb-4">
+      <input type="hidden" name="rd" value="{{.RD}}" />
+      <input type="hidden" id="code-hidden" name="code" value="" />
 
+      <!-- TOTP boxes -->
       <div class="flex justify-center gap-2 mb-5" id="otp-boxes">
         {{range $i := seq 6}}
         <input
@@ -161,13 +73,26 @@
         {{end}}
       </div>
 
+      <!-- Backup code input (toggled) -->
+      <div class="mb-5 hidden" id="backup-wrap">
+        <input
+          id="backup-input"
+          type="text"
+          autocomplete="off"
+          autocapitalize="none"
+          spellcheck="false"
+          placeholder="XXXX-XXXX"
+          class="w-full bg-inputbg border border-border rounded-xl px-4 py-3
+                 text-sm text-white placeholder-muted focus:border-primary transition-colors text-center" />
+      </div>
+
       {{if .Error}}
       <p class="mb-3 text-xs text-red-400">{{.Error}}</p>
       {{end}}
 
       <button
         type="submit"
-        id="otp-submit"
+        id="code-submit"
         disabled
         class="w-full bg-white text-black rounded-xl px-4 py-3 text-sm font-semibold
                opacity-40 cursor-not-allowed transition-all
@@ -175,50 +100,36 @@
         Verify
       </button>
     </form>
-    {{end}}
 
     <!-- Alternative sign-in methods -->
     <div class="mt-2 flex flex-col gap-2 border-t border-border pt-4">
-      <a href="/auth/login"
-         class="text-xs text-muted hover:text-white transition-colors underline underline-offset-2">
-        Use a different email
-      </a>
-      {{if eq .Mode "email"}}
       <button
-        onclick="resendEmail()"
+        type="button"
+        id="toggle-backup"
+        onclick="toggleBackup()"
         class="text-xs text-muted hover:text-white transition-colors underline underline-offset-2">
-        Resend email
+        Use a backup code instead
       </button>
-      <a href="/auth/passkey"
+      <a href="/_auth/login"
          class="text-xs text-muted hover:text-white transition-colors underline underline-offset-2">
-        Sign in with a passkey instead
+        Use a passkey or a different account
       </a>
-      {{else}}
-      <a href="/auth/passkey"
-         class="text-xs text-muted hover:text-white transition-colors underline underline-offset-2">
-        Use a passkey instead
-      </a>
-      <a href="/auth/login?backup=1"
-         class="text-xs text-muted hover:text-white transition-colors underline underline-offset-2">
-        Use a backup code
-      </a>
-      {{end}}
     </div>
   </div>
 
-  <!-- ── OTP box logic ──────────────────────────────── -->
-  <script>
+  <script nonce="{{.Nonce}}">
     (function () {
-      const boxes   = document.querySelectorAll('.otp-box');
-      const hidden  = document.getElementById('otp-hidden') || document.getElementById('totp-hidden');
-      const submit  = document.getElementById('otp-submit');
+      var boxes   = document.querySelectorAll('.otp-box');
+      var hidden  = document.getElementById('code-hidden');
+      var submit  = document.getElementById('code-submit');
+      var backup  = document.getElementById('backup-input');
+      var backupMode = false;
 
-      boxes.forEach((box, i) => {
-        box.addEventListener('input', e => {
-          // allow paste of full code into first box
+      boxes.forEach(function (box, i) {
+        box.addEventListener('input', function (e) {
           if (e.target.value.length > 1) {
-            const digits = e.target.value.replace(/\D/g, '').slice(0, 6);
-            digits.split('').forEach((d, j) => { if (boxes[j]) boxes[j].value = d; });
+            var digits = e.target.value.replace(/\D/g, '').slice(0, 6);
+            digits.split('').forEach(function (d, j) { if (boxes[j]) boxes[j].value = d; });
             boxes[Math.min(5, digits.length - 1)].focus();
             sync(); return;
           }
@@ -226,42 +137,38 @@
           if (e.target.value && i < 5) boxes[i + 1].focus();
           sync();
         });
-        box.addEventListener('keydown', e => {
+        box.addEventListener('keydown', function (e) {
           if (e.key === 'Backspace' && !box.value && i > 0) boxes[i - 1].focus();
         });
       });
 
+      backup.addEventListener('input', sync);
+
       function sync() {
-        const code = Array.from(boxes).map(b => b.value).join('');
+        if (backupMode) {
+          hidden.value = backup.value.trim();
+          submit.disabled = hidden.value.length < 8;
+          return;
+        }
+        var code = Array.from(boxes).map(function (b) { return b.value; }).join('');
         hidden.value = code;
         submit.disabled = code.length !== 6;
       }
 
-      // Auto-read OTP from SMS / email on supporting browsers
-      if ('OTPCredential' in window) {
-        const ac = new AbortController();
-        navigator.credentials.get({ otp: { transport: ['sms'] }, signal: ac.signal })
-          .then(otp => {
-            if (otp && otp.code) {
-              otp.code.split('').forEach((d, j) => { if (boxes[j]) boxes[j].value = d; });
-              sync();
-              ac.abort();
-            }
-          }).catch(() => {});
-      }
+      window.toggleBackup = function () {
+        backupMode = !backupMode;
+        document.getElementById('otp-boxes').classList.toggle('hidden', backupMode);
+        document.getElementById('backup-wrap').classList.toggle('hidden', !backupMode);
+        document.getElementById('mode-desc').textContent = backupMode
+          ? 'Enter one of your one-time backup codes'
+          : 'Enter the 6-digit code from your authenticator app';
+        document.getElementById('toggle-backup').textContent = backupMode
+          ? 'Use an authenticator code instead'
+          : 'Use a backup code instead';
+        if (backupMode) { backup.focus(); } else { boxes[0].focus(); }
+        sync();
+      };
     })();
-
-    function resendEmail() {
-      fetch('/auth/resend', { method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: '_csrf={{.CSRFToken}}'
-      }).then(r => {
-        const btn = event.target;
-        btn.textContent = r.ok ? 'Email sent!' : 'Failed — try again';
-        btn.disabled = true;
-        setTimeout(() => { btn.textContent = 'Resend email'; btn.disabled = false; }, 5000);
-      });
-    }
   </script>
 </body>
 </html>
