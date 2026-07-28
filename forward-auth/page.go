@@ -32,13 +32,14 @@ var (
 
 // LoginPageData is passed to ui/login.html.
 type LoginPageData struct {
-	Nonce      string
-	FT         string // form (CSRF + timing) token
-	RD         string // redirect target, already safeRedirect'ed
-	Error      string
-	Remember   bool // show the "trust this device" checkbox
-	TrustDays  int
-	SSOEnabled bool
+	Nonce          string
+	FT             string // form (CSRF + timing) token
+	RD             string // redirect target, already safeRedirect'ed
+	Error          string
+	Remember       bool // show the "trust this device" checkbox
+	TrustDays      int
+	SSOEnabled     bool
+	RecoverEnabled bool // show the "forgot password?" link
 }
 
 // VerifyPageData is passed to ui/verify.html (the post-password 2FA step).
@@ -51,13 +52,14 @@ type VerifyPageData struct {
 func (s *server) renderLogin(w http.ResponseWriter, rd, errMsg, nonce string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := loginTmpl.Execute(w, LoginPageData{
-		Nonce:      nonce,
-		FT:         s.cfg.issueForm(),
-		RD:         rd,
-		Error:      errMsg,
-		Remember:   s.cfg.trustDevDays > 0,
-		TrustDays:  s.cfg.trustDevDays,
-		SSOEnabled: s.cfg.ssoURL != "",
+		Nonce:          nonce,
+		FT:             s.cfg.issueForm(),
+		RD:             rd,
+		Error:          errMsg,
+		Remember:       s.cfg.trustDevDays > 0,
+		TrustDays:      s.cfg.trustDevDays,
+		SSOEnabled:     s.cfg.ssoURL != "",
+		RecoverEnabled: s.recoverEnabled(),
 	}); err != nil {
 		s.log.Error("render login page", "error", err)
 	}
@@ -125,6 +127,39 @@ func (s *server) renderPassword(w http.ResponseWriter, mustChange bool, errMsg, 
 
 func (s *server) renderForbidden(w http.ResponseWriter, host, nonce string) {
 	page := strings.ReplaceAll(forbiddenPage, "{{HOST}}", htmlEscape(host))
+	page = strings.ReplaceAll(page, "{{NONCE}}", nonce)
+	_, _ = w.Write([]byte(page))
+}
+
+// renderRecoverRequest shows the "request a reset link" form. sent renders
+// the generic success notice (identical whether or not the account exists).
+func (s *server) renderRecoverRequest(w http.ResponseWriter, errMsg string, sent bool, nonce string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	errHTML := ""
+	if errMsg != "" {
+		errHTML = `<p class="form-error">` + htmlEscape(errMsg) + `</p>`
+	}
+	sentHTML := ""
+	if sent {
+		sentHTML = `<p class="status-ok">If that account exists, a reset email is on its way — check your inbox.</p>`
+	}
+	page := recoverRequestPage
+	page = strings.ReplaceAll(page, "{{FT}}", s.cfg.issueForm())
+	page = strings.ReplaceAll(page, "{{ERROR}}", errHTML)
+	page = strings.ReplaceAll(page, "{{SENT}}", sentHTML)
+	page = strings.ReplaceAll(page, "{{NONCE}}", nonce)
+	_, _ = w.Write([]byte(page))
+}
+
+func (s *server) renderRecoverReset(w http.ResponseWriter, token, errMsg, nonce string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	errHTML := ""
+	if errMsg != "" {
+		errHTML = `<p class="form-error">` + htmlEscape(errMsg) + `</p>`
+	}
+	page := recoverResetPage
+	page = strings.ReplaceAll(page, "{{TOKEN}}", htmlEscape(token))
+	page = strings.ReplaceAll(page, "{{ERROR}}", errHTML)
 	page = strings.ReplaceAll(page, "{{NONCE}}", nonce)
 	_, _ = w.Write([]byte(page))
 }
@@ -320,5 +355,44 @@ const forbiddenPage = pageHead + `
       ask an admin to add it to your allowed hosts.</p>
     <div class="foot foot-flat"><a href="/_auth/logout">switch account</a></div>
   </div>
+</body>
+</html>`
+
+const recoverRequestPage = pageHead + `
+  <form class="card auth-card" method="post" action="/_auth/recover" autocomplete="off">` + brandHTML + `
+    <div class="sub">reset your password</div>
+    <input type="hidden" name="ft" value="{{FT}}">
+    <div class="trap" aria-hidden="true">
+      <label>Leave this field empty</label>
+      <input type="text" name="website" tabindex="-1" autocomplete="off">
+    </div>
+    {{SENT}}
+    {{ERROR}}
+    <div class="form-group">
+      <label class="form-label" for="u">username / email</label>
+      <input class="form-input" id="u" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" autofocus>
+    </div>
+    <button type="submit" class="btn btn-primary auth-btn">send reset link</button>
+    <div class="foot"><a href="/_auth/login">back to sign in</a></div>
+  </form>
+</body>
+</html>`
+
+const recoverResetPage = pageHead + `
+  <form class="card auth-card" method="post" action="/_auth/recover" autocomplete="off">` + brandHTML + `
+    <div class="sub">choose a new password</div>
+    <input type="hidden" name="token" value="{{TOKEN}}">
+    {{ERROR}}
+    <div class="form-group">
+      <label class="form-label" for="n1">new password <span class="label-hint">— min 10 chars</span></label>
+      <input class="form-input" id="n1" name="new1" type="password" autocomplete="new-password" autofocus>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="n2">repeat new password</label>
+      <input class="form-input" id="n2" name="new2" type="password" autocomplete="new-password">
+    </div>
+    <button type="submit" class="btn btn-primary auth-btn">reset password</button>
+    <div class="foot"><a href="/_auth/login">back to sign in</a></div>
+  </form>
 </body>
 </html>`

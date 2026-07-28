@@ -71,6 +71,9 @@ Steps in the same phase can be parallelised if there are no `Blocked by` depende
 | Step 15 — Switch issuance, dual parser | ✅ done (2026-07-27) | `setCookie` issues PASETO; legacy accepted via `parseSessionToken` with `legacy_token_verified` log; cookies now start `v4.local.` |
 | Step 16 — PASETO key rotation | ✅ done (2026-07-27) | `PASETO_KEY_PREVIOUS` (comma-sep hex); old-key tokens verified then transparently re-issued under the current key (`session(w, r)` signature change) |
 | Step 17 — Remove legacy HMAC path | ✅ done (2026-07-27) | `issueSession`/`parseSession`/`parseSessionToken` deleted; `mac`/`validMAC`/`macWith` kept (device/form/CSRF/pending still HMAC); explicit `PASETO_KEY` now **required** (note: guide §7.7 recommends derive-only — roadmap wins; recorded here) |
+| Steps 18–20 — mTLS session binding | ⏭️ skipped (2026-07-28) | **Owner decision: mTLS client certs not wanted** — Phase 4 marked optional; criterion 7 void |
+| Deploy — VPS production | ✅ done (2026-07-28) | Live at auth.xore.rocks; PASETO cookies verified; fixed container OOM (Argon2id 64 MiB vs 32M limit → 256M + `GOMEMLIMIT`) in repo and on VPS |
+| Step 21 — Email self-service recovery | ✅ done (2026-07-28) | `/_auth/recover` (request + reset), HMAC token with password-hash fingerprint → single-use by construction, 15-min TTL, 3/hour per IP, `SMTP_URL` (`smtp://`+STARTTLS / `smtps://`), breach-list check on reset, generic anti-enumeration responses, "forgot password?" link when enabled |
 
 **Step 5b deviation notes (approved design):**
 - Login is a **two-step UI** (username → password/passkey, client-side) followed by a
@@ -851,6 +854,12 @@ during the transition window so existing sessions are not invalidated.
 
 ## Phase 4 — mTLS Session Binding
 
+> **Status: OPTIONAL — skipped by owner decision (2026-07-28).** mTLS client
+> certificates are not wanted in this deployment. Steps 18–20 are retained for
+> reference only; do not implement unless this decision is revisited.
+> Completion criterion 7 (`forwardauth_cert_bound_sessions` metric) is
+> correspondingly void.
+>
 > Implements `MTLS-SESSION-BINDING-GUIDE.md`. Each step maps to one Phase in that guide.
 
 ---

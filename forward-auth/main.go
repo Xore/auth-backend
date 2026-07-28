@@ -94,6 +94,8 @@ type config struct {
 	maxBodyBytes    int64
 	orgID           string
 	ssoURL          string
+	smtpURL         string
+	smtpFrom        string
 	pasetoKey       pasetov4.LocalKey // XChaCha20 + BLAKE2b key for PASETO v4.local session tokens
 	pasetoKeySet    bool              // true when PASETO_KEY was set explicitly
 	oldPasetoKeys   []pasetov4.LocalKey
@@ -248,6 +250,8 @@ func loadConfig(logger *slog.Logger) config {
 		maxBodyBytes:    int64(atoi(os.Getenv("MAX_BODY_KB"), 64)) * 1024,
 		orgID:           getenv("ORG_ID", ""),
 		ssoURL:          getenv("SSO_URL", ""),
+		smtpURL:         getenv("SMTP_URL", ""),
+		smtpFrom:        getenv("SMTP_FROM", "forward-auth@"+authHost),
 		pasetoKey:       pasetoKey,
 		pasetoKeySet:    pasetoKeySet,
 		oldPasetoKeys:   oldPasetoKeys,
@@ -312,6 +316,11 @@ func (c config) validate() error {
 	}
 	if !c.pasetoKeySet {
 		problems = append(problems, "PASETO_KEY must be set explicitly (64 hex chars) — silent derivation is no longer supported")
+	}
+	if c.smtpURL != "" {
+		if u, err := url.Parse(c.smtpURL); err != nil || (u.Scheme != "smtp" && u.Scheme != "smtps") || u.Hostname() == "" {
+			problems = append(problems, "SMTP_URL must be smtp:// or smtps:// with a host")
+		}
 	}
 	if len(problems) == 0 {
 		return nil
@@ -737,16 +746,17 @@ func min(a, b int) int {
 // --- server -----------------------------------------------------------------
 
 type server struct {
-	cfg        config
-	log        *slog.Logger
-	tr         *throttle
-	aud        *auditor
-	users      *userStore
-	reg        *sessionRegistry
-	ntf        *notifier
-	wa         *webauthn.WebAuthn
-	ceremonies *ceremonyStore
-	startedAt  time.Time
+	cfg          config
+	log          *slog.Logger
+	tr           *throttle
+	aud          *auditor
+	users        *userStore
+	reg          *sessionRegistry
+	ntf          *notifier
+	wa           *webauthn.WebAuthn
+	ceremonies   *ceremonyStore
+	startedAt    time.Time
+	recoverLimit rateLimiter
 }
 
 // clientIP returns the real client address. Forwarded headers are only
@@ -1537,7 +1547,8 @@ func main() {
 		reg:   newSessionRegistry(cfg.ttl, filepath.Join(filepath.Dir(cfg.usersFile), "revoked-sessions.json")),
 		ntf:   newNotifier(cfg.webhookURL, cfg.webhookProvider, log),
 
-		startedAt: time.Now(),
+		startedAt:    time.Now(),
+		recoverLimit: rateLimiter{max: 3, window: time.Hour},
 	}
 	if err := s.reg.load(); err != nil {
 		log.Error("cannot load session revocations", "error", err)
@@ -1579,6 +1590,7 @@ func main() {
 	mux.HandleFunc("/_auth/enroll", s.enroll)
 	mux.HandleFunc("/_auth/password", s.password)
 	mux.HandleFunc("/_auth/backup-codes", s.handleBackupCodes)
+	mux.HandleFunc("/_auth/recover", s.recover)
 	mux.HandleFunc("/_auth/passkeys", s.passkeyPage)
 	mux.HandleFunc("/_auth/passkeys/register/begin", s.passkeyRegisterBegin)
 	mux.HandleFunc("/_auth/passkeys/register/finish", s.passkeyRegisterFinish)

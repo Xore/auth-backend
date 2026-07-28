@@ -133,6 +133,15 @@
       </div>
     </form>
 
+    {{if .RecoverEnabled}}
+    <p class="mt-3 text-center">
+      <a href="/_auth/recover"
+         class="text-xs text-muted hover:text-white transition-colors underline underline-offset-2">
+        Forgot your password?
+      </a>
+    </p>
+    {{end}}
+
     <p class="mt-5 text-center text-xs text-muted leading-relaxed">
       protected &nbsp;&#9670;&nbsp; all activity logged
     </p>

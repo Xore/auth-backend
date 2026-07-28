@@ -713,6 +713,157 @@ func TestBackupCodeRegeneration(t *testing.T) {
 	}
 }
 
+func TestRecoveryTokenSingleUse(t *testing.T) {
+	c := testConfig(t)
+	path := filepath.Join(t.TempDir(), "users.json")
+	st := newUserStore(path)
+	if _, err := st.bootstrap("alice@example.com", "a-long-test-password", ""); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", "raw", slog.Default())}
+
+	u := st.get("alice@example.com")
+	tok := c.issueRecoveryToken(u)
+	if user, ok := s.checkRecoveryToken(tok); !ok || user != "alice@example.com" {
+		t.Fatal("valid recovery token rejected")
+	}
+	if _, ok := s.checkRecoveryToken(tok + "x"); ok {
+		t.Fatal("tampered recovery token accepted")
+	}
+	// unknown user
+	if _, ok := s.checkRecoveryToken(c.issueRecoveryToken(&User{Username: "ghost", Hash: u.Hash})); ok {
+		t.Fatal("token for unknown user accepted")
+	}
+	// expired
+	body := "rec|" + strconv.FormatInt(time.Now().Add(-time.Minute).Unix(), 10) + "|alice@example.com|" + c.recoveryFP(u)
+	expired := body + "|" + c.mac(body)
+	if _, ok := s.checkRecoveryToken(expired); ok {
+		t.Fatal("expired recovery token accepted")
+	}
+	// single-use: after the password hash changes, the token dies
+	if err := st.mutate("alice@example.com", func(u *User) bool { u.Hash = "different-hash"; return true }); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.checkRecoveryToken(tok); ok {
+		t.Fatal("recovery token survived a password change")
+	}
+}
+
+func TestRecoveryRateLimit(t *testing.T) {
+	rl := rateLimiter{max: 2, window: 60 * time.Millisecond}
+	if !rl.allow("1.2.3.4") || !rl.allow("1.2.3.4") {
+		t.Fatal("first two requests denied")
+	}
+	if rl.allow("1.2.3.4") {
+		t.Fatal("third request within window allowed")
+	}
+	if !rl.allow("5.6.7.8") {
+		t.Fatal("limiter leaks across keys")
+	}
+	time.Sleep(70 * time.Millisecond)
+	if !rl.allow("1.2.3.4") {
+		t.Fatal("request after window denied")
+	}
+}
+
+func TestRecoverResetFlow(t *testing.T) {
+	c := testConfig(t)
+	c.smtpURL = "smtp://mail.example.com"
+	path := filepath.Join(t.TempDir(), "users.json")
+	st := newUserStore(path)
+	if _, err := st.bootstrap("alice@example.com", "a-long-test-password", ""); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", "raw", slog.Default()), recoverLimit: rateLimiter{max: 3, window: time.Hour}}
+
+	var sentTo, sentBody string
+	old := sendMailFunc
+	sendMailFunc = func(_, from, to, subject, body string) error {
+		sentTo, sentBody = to, body
+		return nil
+	}
+	t.Cleanup(func() { sendMailFunc = old })
+
+	// request a reset: mail goes out, response is the generic notice
+	f := url.Values{}
+	f.Set("ft", c.issueForm())
+	f.Set("username", "alice@example.com")
+	r := httptest.NewRequest("POST", "http://auth/_auth/recover", strings.NewReader(f.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.recover(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "reset email is on its way") {
+		t.Fatalf("request form: got %d", w.Code)
+	}
+	if sentTo != "alice@example.com" || !strings.Contains(sentBody, "/_auth/recover?token=") {
+		t.Fatalf("no reset mail captured (to=%q)", sentTo)
+	}
+	rest := sentBody[strings.Index(sentBody, "token=")+len("token="):]
+	tok, _ := url.QueryUnescape(strings.Fields(rest)[0])
+
+	// reset with a common password: rejected, breach list applies
+	post := func(tok, new1, new2 string) *httptest.ResponseRecorder {
+		f := url.Values{}
+		f.Set("token", tok)
+		f.Set("new1", new1)
+		f.Set("new2", new2)
+		r := httptest.NewRequest("POST", "http://auth/_auth/recover", strings.NewReader(f.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		s.recover(w, r)
+		return w
+	}
+	if w := post(tok, "password123", "password123"); !strings.Contains(w.Body.String(), "breach lists") {
+		t.Fatal("common password not rejected on recovery reset")
+	}
+
+	// valid reset: password changes, generation bumps, token dies
+	genBefore := st.get("alice@example.com").Gen
+	w = post(tok, "brand-new-unique-pw-99", "brand-new-unique-pw-99")
+	if w.Code != http.StatusFound {
+		t.Fatalf("reset: expected 302, got %d", w.Code)
+	}
+	if !st.checkPassword("alice@example.com", "brand-new-unique-pw-99") {
+		t.Fatal("new password not in effect")
+	}
+	if st.get("alice@example.com").Gen != genBefore+1 {
+		t.Fatal("generation not bumped")
+	}
+	if _, ok := s.checkRecoveryToken(tok); ok {
+		t.Fatal("used token still valid")
+	}
+	// GET with the dead token bounces back to the request form with an error
+	r = httptest.NewRequest("GET", "http://auth/_auth/recover?token="+url.QueryEscape(tok), nil)
+	w = httptest.NewRecorder()
+	s.recover(w, r)
+	if !strings.Contains(w.Body.String(), "invalid or has expired") {
+		t.Fatal("dead token did not produce the expired-link page")
+	}
+
+	// unknown usernames get the identical generic notice (no enumeration)
+	f = url.Values{}
+	f.Set("ft", c.issueForm())
+	f.Set("username", "ghost@example.com")
+	r = httptest.NewRequest("POST", "http://auth/_auth/recover", strings.NewReader(f.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	s.recover(w, r)
+	if !strings.Contains(w.Body.String(), "reset email is on its way") {
+		t.Fatal("unknown user produced a different response")
+	}
+}
+
+func TestRecoverDisabledRoute(t *testing.T) {
+	c := testConfig(t) // no smtpURL
+	s := &server{cfg: c, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	r := httptest.NewRequest("GET", "http://auth/_auth/recover", nil)
+	w := httptest.NewRecorder()
+	s.recover(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 when SMTP_URL unset, got %d", w.Code)
+	}
+}
+
 func TestWebhookSeverityMapping(t *testing.T) {
 	for event, want := range map[string]string{
 		"login_ok":            "info",

@@ -50,6 +50,8 @@ services:
       - GOMEMLIMIT=${GOMEMLIMIT:-220MiB}
       # optional: enterprise SSO redirect target + org identifier (admin UI)
       - SSO_URL=${SSO_URL:-}
+      - SMTP_URL=${SMTP_URL:-}
+      - SMTP_FROM=${SMTP_FROM:-}
       - ORG_ID=${ORG_ID:-}
     volumes:
       - auth-data:/data
