@@ -46,6 +46,8 @@ services:
       - FORM_TTL_MINUTES=${FORM_TTL_MINUTES:-15}
       - COOKIE_SECURE=${COOKIE_SECURE:-true}
       - MAX_BODY_KB=${MAX_BODY_KB:-64}
+      # Go GC target below the container memory limit (Argon2id spikes 64 MiB)
+      - GOMEMLIMIT=${GOMEMLIMIT:-220MiB}
       # optional: enterprise SSO redirect target + org identifier (admin UI)
       - SSO_URL=${SSO_URL:-}
       - ORG_ID=${ORG_ID:-}
@@ -70,7 +72,7 @@ services:
       resources:
         limits:
           cpus: "0.5"
-          memory: 32M
+          memory: 256M
 
   # One-shot Tailwind CSS builder. Excluded from normal startup by its
   # profile; regenerates forward-auth/ui/tailwind.min.css (used by the
