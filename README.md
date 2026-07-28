@@ -213,6 +213,7 @@ new key and retain the active key as the previous key for the transition.
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `VERSION` | `dev` | Compile-time identifier shown in Administration → System; set `production` on production deployments |
 | `AUTH_HOST` | *(required)* | Hostname the login page lives at |
 | `COOKIE_DOMAIN` | *(empty)* | Cookie scope — SSO across every subdomain |
 | `COOKIE_NAME` | `xore_sso` | Session cookie name |

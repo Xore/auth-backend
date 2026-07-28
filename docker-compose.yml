@@ -14,6 +14,8 @@ services:
     build:
       context: ./forward-auth
       dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-dev}
     image: xore-auth-backend:local
     container_name: auth-portal
     restart: unless-stopped

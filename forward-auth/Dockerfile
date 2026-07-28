@@ -1,12 +1,14 @@
 # Stage 1 — build (needs memory for Go compiler, isolated from runtime)
 FROM golang:1.26.5-alpine AS builder
+ARG VERSION=dev
 WORKDIR /src
 # Download deps first for layer caching
 COPY go.mod go.sum ./
 RUN go mod download
 # Build a fully static binary
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /forward-auth .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
+  -ldflags="-s -w -X main.version=${VERSION}" -o /forward-auth .
 
 # Stage 2 — runtime (tiny, no compiler, no OOM risk)
 FROM alpine:3.24
