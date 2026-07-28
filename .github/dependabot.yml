@@ -3,15 +3,18 @@ updates:
   - package-ecosystem: "gomod"
     directory: "/forward-auth"
     schedule: { interval: "weekly" }
+    cooldown: { default-days: 7 }
     open-pull-requests-limit: 10
     labels: ["dependencies", "automated"]
 
   - package-ecosystem: "docker"
     directory: "/forward-auth"
     schedule: { interval: "weekly" }
+    cooldown: { default-days: 7 }
     labels: ["dependencies", "automated"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule: { interval: "weekly" }
+    cooldown: { default-days: 7 }
     labels: ["dependencies", "automated"]
