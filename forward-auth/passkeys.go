@@ -67,25 +67,6 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, maxBytes int64, dst any)
 	return true
 }
 
-func (s *server) passkeyPage(w http.ResponseWriter, r *http.Request) {
-	cl, u, ok := s.session(w, r)
-	if !ok {
-		http.Redirect(w, r, "https://"+s.cfg.authHost+"/_auth/login", http.StatusFound)
-		return
-	}
-	if rd := pendingRedirect(cl, s.cfg.authHost); rd != "" {
-		http.Redirect(w, r, rd, http.StatusFound)
-		return
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	n := nonce()
-	secHeaders(w, n)
-	s.renderPasskeys(w, u, s.cfg.csrfToken(cl.sid), n)
-}
-
 func (s *server) passkeyRegisterBegin(w http.ResponseWriter, r *http.Request) {
 	secHeaders(w, nonce())
 	cl, u, ok := s.passkeyGate(w, r)

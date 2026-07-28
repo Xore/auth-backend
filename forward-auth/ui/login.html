@@ -6,20 +6,51 @@
   <meta name="robots" content="noindex, nofollow" />
   <title>Sign in — {{.BrandTitle}}</title>
   <link rel="stylesheet" href="/static/tailwind.min.css" />
+  <link rel="stylesheet" href="/static/theme.css" />
   <style nonce="{{.Nonce}}">
-    html { background: #1a1a1a; }
-    input:focus { outline: none; box-shadow: 0 0 0 2px rgba(212,118,78,0.45); }
-    .btn-social:hover { background: #2a2a2a; border-color: #444; }
+    html { background: var(--app-bg); }
+    body.auth-login { background: var(--app-bg); color: var(--text-primary); }
+    .login-brand h1 { color: var(--text-primary); }
+    .login-card {
+      background: var(--surface-1);
+      border-color: var(--border-subtle);
+      border-radius: var(--radius-panel);
+      box-shadow: none;
+    }
+    .login-input {
+      background: var(--surface-0);
+      border-color: var(--border-subtle);
+      border-radius: var(--radius-control);
+      color: var(--text-primary);
+    }
+    .login-input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-soft);
+    }
+    .login-primary {
+      background: var(--accent);
+      border-radius: var(--radius-control);
+      color: var(--text-on-accent);
+    }
+    .login-primary:hover { background: var(--accent-hover); }
+    .btn-social {
+      background: var(--surface-1);
+      border-color: var(--border-subtle);
+      border-radius: var(--radius-control);
+      color: var(--text-primary);
+    }
+    .btn-social:hover { background: var(--surface-hover); border-color: var(--border-strong); }
     .divider::before, .divider::after {
-      content: ''; flex: 1; height: 1px; background: #2e2e2e;
+      content: ''; flex: 1; height: 1px; background: var(--border-subtle);
     }
     .trap { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
   </style>
 </head>
-<body class="h-full font-sans bg-bg text-white flex flex-col items-center justify-center px-4">
+<body class="auth-login h-full font-sans flex flex-col items-center justify-center px-4">
 
   <!-- Brand headline -->
-  <div class="mb-8 text-center select-none">
+  <div class="login-brand mb-8 text-center select-none">
     <h1 class="font-serif text-4xl sm:text-5xl font-normal leading-tight">
       {{.BrandTitle}}
     </h1>
@@ -29,7 +60,7 @@
   </div>
 
   <!-- Auth card -->
-  <div class="w-full max-w-sm bg-surface border border-border rounded-2xl p-7 shadow-xl">
+  <div class="login-card w-full max-w-sm border p-7">
 
     {{if .SSOEnabled}}
     <a
@@ -74,14 +105,14 @@
             spellcheck="false"
             autofocus
             required
-            class="w-full bg-inputbg border border-border rounded-xl px-4 py-3
-                   text-sm text-white placeholder-muted focus:border-primary transition-colors" />
+            class="login-input w-full border px-4 py-3
+                   text-sm placeholder-muted transition-colors" />
         </div>
         <button
           type="button"
           id="btn-continue"
-          class="w-full bg-white text-black rounded-xl px-4 py-3
-                 text-sm font-semibold hover:bg-gray-100 transition-colors">
+          class="login-primary w-full px-4 py-3
+                 text-sm font-semibold transition-colors">
           Continue
         </button>
       </div>
@@ -102,8 +133,8 @@
             name="password"
             type="password"
             autocomplete="current-password"
-            class="w-full bg-inputbg border border-border rounded-xl px-4 py-3
-                   text-sm text-white placeholder-muted focus:border-primary transition-colors" />
+            class="login-input w-full border px-4 py-3
+                   text-sm placeholder-muted transition-colors" />
         </div>
         {{if .Remember}}
         <label class="mb-4 flex items-center gap-2 text-xs text-muted cursor-pointer select-none">
@@ -113,8 +144,8 @@
         {{end}}
         <button
           type="submit"
-          class="w-full bg-white text-black rounded-xl px-4 py-3
-                 text-sm font-semibold hover:bg-gray-100 transition-colors mb-3">
+          class="login-primary w-full px-4 py-3
+                 text-sm font-semibold transition-colors mb-3">
           Sign in
         </button>
         <button

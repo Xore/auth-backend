@@ -1418,7 +1418,7 @@ func (s *server) enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if u.TOTPSecret != "" {
-		http.Redirect(w, r, "https://"+s.cfg.authHost+"/_auth/ok", http.StatusFound)
+		http.Redirect(w, r, "https://"+s.cfg.authHost+"/auth/app", http.StatusFound)
 		return
 	}
 
@@ -1584,7 +1584,7 @@ func (s *server) password(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, p, http.StatusFound)
 		return
 	}
-	http.Redirect(w, r, "https://"+s.cfg.authHost+"/_auth/ok", http.StatusFound)
+	http.Redirect(w, r, "https://"+s.cfg.authHost+"/auth/app", http.StatusFound)
 }
 
 func (s *server) audit(event, ip, user string, r *http.Request) {
@@ -1626,6 +1626,18 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// settingsRedirect retires standalone account/admin pages without breaking
+// existing bookmarks. Authentication remains enforced by /auth/app itself.
+func settingsRedirect(pane string) http.HandlerFunc {
+	target := "/auth/app"
+	if pane != "" {
+		target += "?pane=" + url.QueryEscape(pane)
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target, http.StatusFound)
+	}
 }
 
 func main() {
@@ -1759,7 +1771,7 @@ func main() {
 	mux.HandleFunc("/_auth/password", s.password)
 	mux.HandleFunc("/_auth/backup-codes", s.handleBackupCodes)
 	mux.HandleFunc("/_auth/recover", s.recover)
-	mux.HandleFunc("/_auth/passkeys", s.passkeyPage)
+	mux.HandleFunc("/_auth/passkeys", settingsRedirect("passkeys"))
 	mux.HandleFunc("/_auth/passkeys/list", s.passkeyList)
 	mux.HandleFunc("/_auth/passkeys/register/begin", s.passkeyRegisterBegin)
 	mux.HandleFunc("/_auth/passkeys/register/finish", s.passkeyRegisterFinish)
@@ -1767,16 +1779,8 @@ func main() {
 	mux.HandleFunc("/_auth/passkeys/login/begin", s.passkeyLoginBegin)
 	mux.HandleFunc("/_auth/passkeys/login/finish", s.passkeyLoginFinish)
 	mux.HandleFunc("/_auth/metrics", s.metrics)
-	mux.HandleFunc("/_auth/ok", func(w http.ResponseWriter, r *http.Request) {
-		n := nonce()
-		secHeaders(w, n)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(strings.ReplaceAll(okPage, "{{NONCE}}", n)))
-	})
-	mux.HandleFunc("/_auth/admin", func(w http.ResponseWriter, r *http.Request) {
-		// the standalone admin panel is gone — the app shell hosts all admin UI
-		http.Redirect(w, r, "/auth/app", http.StatusFound)
-	})
+	mux.HandleFunc("/_auth/ok", settingsRedirect(""))
+	mux.HandleFunc("/_auth/admin", settingsRedirect(""))
 	mux.HandleFunc("/_auth/admin/api/state", s.adminState)
 	mux.HandleFunc("/_auth/admin/api/user", s.adminCreateUser)
 	mux.HandleFunc("/_auth/admin/api/action", s.adminAction)

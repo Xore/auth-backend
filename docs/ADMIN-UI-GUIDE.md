@@ -1,9 +1,9 @@
-# Admin UI — Claude-style Settings Modal
+# Admin UI — Shared Settings Surface
 
 This guide covers how to build the **settings / admin panel modal** shown in
-the screenshot: a split-pane overlay with a left sidebar and right content area,
-matching the Claude settings UI exactly. It wires into the existing
-`adminpage.go` + `admin.go` API.
+the screenshot: a split-pane surface with a left sidebar and right content area.
+It uses the shared theme while preserving the existing `adminpage.go` and
+`admin.go` API contracts.
 
 ---
 
@@ -97,7 +97,7 @@ redirect target** so it opens immediately post-login.
 ## 3. Modal HTML shell
 
 The full modal structure to include inside `app.html`
-(see `CLAUDE-THEME-GUIDE.md §4` for the CSS):
+(see `THEME-GUIDE.md §4` for the CSS):
 
 ```html
 <!-- Trigger button (e.g. in a nav bar) -->
@@ -336,7 +336,7 @@ mux.HandleFunc("/_auth/sessions/mine", s.handleMySessions)
 ## 8. Right pane: Admin — Users
 
 Maps to the existing `pane-users` from `adminpage.go`, restyled with
-the Claude theme components.
+the shared theme components.
 
 Key changes from the current admin UI:
 - Replace `.newuser` grid with a `.card` containing `form-group` / `form-input` elements.
@@ -664,7 +664,7 @@ function filterSidebar(query) {
 
 ### Modal shell
 - [ ] `forward-auth/ui/app.html` created with modal markup
-- [ ] `claude-theme.css` linked (see `CLAUDE-THEME-GUIDE.md §12`)
+- [ ] `theme.css` linked (see `THEME-GUIDE.md §12`)
 - [ ] `IS_ADMIN`, `CURRENT_USER`, `ORG_ID`, `CSRF` injected from Go template
 - [ ] `openSettings()` / `closeSettings()` JS functions
 - [ ] Esc key closes modal
@@ -715,6 +715,6 @@ function filterSidebar(query) {
 - [ ] `GET /_auth/sessions/trusted` → `handleTrustedDevices()`
 
 ### Production
-- [ ] `claude-theme.css` built and embedded (see `CLAUDE-THEME-GUIDE.md §12`)
+- [ ] `theme.css` built and embedded (see `THEME-GUIDE.md §12`)
 - [ ] CSP updated: no new external origins needed (all JS/CSS is self-hosted)
 - [ ] Modal tested on mobile (320 px min-width)

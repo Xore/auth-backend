@@ -1,6 +1,6 @@
 # AI Implementation Roadmap — auth-backend
 
-> **Audience:** This document is written for an AI coding assistant (Claude, ChatGPT, Gemini, etc.).
+> **Audience:** This document is written for modern AI coding assistants.
 > Each step is self-contained and ends with a concrete verification test so the model can confirm
 > correct completion before proceeding. Steps are ordered by dependency — never skip ahead.
 >
@@ -15,7 +15,7 @@
 
 | Guide | What it covers |
 |---|---|
-| [`CLAUDE-THEME-GUIDE.md`](./CLAUDE-THEME-GUIDE.md) | CSS design system (variables, components, dark mode) |
+| [`THEME-GUIDE.md`](./THEME-GUIDE.md) | CSS design system (variables, components, dark mode) |
 | [`UI-REDESIGN-GUIDE.md`](./UI-REDESIGN-GUIDE.md) | Login / enroll / password pages restyle |
 | [`ADMIN-UI-GUIDE.md`](./ADMIN-UI-GUIDE.md) | Settings modal, admin panel, new Go routes |
 | [`IMPROVEMENT-GUIDE.md`](./IMPROVEMENT-GUIDE.md) | Security gaps, missing features, priority matrix |
@@ -52,8 +52,8 @@ Steps in the same phase can be parallelised if there are no `Blocked by` depende
 
 | Step | Status | Notes |
 |---|---|---|
-| Step 1 — CSS design system | ✅ done (2026-07-27) | `forward-auth/ui/claude-theme.css`; dark-mode block, keyframes, mobile breakpoints |
-| Step 2 — Restyle login/enroll/password | ✅ done (2026-07-27) | `page.go` on `claude-theme.css`; `/static/` route via `static.go`; CSP `style-src 'self'` added |
+| Step 1 — CSS design system | ✅ done (2026-07-27) | `forward-auth/ui/theme.css`; dark-mode block, keyframes, mobile breakpoints |
+| Step 2 — Restyle login/enroll/password | ✅ done (2026-07-27) | `page.go` on `theme.css`; `/static/` route via `static.go`; CSP `style-src 'self'` added |
 | Step 3 — App shell page | ✅ done (2026-07-27) | `ui/app.html`, `apppage.go`, `/auth/app` route |
 | Step 4 — Settings modal panes | ✅ done (2026-07-27) | Nav, `PANE_TEMPLATES`, loaders on `/api/state`, 5 s polling, sidebar search |
 | Step 4b — Legacy admin panel restyle | ✅ done → ⚠️ superseded (2026-07-27) | Panel was restyled, then **deleted on user request**: all admin functions (create user, row actions, unlock, revoke) moved into the `/auth/app` shell; `/_auth/admin` now redirects there; `adminpage.go` removed |
@@ -64,7 +64,7 @@ Steps in the same phase can be parallelised if there are no `Blocked by` depende
 | Step 8 — Idle session timeout | ✅ done (2026-07-27) | `IDLE_TIMEOUT_MINUTES` (default 60, 0 disables); idle SIDs revoked + `idle_timeout` audit event; registry-missing sessions treated as no-idle-data |
 | Step 9 — Persist throttle state | ✅ done (2026-07-27) | `throttle.json` load/persist (lockout trigger + SIGTERM), expired entries pruned. **Also fixed a pre-existing bug:** `locked()` pruned zero-`lockUntil` counting entries, so the fail counter reset every attempt and lockouts never engaged |
 | Step 10 — Backup code regeneration | ✅ done (2026-07-27) | `POST /_auth/backup-codes` (session + form token), 8 new codes rendered, `DeviceGen++`; link in app-shell account pane. Codes are SHA-256-hashed in this repo (roadmap text says bcrypt) |
-| Step 11 — CSP nonce | ✅ done (2026-07-27) | `script-src` was already nonce-only; **33 inline event-handler attributes were CSP-blocked and dead** — all converted to `addEventListener`/event delegation across 5 files; `style-src 'self' 'unsafe-inline'` per spec; passkeys page also restyled to the Claude theme (Step-2 leftover) |
+| Step 11 — CSP nonce | ✅ done (2026-07-27) | `script-src` was already nonce-only; **33 inline event-handler attributes were CSP-blocked and dead** — all converted to `addEventListener`/event delegation across 5 files; `style-src 'self' 'unsafe-inline'` per spec; passkeys page also restyled to the shared theme (Step-2 leftover) |
 | Step 12 — Webhook enrichment + providers | ✅ done (2026-07-27) | `webhookPayload` + request_id/severity/timestamp; `WEBHOOK_PROVIDER=raw|slack|ntfy|gotify` with per-provider shapes; severity mapping; `TestWebhook*` tests |
 | Step 13 — PASETO dep + key management | ✅ done (2026-07-27) | `zntr.io/paseto/v4` v1.4.0; `PASETO_KEY` (64 hex) or HKDF-derive from `COOKIE_SECRET`; bad length is fatal at load |
 | Step 14 — PASETO payload + issue/parse | ✅ done (2026-07-27) | `sessionPayload` (iss/sub/iat/exp/jti/gen/flags), fail-closed claim checks, `forward-auth session v1` assertion; **fixed library panic on truncated tokens** (zntr v1.4.0 slices nonce unchecked) with a pre-decode shape guard |
@@ -99,9 +99,9 @@ Steps in the same phase can be parallelised if there are no `Blocked by` depende
 ### Step 1 — Create the CSS design system
 
 **Phase:** UI 
-**Guide:** `CLAUDE-THEME-GUIDE.md` §1–§12 
-**Reads:** `forward-auth/main.go` (to understand embed pattern), `CLAUDE-THEME-GUIDE.md` 
-**Edits:** `forward-auth/ui/claude-theme.css` *(create)*  
+**Guide:** `THEME-GUIDE.md` §1–§12
+**Reads:** `forward-auth/main.go` (to understand embed pattern), `THEME-GUIDE.md`
+**Edits:** `forward-auth/ui/theme.css` *(create)*
 **Blocked by:** nothing
 
 The entire UI restyle depends on this file. It must be created first.
@@ -109,18 +109,18 @@ The entire UI restyle depends on this file. It must be created first.
 **Implementation instructions:**
 
 1. Create the directory `forward-auth/ui/` if it does not exist.
-2. Create `forward-auth/ui/claude-theme.css` with exactly the token/variable definitions,
+2. Create `forward-auth/ui/theme.css` with exactly the token/variable definitions,
    component classes (`.btn`, `.card`, `.badge`, `.form-input`, `.data-table`, `.modal`,
    `.modal__sidebar`, `.modal__content`, `.sidebar__item`, `.sidebar__section-label`),
-   dark-mode media query block, and mobile breakpoints described in `CLAUDE-THEME-GUIDE.md`.
+   dark-mode media query block, and mobile breakpoints described in `THEME-GUIDE.md`.
 3. The CSS must use CSS custom properties (`--bg-primary`, `--text-primary`, `--accent`, etc.)
    as the single source of truth. No hardcoded hex colours outside the `:root` / `prefers-color-scheme` blocks.
 4. Do **not** reference any external font CDN. Use `system-ui, -apple-system, sans-serif`.
 5. Include the `@keyframes modal-in` and `@keyframes fade-in` animations used by the modal.
 
 **Verification:**
-- The CSS file exists at `forward-auth/ui/claude-theme.css`.
-- Running `grep -c 'var(--' forward-auth/ui/claude-theme.css` returns ≥ 30.
+- The CSS file exists at `forward-auth/ui/theme.css`.
+- Running `grep -c 'var(--' forward-auth/ui/theme.css` returns ≥ 30.
 - No `http://` or `https://` URLs appear in the file.
 - The file contains `.modal__sidebar`, `.modal__content`, `.sidebar__item`, `.data-table`, `.badge--green`, `.badge--red`, `.badge--orange`, `.badge--blue`, `.badge--muted`.
 
@@ -134,14 +134,14 @@ The entire UI restyle depends on this file. It must be created first.
 **Edits:** `forward-auth/page.go` (or `forward-auth/ui/*.html` if templates are file-based) 
 **Blocked by:** Step 1
 
-Apply the Claude-theme components to the three user-facing pages. The backend logic does not change.
+Apply the shared-theme components to the three user-facing pages. The backend logic does not change.
 
 **Implementation instructions:**
 
 1. Read `forward-auth/page.go` fully before editing. Identify where `loginPage`, `enrollPage`,
    `passwordPage`, and `backupCodesPage` template strings are defined.
 2. Replace the inline `<style>` blocks in each template with a single
-   `<link rel="stylesheet" href="/static/claude-theme.css">`.
+   `<link rel="stylesheet" href="/static/theme.css">`.
 3. Restyle the login form using `.card`, `.form-input`, `.btn`, `.btn-primary` as specified
    in `UI-REDESIGN-GUIDE.md §3`.
 4. Restyle the TOTP enroll page using the QR card layout from `UI-REDESIGN-GUIDE.md §4`.
@@ -162,7 +162,7 @@ Apply the Claude-theme components to the three user-facing pages. The backend lo
 - `go test ./...` passes (all existing tests green).
 - The login page HTML contains `class="card"` and `class="form-input"` but does **not** contain
   a `<style>` block with colour definitions.
-- `/static/claude-theme.css` is served (verify with `curl -I http://localhost:4181/static/claude-theme.css`).
+- `/static/theme.css` is served (verify with `curl -I http://localhost:4181/static/theme.css`).
 
 ---
 
@@ -180,7 +180,7 @@ landing page.
 **Implementation instructions:**
 
 1. Create `forward-auth/ui/app.html` with:
-   - `<link>` to `/static/claude-theme.css`
+   - `<link>` to `/static/theme.css`
    - Modal backdrop `<div class="modal-backdrop" id="settings-backdrop">`
    - `<dialog class="modal" id="settings-modal">` containing `.modal__sidebar` and `.modal__content`
    - `<aside class="modal__sidebar">` with search input and `<nav id="settings-nav">`
@@ -269,16 +269,16 @@ Add all sidebar nav items and right-pane HTML shells. Wire them to the existing
 
 ---
 
-### Step 4b — Restyle the legacy admin panel to the Claude theme
+### Step 4b — Restyle the legacy admin panel to the shared theme
 
 **Phase:** UI 
-**Guide:** `CLAUDE-THEME-GUIDE.md`, `ADMIN-UI-GUIDE.md` 
-**Reads:** `forward-auth/adminpage.go`, `forward-auth/ui/claude-theme.css` 
+**Guide:** `THEME-GUIDE.md`, `ADMIN-UI-GUIDE.md`
+**Reads:** `forward-auth/adminpage.go`, `forward-auth/ui/theme.css`
 **Edits:** `forward-auth/adminpage.go` 
 **Blocked by:** Step 1 (Step 4 recommended first — the app shell then shares the design language)
 
-The legacy `/_auth/admin` panel still uses the pre-Claude dark palette (`baseCSS`,
-which moved into `adminpage.go` during Step 2). Restyle it onto the Claude design
+The legacy `/_auth/admin` panel still uses the previous dark palette (`baseCSS`,
+which moved into `adminpage.go` during Step 2). Restyle it onto the shared design
 system so the old panel and the new `/auth/app` shell look like one product.
 
 **Implementation instructions:**
@@ -287,7 +287,7 @@ system so the old panel and the new `/auth/app` shell look like one product.
    API call (`/_auth/admin/api/*`), CSRF wiring, and polling behaviour exactly
    as-is — this is a visual refactor only.
 2. Replace the `baseCSS`-based `<style>` block with
-   `<link rel="stylesheet" href="/static/claude-theme.css">` plus a small nonce'd
+   `<link rel="stylesheet" href="/static/theme.css">` plus a small nonce'd
    layout-only style block that references theme custom properties (no hex colours,
    mirroring the `pageCSS` pattern in `page.go`).
 3. Map existing elements onto theme components: panels → `.card`, tables →
@@ -298,7 +298,7 @@ system so the old panel and the new `/auth/app` shell look like one product.
 
 **Verification:**
 - `go build ./...` succeeds; `go test ./...` passes.
-- `GET /_auth/admin` (admin session) returns HTML linking `/static/claude-theme.css`
+- `GET /_auth/admin` (admin session) returns HTML linking `/static/theme.css`
   and containing `class="card"` / `class="data-table"`, with no hex palette in the
   `<style>` block.
 - Admin actions (create user, revoke session, toggle flags) still work against the
@@ -384,13 +384,13 @@ Add the four backend routes the UI panes depend on.
 
 Step 2 restyled the existing inline templates only. This step implements the full
 `UI-REDESIGN-GUIDE.md`: file-based templates (`ui/login.html`, `ui/verify.html`)
-embedded via `//go:embed`, in the Claude dark style (same token values as
-`claude-theme.css`, Georgia serif headline), plus the supporting routes.
+embedded via `//go:embed`, using the shared dark style (the same tokens as
+`theme.css` and a Georgia serif headline), plus the supporting routes.
 
 **Implementation instructions:**
 
-1. Review `ui/login.html` and `ui/verify.html` (already present in the repo) against
-   guide §0 (the "diff vs live" table) and fix any drift.
+1. Review `ui/login.html` and `ui/verify.html` (already present in the repo)
+   against the shared theme baseline in guide §0 and fix any drift.
 2. Embed templates per guide §3 (`//go:embed ui/*.html`, `template.ParseFS`,
    `tmplFuncs` with `seq`/`add` per §7).
 3. Add `LoginPageData` / `VerifyPageData` structs (§4) and the `loginPage()` /
@@ -1188,7 +1188,7 @@ The implementation is complete when all of the following are true:
 1. `go test ./...` in `forward-auth/` reports 0 failures.
 2. `go build ./...` produces no errors or warnings.
 3. `go vet ./...` is clean.
-4. The login page uses the Claude theme and passes Chrome DevTools Lighthouse accessibility check ≥ 90.
+4. The login page uses the shared theme and passes Chrome DevTools Lighthouse accessibility check ≥ 90.
 5. All new session cookies start with `v4.local.`.
 6. The admin panel System pane shows live data.
 7. `/_auth/metrics` includes `forwardauth_cert_bound_sessions`.
@@ -1220,7 +1220,7 @@ The implementation is complete when all of the following are true:
 | `forward-auth/totp.go` | TOTP validation helpers |
 | `forward-auth/qr.go` | QR code generator |
 | `forward-auth/audit.go` | Audit ring + file logger |
-| `forward-auth/ui/claude-theme.css` | *(create in Step 1)* CSS design system |
+| `forward-auth/ui/theme.css` | *(create in Step 1)* CSS design system |
 | `forward-auth/ui/app.html` | *(create in Step 3)* App shell + settings modal |
 | `forward-auth/apppage.go` | *(create in Step 3)* `/auth/app` handler |
 | `forward-auth/mtls.go` | *(create in Step 18)* mTLS cert helpers |

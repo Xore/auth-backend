@@ -1,4 +1,4 @@
-# Login UI Redesign Guide — Claude-style Dark Theme
+# Login UI Redesign Guide — Shared Theme
 
 This guide covers every step to wire the two new HTML templates
 (`forward-auth/ui/login.html`, `forward-auth/ui/verify.html`) into the
@@ -8,7 +8,7 @@ existing Go `forward-auth` service.
 
 ## Table of Contents
 
-0. [Diff vs live claude.ai/login](#0-diff-vs-live-claudeailogin)
+0. [Shared theme baseline](#0-shared-theme-baseline)
 1. [Design system](#1-design-system)
 2. [File map](#2-file-map)
 3. [Step 1 — Embed templates in Go](#3-step-1--embed-templates-in-go)
@@ -28,49 +28,47 @@ existing Go `forward-auth` service.
 
 ---
 
-## 0. Diff vs live claude.ai/login
+## 0. Shared theme baseline
 
-This section documents every difference found when the current guide and templates
-were verified against the **live** `claude.ai/login` page (July 2026).
+The reusable design contract is maintained in
+[`Xore/theme`](https://github.com/Xore/theme). Read its
+[`auth-backend migration guide`](https://github.com/Xore/theme/blob/main/docs/MIGRATE-AUTH-BACKEND.md)
+before editing these templates. Keep product branding, authentication methods,
+legal copy, form fields, and backend routes specific to this service.
 
-| # | Element | Our previous version | Live Claude (correct) | Fixed in |
-|---|---|---|---|---|
-| 1 | **Headline** | "Question what's next" | **"Your ideas, amplified"** | `login.html` v2 |
-| 2 | **Subtitle** | "Your thinking partner for big ambitions" | **"Privacy-first AI that helps you create in confidence."** | `login.html` v2 |
-| 3 | **Button order** | Google → Passkey → OR → email | **Google → SSO → or → email** | `login.html` v2 |
-| 4 | **Passkey button** | Present on login screen | **Not present** on Claude's main login screen | `login.html` v2 |
-| 5 | **SSO button** | Missing | **"Continue with SSO"** is Claude's third option | `login.html` v2 |
-| 6 | **Email label** | No label (placeholder only) | **"Email" label** above the input field | `login.html` v2 |
-| 7 | **Legal copy** | "By continuing, you acknowledge our Privacy Policy." | **"By continuing, you agree to Anthropic's Consumer Terms and Usage Policy, and acknowledge our Privacy Policy."** (three links) | `login.html` v2 |
-| 8 | **Divider text** | Uppercase `OR` | **Lowercase `or`** | `login.html` v2 |
+The sign-in flow intentionally provides:
 
-> The `verify.html` (email OTP / TOTP) screen and the overall dark colour palette
-> remained accurate — no changes needed there.
+- an optional SSO entry point when configured;
+- a username-or-email first step;
+- password and passkey choices after the account identifier is known;
+- password recovery only when a recovery provider is configured; and
+- a separate two-factor page with TOTP and backup-code support.
 
 ---
 
 ## 1. Design system
 
-Colour tokens (verified against claude.ai computed styles, July 2026):
+Use the variables from `/static/theme.css`; do not duplicate palette values in
+page-local CSS:
 
 | Token | Value | Use |
 |---|---|---|
-| `bg` | `#1a1a1a` | Page background |
-| `surface` | `#242424` | Card / button background |
-| `border` | `#2e2e2e` | Borders, dividers |
-| `muted` | `#8a8a8a` | Secondary text, labels, placeholders |
-| `primary` | `#d4764e` | Terracotta accent — focus rings, verification icon |
-| `inputbg` | `#1f1f1f` | Text input fill |
+| `--app-bg` | Page background |
+| `--surface-1` | Card and panel background |
+| `--border-subtle` | Borders and dividers |
+| `--text-muted` | Secondary text, labels, and placeholders |
+| `--accent` | Primary action and focus accent |
+| `--surface-0` | Text input fill |
 
 Typography:
-- **Headlines**: `Georgia` (serif) — Claude uses a custom serif; Georgia is the closest
-  system-font match.
-- **Body / UI**: `Inter` (sans-serif) loaded from Google Fonts, weights 400/500/600.
+- **Headlines**: `Georgia` with a system serif fallback.
+- **Body / UI**: the shared system sans-serif stack. Do not add a font CDN.
 
 Layout rules:
-- Centered single column. Card `max-w-sm` (384 px), `rounded-2xl`, `shadow-xl`.
-- All interactive elements `py-3` — minimum 48 px touch height.
-- `or` divider is lowercase, flanked by `#2e2e2e` 1 px rules.
+- Centered single column with a 384 px maximum card width.
+- Compact shared panel radii and quiet borders; no glow or heavy shadow.
+- Interactive elements keep a minimum comfortable touch height.
+- The optional SSO divider is lowercase and uses the shared border token.
 
 ---
 
@@ -324,8 +322,8 @@ GOOGLE_CLIENT_SECRET=
 
 ## 12. Step 10 — SSO button
 
-Claude shows a **"Continue with SSO"** button (diff item #5). This maps to
-SAML/OIDC enterprise SSO. Wire it as a simple redirect to your IdP:
+When configured, the interface shows a **"Continue with SSO"** button. This
+maps to SAML/OIDC enterprise SSO. Wire it as a simple redirect to your IdP:
 
 ```go
 // config struct
@@ -380,7 +378,7 @@ For production (Tailwind pre-built), remove `cdn.tailwindcss.com` from `script-s
 - OTP boxes carry `aria-label="Digit N"` in `verify.html`.
 - Native `<form>` + `<button type="submit">` — functional without JavaScript.
 - Minimum touch target `py-3` (≥ 48 px).
-- Legal footer uses three separate links to match Claude's exact structure.
+- Legal footer links must match this service's actual terms and privacy policy.
 
 ---
 

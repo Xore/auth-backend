@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>xore//auth — app</title>
-<link rel="stylesheet" href="/static/claude-theme.css">
+<link rel="stylesheet" href="/static/theme.css">
 <style nonce="{{.Nonce}}">
   body{overflow:hidden}
   .modal.modal--permanent{display:flex;opacity:1;visibility:visible;inset:0;width:100vw;height:100dvh;
@@ -106,9 +106,8 @@
     <div class="modal__content" id="settings-content">
       <!-- Panes rendered here by showPane() -->
     </div>
-  </dialog>
 
-  <div class="edit-dialog-backdrop" id="edit-dialog-backdrop" aria-hidden="true" inert>
+    <div class="edit-dialog-backdrop" id="edit-dialog-backdrop" aria-hidden="true" inert>
     <section class="edit-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-dialog-title">
       <h2 class="edit-dialog__title" id="edit-dialog-title">Edit user</h2>
       <p class="edit-dialog__desc" id="edit-dialog-desc"></p>
@@ -119,9 +118,9 @@
         <button class="btn btn-primary" id="edit-dialog-save" type="button">Save</button>
       </div>
     </section>
-  </div>
+    </div>
 
-  <div class="edit-dialog-backdrop" id="rotate-dialog-backdrop" aria-hidden="true" inert>
+    <div class="edit-dialog-backdrop" id="rotate-dialog-backdrop" aria-hidden="true" inert>
     <section class="edit-dialog" role="alertdialog" aria-modal="true" aria-labelledby="rotate-dialog-title">
       <h2 class="edit-dialog__title" id="rotate-dialog-title">Rotate signing key</h2>
       <p class="edit-dialog__desc" id="rotate-dialog-desc"></p>
@@ -131,9 +130,9 @@
         <button class="btn btn-danger" id="rotate-dialog-confirm" type="button">Stage rotation</button>
       </div>
     </section>
-  </div>
+    </div>
 
-  <div class="edit-dialog-backdrop" id="danger-dialog-backdrop" aria-hidden="true" inert>
+    <div class="edit-dialog-backdrop" id="danger-dialog-backdrop" aria-hidden="true" inert>
     <section class="edit-dialog" role="alertdialog" aria-modal="true" aria-labelledby="danger-dialog-title">
       <h2 class="edit-dialog__title" id="danger-dialog-title">Confirm sensitive action</h2>
       <p class="edit-dialog__desc" id="danger-dialog-desc"></p>
@@ -143,7 +142,8 @@
         <button class="btn btn-danger" id="danger-dialog-confirm" type="button">Confirm</button>
       </div>
     </section>
-  </div>
+    </div>
+  </dialog>
 
 <script nonce="{{.Nonce}}">
 var IS_ADMIN = {{.IsAdmin}};
@@ -1204,7 +1204,10 @@ contentEl.addEventListener('keydown', function (e) {
 
 setInterval(fetchState, 5000);
 
-window.onload = function () { openSettings('account'); };
+window.onload = function () {
+  var requestedPane = new URLSearchParams(window.location.search).get('pane');
+  openSettings(PANE_TEMPLATES[requestedPane] ? requestedPane : 'account');
+};
 </script>
 </body>
 </html>

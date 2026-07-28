@@ -6,32 +6,54 @@
   <meta name="robots" content="noindex, nofollow" />
   <title>Two-factor — xore//auth</title>
   <link rel="stylesheet" href="/static/tailwind.min.css" />
+  <link rel="stylesheet" href="/static/theme.css" />
   <style nonce="{{.Nonce}}">
-    html { background: #1a1a1a; }
+    html { background: var(--app-bg); }
+    body.auth-verify { background: var(--app-bg); color: var(--text-primary); }
+    .verify-brand h1 { color: var(--text-primary); }
+    .verify-card {
+      background: var(--surface-1);
+      border-color: var(--border-subtle);
+      border-radius: var(--radius-panel);
+      box-shadow: none;
+    }
     .otp-box {
       width: 3rem; height: 3.5rem;
-      background: #1f1f1f;
-      border: 1px solid #2e2e2e;
-      border-radius: 0.75rem;
+      background: var(--surface-0);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-control);
       text-align: center;
       font-size: 1.5rem;
       font-weight: 600;
-      color: #fff;
-      caret-color: #d4764e;
-      transition: border-color 0.15s;
+      color: var(--text-primary);
+      caret-color: var(--accent);
+      transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
     }
     .otp-box:focus {
       outline: none;
-      border-color: #d4764e;
-      box-shadow: 0 0 0 2px rgba(212,118,78,0.35);
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-soft);
     }
+    .verify-input {
+      background: var(--surface-0);
+      border-color: var(--border-subtle);
+      border-radius: var(--radius-control);
+      color: var(--text-primary);
+    }
+    .verify-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+    .verify-primary {
+      background: var(--accent);
+      border-radius: var(--radius-control);
+      color: var(--text-on-accent);
+    }
+    .verify-primary:enabled:hover { background: var(--accent-hover); }
     input:focus { outline: none; }
   </style>
 </head>
-<body class="h-full font-sans bg-bg text-white flex flex-col items-center justify-center px-4">
+<body class="auth-verify h-full font-sans flex flex-col items-center justify-center px-4">
 
   <!-- Brand -->
-  <div class="mb-8 text-center select-none">
+  <div class="verify-brand mb-8 text-center select-none">
     <h1 class="font-serif text-4xl sm:text-5xl font-normal leading-tight">
       xore<span class="text-primary">//</span>auth
     </h1>
@@ -39,7 +61,7 @@
   </div>
 
   <!-- Card -->
-  <div class="w-full max-w-sm bg-surface border border-border rounded-2xl p-7 shadow-xl text-center">
+  <div class="verify-card w-full max-w-sm border p-7 text-center">
 
     <!-- Shield icon -->
     <div class="flex justify-center mb-5">
@@ -82,8 +104,8 @@
           autocapitalize="none"
           spellcheck="false"
           placeholder="XXXX-XXXX"
-          class="w-full bg-inputbg border border-border rounded-xl px-4 py-3
-                 text-sm text-white placeholder-muted focus:border-primary transition-colors text-center" />
+          class="verify-input w-full border px-4 py-3
+                 text-sm placeholder-muted transition-colors text-center" />
       </div>
 
       {{if .Error}}
@@ -94,9 +116,9 @@
         type="submit"
         id="code-submit"
         disabled
-        class="w-full bg-white text-black rounded-xl px-4 py-3 text-sm font-semibold
+        class="verify-primary w-full px-4 py-3 text-sm font-semibold
                opacity-40 cursor-not-allowed transition-all
-               enabled:opacity-100 enabled:cursor-pointer enabled:hover:bg-gray-100">
+               enabled:opacity-100 enabled:cursor-pointer">
         Verify
       </button>
     </form>

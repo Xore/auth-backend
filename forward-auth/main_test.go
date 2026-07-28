@@ -35,6 +35,52 @@ func testConfig(t *testing.T) config {
 // Alias keeps the test setup readable without hiding production behavior.
 func netParseCIDR(s string) (net.IP, *net.IPNet, error) { return net.ParseCIDR(s) }
 
+func TestSettingsRedirect(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pane string
+		want string
+	}{
+		{name: "default", want: "/auth/app"},
+		{name: "specific pane", pane: "passkeys", want: "/auth/app?pane=passkeys"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodGet, "http://auth.example.com/_auth/ok", nil)
+			settingsRedirect(tc.pane)(w, r)
+			if w.Code != http.StatusFound {
+				t.Fatalf("status = %d, want %d", w.Code, http.StatusFound)
+			}
+			if got := w.Header().Get("Location"); got != tc.want {
+				t.Fatalf("Location = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestActionDialogsStayInsidePermanentSettingsDialog(t *testing.T) {
+	page := string(mustReadUI("app.html"))
+	settingsStart := strings.Index(page, `<dialog class="modal modal--permanent"`)
+	if settingsStart < 0 {
+		t.Fatal("permanent settings dialog is missing")
+	}
+	settingsEnd := strings.Index(page[settingsStart:], `</dialog>`)
+	if settingsEnd < 0 {
+		t.Fatal("permanent settings dialog is not closed")
+	}
+	settingsEnd += settingsStart
+	for _, id := range []string{
+		`id="edit-dialog-backdrop"`,
+		`id="rotate-dialog-backdrop"`,
+		`id="danger-dialog-backdrop"`,
+	} {
+		at := strings.Index(page, id)
+		if at < settingsStart || at > settingsEnd {
+			t.Fatalf("%s must remain inside the native settings dialog top layer", id)
+		}
+	}
+}
+
 func TestSafeRedirect(t *testing.T) {
 	c := testConfig(t)
 	for _, tc := range []struct {

@@ -1,7 +1,7 @@
 package main
 
 // page.go — HTML rendering for the user-facing pages. All pages link the
-// shared Claude design system (/static/claude-theme.css, embedded under ui/)
+// shared design system (/static/theme.css, embedded under ui/)
 // plus a small nonce'd pageCSS block with layout-only rules — every colour
 // comes from the theme's custom properties. The admin panel lives in
 // adminpage.go.
@@ -176,7 +176,7 @@ func htmlEscape(s string) string {
 }
 
 // pageCSS holds the page-specific layout rules shared by every user-facing
-// page. All colours reference the claude-theme.css custom properties — the
+// page. All colours reference the theme.css custom properties — the
 // theme palette is never redefined here. The QR wrapper keeps its functional
 // white background (camera detection requires it).
 const pageCSS = `
@@ -232,7 +232,7 @@ const pageHead = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>xore//auth</title>
-<link rel="stylesheet" href="/static/claude-theme.css">
+<link rel="stylesheet" href="/static/theme.css">
 <style nonce="{{NONCE}}">` + pageCSS + `</style>
 </head>
 <body class="auth-body">`
@@ -247,20 +247,6 @@ const brandHTML = `
       </svg>
       <span class="brand__text">XORE<span class="brand__slash">//</span>AUTH</span>
     </div>`
-
-const okPage = pageHead + `
-  <div class="card auth-card auth-center">` + brandHTML + `
-    <div class="sub">session active</div>
-    <p class="status-ok">&#10003; signed in</p>
-    <div class="foot foot-flat">
-      <a href="/_auth/password">change password</a> <span class="dia">&#9670;</span>
-      <a href="/_auth/passkeys">passkeys</a> <span class="dia">&#9670;</span>
-      <a href="/auth/app">settings</a> <span class="dia">&#9670;</span>
-      <a href="/_auth/logout">log out</a>
-    </div>
-  </div>
-</body>
-</html>`
 
 const enrollPage = pageHead + `
   <div class="card auth-card auth-card--wide">` + brandHTML + `
@@ -311,7 +297,7 @@ const backupCodesPage = pageHead + `
     </ul>
     <div class="auth-actions">
       <button id="copy-codes" class="btn btn-secondary auth-btn">copy all to clipboard</button>
-      <a href="/_auth/ok" class="btn btn-primary auth-btn">i saved them — continue &rarr;</a>
+      <a href="/auth/app" class="btn btn-primary auth-btn">i saved them — continue &rarr;</a>
     </div>
     <div class="copied" id="copied">&#10003; copied</div>
   </div>
