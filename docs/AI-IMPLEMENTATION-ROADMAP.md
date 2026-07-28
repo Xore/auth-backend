@@ -82,13 +82,16 @@ Steps in the same phase can be parallelised if there are no `Blocked by` depende
 | Fix — SMTP transport security | ✅ done (2026-07-28) | STARTTLS required for `smtp://`, TLS 1.2+ for `smtps://`, schemes validated; plaintext only via explicit `SMTP_ALLOW_INSECURE=true` dev opt-in; fake-SMTP-server tests |
 | Fix — bounded recovery limiter | ✅ done (2026-07-28) | TTL pruning + 10k-key cap with oldest-first eviction; injectable clock (no flaky sleeps) |
 | Deploy — security hardening to VPS | ✅ done (2026-07-28) | `a5b6b05` live at auth.xore.rocks via `docker compose up -d --build auth-portal`; healthy |
-| Step 22 — OIDC upstream IdP | ⬜ open | Only the `SSO_URL` redirect button exists; includes the deferred Google OAuth button from Step 5b |
+| Step 22 — OIDC upstream IdP | ⬜ open (deferred by owner 2026-07-28) | Only the `SSO_URL` redirect button exists; includes the deferred Google OAuth button from Step 5b |
 | Step 25 — Split `main.go` | ✅ done (2026-07-28) | Extracted `config.go`, `token.go`, `throttle.go`, `server.go`, `handlers.go` plus `cli.go` (subcommands), `backends.go` (backend selection) and `routes.go` (mux wiring); `main.go` = 138 lines (criterion < 150); no symbol renamed; full race suite, vet, golangci-lint, govulncheck and real-Redis integration green |
-| §4.3 — HIBP online pwned-password check | ⬜ open (superseded?) | Step 7 shipped the offline NCSC top-100k list instead; k-anonymity HIBP API never added |
-| §4.4 — Signed audit log chain | ⬜ open | Tamper-evident hash chaining; `audit.go` is still a plain ring + JSONL writer |
-| §4.2 — Passkey-only (passwordless) mode | ⬜ open (partial) | Passkey sign-in works, but passwords remain mandatory for every account |
-| Step 21 extra — email magic-link/OTP login + `/auth/resend` | ⬜ open (deferred) | Deferred in the Step 5b deviation notes; recovery mail exists, passwordless email login does not |
-| §2.5 — Strict SameSite / GET-CSRF hardening | ⬜ open (accepted risk) | Mutations are all POST + form token/CSRF header; `SameSite=Lax` kept deliberately |
+| §4.3 — HIBP online pwned-password check | ❌ closed — won't do (2026-07-28) | Offline NCSC top-100k list (Step 7) covers the requirement without phoning a third-party API |
+| §4.4 — Signed audit log chain | ✅ done (2026-07-28) | `authEvent` carries seq/prev/MAC (HMAC-SHA256 over the chain, keyed with COOKIE_SECRET); chain resumes from the file tail across restarts; `verifyAuditLines` detects edits, deletions and stripped signatures; unsigned mode unchanged for tests |
+| §4.2 — Passkey-only (passwordless) mode | ✅ done (2026-07-28) | `PASSWORDLESS=true`: login page renders passkey-only, the password POST path is refused, `/_auth/recover` 404s |
+| Fix — password policy 15 + 72-byte cap | ✅ done (2026-07-28) | `validatePassword` (users.go) applied in the change + recovery-reset paths; NIST 800-63B aligned; boundary tests |
+| Fix — webhook cleartext guard | ✅ done (2026-07-28) | `WEBHOOK_URL` must be `https://` with a host (config validation; SECURITY-FIXES-GUIDE #6) |
+| Fix — code-scan leftovers | ✅ done (2026-07-28) | Custom `min()` dropped for the Go builtin (#10); strict `style-src` nonce-only + CSRF-via-meta-tag (earlier same day); `docs/SECURITY-FIXES.md` and `docs/SECURITY-FIXES-GUIDE.md` removed — every alert in both is resolved |
+| Step 21 extra — email magic-link/OTP login + `/auth/resend` | ⬜ open (deferred by owner 2026-07-28) | Deferred in the Step 5b deviation notes; recovery mail exists, passwordless email login does not |
+| §2.5 — Strict SameSite / GET-CSRF hardening | ❌ closed — accepted risk (2026-07-28) | All mutations are POST + form token/CSRF header; `SameSite=Lax` kept deliberately |
 
 **Step 5b deviation notes (approved design):**
 - Login is a **two-step UI** (username → password/passkey, client-side) followed by a

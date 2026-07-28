@@ -36,6 +36,7 @@ type config struct {
 	totpIssuer        string
 	usersFile         string
 	requireTOTP       bool
+	passwordless      bool // PASSWORDLESS=true: passkey-only sign-in
 	trustDevDays      int
 	ttl               time.Duration
 	idleTimeout       time.Duration
@@ -194,6 +195,7 @@ func loadConfig(logger *slog.Logger) config {
 		totpIssuer:        getenv("TOTP_ISSUER", authHost),
 		usersFile:         getenv("USERS_FILE", "/data/users.json"),
 		requireTOTP:       getenv("REQUIRE_TOTP", "true") != "false",
+		passwordless:      getenv("PASSWORDLESS", "false") == "true",
 		trustDevDays:      atoi(os.Getenv("TRUST_DEVICE_DAYS"), 0),
 		ttl:               time.Duration(atoi(os.Getenv("SESSION_TTL_HOURS"), 12)) * time.Hour,
 		idleTimeout:       time.Duration(atoi(os.Getenv("IDLE_TIMEOUT_MINUTES"), 60)) * time.Minute,
@@ -276,6 +278,11 @@ func (c config) validate() error {
 	case "", "raw", "slack", "ntfy", "gotify":
 	default:
 		problems = append(problems, "WEBHOOK_PROVIDER must be raw, slack, ntfy or gotify")
+	}
+	if c.webhookURL != "" {
+		if u, err := url.Parse(c.webhookURL); err != nil || u.Scheme != "https" || u.Hostname() == "" {
+			problems = append(problems, "WEBHOOK_URL must be https:// with a host — alert payloads contain user and IP data and must not travel in cleartext")
+		}
 	}
 	if !c.pasetoKeySet {
 		problems = append(problems, "PASETO_KEY must be set explicitly (64 hex chars) — silent derivation is no longer supported")

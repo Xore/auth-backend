@@ -1029,7 +1029,7 @@ func TestRecoverResetFlow(t *testing.T) {
 		s.recover(w, r)
 		return w
 	}
-	if w := post(tok, "password123", "password123"); !strings.Contains(w.Body.String(), "breach lists") {
+	if w := post(tok, "passwordpassword", "passwordpassword"); !strings.Contains(w.Body.String(), "breach lists") {
 		t.Fatal("common password not rejected on recovery reset")
 	}
 
@@ -1182,10 +1182,10 @@ func TestWebhookGotifyAndRawFormat(t *testing.T) {
 
 func TestCommonPasswordRejected(t *testing.T) {
 	s, st, sess := newPasswordTestServer(t)
-	if !isCommonPassword("password123") {
-		t.Fatal("password123 missing from embedded breach list")
+	if !isCommonPassword("passwordpassword") {
+		t.Fatal("passwordpassword missing from embedded breach list")
 	}
-	w := postPasswordChange(s, sess, "password123", "password123")
+	w := postPasswordChange(s, sess, "passwordpassword", "passwordpassword")
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "breach lists") {
 		t.Fatalf("common password not rejected: %d", w.Code)
 	}
@@ -1206,5 +1206,93 @@ func TestUncommonPasswordAccepted(t *testing.T) {
 	}
 	if !st.checkPassword("admin", unique) {
 		t.Fatal("new password not in effect")
+	}
+}
+
+func TestPasswordPolicy(t *testing.T) {
+	s, st, sess := newPasswordTestServer(t)
+
+	// too short (< 15 runes): rejected, password unchanged
+	w := postPasswordChange(s, sess, "short-pw-1234", "short-pw-1234") // 12 chars
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "at least 15 characters") {
+		t.Fatalf("short password not rejected with policy message: %d", w.Code)
+	}
+	if !st.checkPassword("admin", "a-long-test-password") {
+		t.Fatal("password changed despite short rejection")
+	}
+	// over 72 bytes: rejected (legacy bcrypt truncation guard)
+	long72 := strings.Repeat("a", 73)
+	w = postPasswordChange(s, sess, long72, long72)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "72 bytes") {
+		t.Fatalf("over-long password not rejected: %d", w.Code)
+	}
+	// boundary: exactly 15 runes passes the policy gate
+	if err := validatePassword(strings.Repeat("x", 15)); err != nil {
+		t.Fatalf("15-rune password rejected: %v", err)
+	}
+	if err := validatePassword(strings.Repeat("x", 14)); err == nil {
+		t.Fatal("14-rune password accepted")
+	}
+	if err := validatePassword(strings.Repeat("é", 15)); err != nil { // 30 bytes, 15 runes
+		t.Fatalf("multi-byte 15-rune password rejected: %v", err)
+	}
+}
+
+func TestPasswordlessMode(t *testing.T) {
+	c := testConfig(t)
+	c.passwordless = true
+	c.smtpURL = "smtp://mail.example.com" // recovery must still 404 in passkey-only mode
+	path := filepath.Join(t.TempDir(), "users.json")
+	st := newUserStore(path)
+	if _, err := st.bootstrap("admin", "a-long-test-password", ""); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := loadSettingsStore(filepath.Join(t.TempDir(), "admin-settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c),
+		aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		ntf: newNotifier("", "raw", slog.Default()), settings: settings}
+
+	// login page: passkey button only — no password field, no recovery link
+	r := httptest.NewRequest("GET", "http://auth/_auth/login", nil)
+	w := httptest.NewRecorder()
+	s.login(w, r)
+	body := w.Body.String()
+	if !strings.Contains(body, "passkey-login") {
+		t.Fatal("passkey button missing in passwordless mode")
+	}
+	if strings.Contains(body, `name="password"`) {
+		t.Fatal("password field rendered in passwordless mode")
+	}
+	if strings.Contains(body, "Forgot your password") {
+		t.Fatal("recovery link rendered in passwordless mode")
+	}
+
+	// password POST is refused even with valid credentials
+	f := url.Values{}
+	f.Set("ft", c.issueForm())
+	f.Set("username", "admin")
+	f.Set("password", "a-long-test-password")
+	r = httptest.NewRequest("POST", "http://auth/_auth/login", strings.NewReader(f.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	s.login(w, r)
+	if !strings.Contains(w.Body.String(), "disabled") {
+		t.Fatal("password POST not refused in passwordless mode")
+	}
+	for _, ck := range w.Result().Cookies() {
+		if ck.Name == c.cookieName && ck.Value != "" {
+			t.Fatal("session cookie issued via password in passwordless mode")
+		}
+	}
+
+	// recovery route is off (a reset password would be useless)
+	r = httptest.NewRequest("GET", "http://auth/_auth/recover", nil)
+	w = httptest.NewRecorder()
+	s.recover(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("recover route = %d, want 404 in passwordless mode", w.Code)
 	}
 }

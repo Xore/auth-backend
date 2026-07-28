@@ -132,6 +132,11 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if s.cfg.passwordless {
+		// passkey-only mode: the password path is disabled entirely
+		s.renderLogin(w, rd, "Password sign-in is disabled on this server — use your passkey.", n)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.maxBodyBytes)
 
 	if locked, d, err := s.tr.locked(ip); err != nil {
@@ -519,8 +524,8 @@ func (s *server) password(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	newPW := r.PostForm.Get("new1")
-	if len(newPW) < 10 {
-		s.renderPassword(w, cl.has("c"), "New password must be at least 10 characters.", n)
+	if err := validatePassword(newPW); err != nil {
+		s.renderPassword(w, cl.has("c"), "New password "+err.Error()+".", n)
 		return
 	}
 	if newPW != r.PostForm.Get("new2") {

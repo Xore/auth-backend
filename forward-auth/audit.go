@@ -17,6 +17,23 @@ type authEvent struct {
 	User  string    `json:"user,omitempty"`
 	UA    string    `json:"ua,omitempty"`
 	Host  string    `json:"host,omitempty"`
+	// Tamper-evidence chain (present when the auditor was given a key):
+	// Seq increments per entry, Prev is the previous entry's MAC, and MAC
+	// is HMAC-SHA256(key, seq|prev|time|event|ip|user|ua|host). Deleting
+	// or editing any line breaks the chain (verifyAuditLines).
+	Seq  int    `json:"seq,omitempty"`
+	Prev string `json:"prev,omitempty"`
+	MAC  string `json:"mac,omitempty"`
+}
+
+// auditMAC computes the chain MAC for an event. Keep in sync with
+// verifyAuditLines.
+func auditMAC(key []byte, e authEvent) string {
+	body := strings.Join([]string{
+		fmt.Sprint(e.Seq), e.Prev, e.Time.UTC().Format(time.RFC3339Nano),
+		e.Event, e.IP, e.User, e.UA, e.Host,
+	}, "|")
+	return macWith(key, body)
 }
 
 type auditor struct {
@@ -28,21 +45,87 @@ type auditor struct {
 	success  int
 	failed   int
 	failByIP map[string]int
+
+	// chain state for the signed audit log (empty key = unsigned)
+	key     []byte
+	seq     int
+	lastMAC string
 }
 
-func newAuditor(path string, capacity int) *auditor {
+// newAuditor opens the audit ring and optional JSONL file. When a key is
+// supplied (main passes COOKIE_SECRET), every recorded event is chained and
+// signed; if the file already ends with a chained entry, the chain resumes
+// from it so a restart does not break tamper evidence.
+func newAuditor(path string, capacity int, keys ...[]byte) *auditor {
 	a := &auditor{capacity: capacity, failByIP: map[string]int{}}
+	if len(keys) > 0 {
+		a.key = keys[0]
+	}
 	if path != "" {
 		if f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640); err == nil {
 			a.file = f
+			if len(a.key) > 0 {
+				a.resumeChain(path)
+			}
 		}
 	}
 	return a
 }
 
+// resumeChain reads the last line of an existing audit file and adopts its
+// seq/MAC so the chain continues across restarts.
+func (a *auditor) resumeChain(path string) {
+	raw, err := os.ReadFile(path)
+	if err != nil || len(raw) == 0 {
+		return
+	}
+	const tail = 64 << 10
+	if len(raw) > tail {
+		raw = raw[len(raw)-tail:]
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	var last authEvent
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil {
+		return // tail corrupt or unsigned — start a fresh chain
+	}
+	if last.MAC != "" && last.MAC == auditMAC(a.key, last) {
+		a.seq, a.lastMAC = last.Seq, last.MAC
+	}
+}
+
+// verifyAuditLines checks a sequence of audit lines (as read from the JSONL
+// file) for chain integrity: strictly increasing Seq, linked Prev values,
+// and valid MACs. Unsigned lines fail — a stripped signature is tampering.
+func verifyAuditLines(lines []string, key []byte) error {
+	prev := ""
+	prevSeq := 0
+	for i, line := range lines {
+		var e authEvent
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			return fmt.Errorf("line %d: unparseable: %w", i+1, err)
+		}
+		if e.MAC == "" || e.MAC != auditMAC(key, e) {
+			return fmt.Errorf("line %d: bad MAC", i+1)
+		}
+		if e.Prev != prev || e.Seq != prevSeq+1 {
+			return fmt.Errorf("line %d: chain broken (seq %d, prev %q)", i+1, e.Seq, e.Prev)
+		}
+		prev, prevSeq = e.MAC, e.Seq
+	}
+	return nil
+}
+
 func (a *auditor) record(e authEvent) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
+	if len(a.key) > 0 {
+		a.seq++
+		e.Seq = a.seq
+		e.Prev = a.lastMAC
+		e.MAC = auditMAC(a.key, e)
+		a.lastMAC = e.MAC
+	}
 
 	a.total++
 	switch {

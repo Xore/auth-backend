@@ -187,10 +187,3 @@ func (t *throttle) reset(ip string) {
 	delete(t.m, ip)
 	t.mu.Unlock()
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

@@ -40,6 +40,7 @@ type LoginPageData struct {
 	TrustDays      int
 	SSOEnabled     bool
 	RecoverEnabled bool // show the "forgot password?" link
+	Passwordless   bool // passkey-only mode: hide the password form
 	BrandTitle     string
 	BrandSubtitle  string
 	BrandFooter    string
@@ -63,7 +64,8 @@ func (s *server) renderLogin(w http.ResponseWriter, rd, errMsg, nonce string) {
 		Remember:       s.cfg.trustDevDays > 0,
 		TrustDays:      s.cfg.trustDevDays,
 		SSOEnabled:     s.cfg.ssoURL != "",
-		RecoverEnabled: s.recoverEnabled(),
+		RecoverEnabled: s.recoverEnabled() && !s.cfg.passwordless,
+		Passwordless:   s.cfg.passwordless,
 		BrandTitle:     title,
 		BrandSubtitle:  subtitle,
 		BrandFooter:    footer,

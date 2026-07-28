@@ -539,6 +539,28 @@ func hashBackupCode(code string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// --- password policy ---------------------------------------------------------
+
+const (
+	minPasswordLen   = 15
+	maxPasswordBytes = 72
+)
+
+// validatePassword enforces the password policy for user-chosen passwords
+// (NIST SP 800-63B aligned): at least 15 characters, and at most 72 bytes —
+// legacy bcrypt hashes truncate at 72 bytes, so longer inputs are rejected
+// rather than silently weakened. Existing stored passwords are unaffected;
+// the policy applies only when a password is (re)set.
+func validatePassword(pw string) error {
+	if len([]rune(pw)) < minPasswordLen {
+		return fmt.Errorf("must be at least %d characters", minPasswordLen)
+	}
+	if len(pw) > maxPasswordBytes {
+		return fmt.Errorf("must not exceed %d bytes when UTF-8 encoded", maxPasswordBytes)
+	}
+	return nil
+}
+
 // --- Argon2id password hashing (PHC format) ----------------------------------
 
 const (

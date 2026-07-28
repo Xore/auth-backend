@@ -262,7 +262,7 @@ func smtpSend(rawURL, from, to, subject, body string, allowInsecure bool) error 
 
 // --- handlers ------------------------------------------------------------------
 
-func (s *server) recoverEnabled() bool { return s.cfg.smtpURL != "" }
+func (s *server) recoverEnabled() bool { return s.cfg.smtpURL != "" && !s.cfg.passwordless }
 
 // recover handles both the request form (username → email) and, when a
 // valid token is present, the reset form and the reset itself.
@@ -353,10 +353,11 @@ func (s *server) recoverReset(w http.ResponseWriter, r *http.Request, n string) 
 		return
 	}
 	newPW := r.PostForm.Get("new1")
-	switch {
-	case len(newPW) < 10:
-		s.renderRecoverReset(w, tok, "New password must be at least 10 characters.", n)
+	if err := validatePassword(newPW); err != nil {
+		s.renderRecoverReset(w, tok, "New password "+err.Error()+".", n)
 		return
+	}
+	switch {
 	case newPW != r.PostForm.Get("new2"):
 		s.renderRecoverReset(w, tok, "Passwords don't match.", n)
 		return

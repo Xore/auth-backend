@@ -73,7 +73,10 @@ sequenceDiagram
   with transparent bcrypt upgrade, per-user roles (`admin`/`user`)
 - TOTP with session-gated enrollment, QR setup and replay protection
   (persisted across restarts); one-time backup codes
-- WebAuthn/passkeys: register, delete and passwordless sign-in
+- WebAuthn/passkeys: register, delete and passwordless sign-in;
+  `PASSWORDLESS=true` disables the password path entirely
+- Password policy: 15+ characters (72-byte cap), NCSC top-100k breach-list
+  rejection on every change
 - Optional per-user **Email** field for self-service recovery (see below)
 - Per-user allowed-hosts lists — a session only authorizes the
   `X-Forwarded-Host`s the user may access
@@ -226,6 +229,7 @@ new key and retain the active key as the previous key for the transition.
 | `TOTP_SECRET` | *(empty)* | Optional bootstrap TOTP secret for the initial admin |
 | `TOTP_ISSUER` | `AUTH_HOST` | Issuer name shown in authenticator apps |
 | `REQUIRE_TOTP` | `true` | Force accounts without TOTP through enrollment |
+| `PASSWORDLESS` | `false` | Passkey-only mode: password login and email recovery are disabled |
 | `TRUST_DEVICE_DAYS` | `0` | Days a device skips re-challenging TOTP (0 = always challenge) |
 | `TRUSTED_PROXIES` | loopback + RFC1918 | Comma-separated proxy CIDRs trusted to set client-IP headers |
 | `SESSION_TTL_HOURS` | `12` | Absolute session lifetime |
@@ -238,9 +242,9 @@ new key and retain the active key as the previous key for the transition.
 | `MAX_BODY_KB` | `64` | Max request body size |
 | `LISTEN_ADDR` | `:4181` | Listen address |
 | `USERS_FILE` | `/data/users.json` | User store location |
-| `AUDIT_LOG` | *(empty)* | Optional JSONL audit log file |
+| `AUDIT_LOG` | *(empty)* | Optional JSONL audit log file; entries are HMAC-chained for tamper evidence |
 | `AUDIT_RING` | `500` | In-memory audit ring size for the admin UI |
-| `WEBHOOK_URL` | *(empty)* | Optional alert webhook |
+| `WEBHOOK_URL` | *(empty)* | Optional alert webhook — must be `https://` |
 | `WEBHOOK_PROVIDER` | `raw` | Webhook payload format: `raw`, `slack`, `ntfy` or `gotify` |
 | `METRICS_TOKEN` | *(empty)* | Bearer token gating `/_auth/metrics`; blank disables |
 | `SSO_URL` | *(empty)* | External IdP URL — adds a "Continue with SSO" button |
@@ -323,7 +327,7 @@ working if their username is itself an email address.
 | Recovery token reuse | password-hash fingerprint re-checked under the store lock — atomic single use |
 | Backend outage | fail closed: 503 on auth endpoints, unverifiable sessions rejected, startup connectivity checks |
 | SMTP downgrade | STARTTLS required for `smtp://`, TLS 1.2+ for `smtps://`, explicit dev-only plaintext opt-in |
-| Forensics | JSON audit log + ring buffer, admin audit view, webhook alerts, token-gated Prometheus metrics |
+| Forensics | HMAC-chained (tamper-evident) JSON audit log + ring buffer, admin audit view, webhook alerts, token-gated Prometheus metrics |
 
 Real client IP is read from `CF-Connecting-IP` (Cloudflare) →
 `X-Forwarded-For` (only trusted if the peer is in `TRUSTED_PROXIES`).
@@ -347,7 +351,6 @@ CodeQL, secret scanning and workflow linting (actionlint + zizmor).
 - [docs/CREDENTIAL-RECOVERY.md](docs/CREDENTIAL-RECOVERY.md) — break-glass recovery
 - [docs/ADMIN-UI-GUIDE.md](docs/ADMIN-UI-GUIDE.md) — admin panel
 - [docs/TOKEN-HARDENING-GUIDE.md](docs/TOKEN-HARDENING-GUIDE.md) — session token design
-- [docs/SECURITY-FIXES-GUIDE.md](docs/SECURITY-FIXES-GUIDE.md) — security hardening history
 - [docs/UI-REDESIGN-GUIDE.md](docs/UI-REDESIGN-GUIDE.md) / [docs/THEME-GUIDE.md](docs/THEME-GUIDE.md) — UI and shared-theme integration
 
 ## Related
