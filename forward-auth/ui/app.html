@@ -1067,7 +1067,11 @@ function fetchState() {
     .then(function (r) { if (!r.ok) throw 'http ' + r.status; return r.json(); })
     .then(function (j) {
       state = j;
-      if (PANE_LOADERS[activePane]) PANE_LOADERS[activePane]();
+      // Configuration is loaded independently. Refreshing it with the
+      // five-second state poll would overwrite values while an admin types.
+      if (activePane !== 'admin-settings' && PANE_LOADERS[activePane]) {
+        PANE_LOADERS[activePane]();
+      }
     })
     .catch(function (e) { /* transient poll error — keep last state */ });
 }
@@ -1082,8 +1086,15 @@ function openSettings(pane) {
   fetchState();
 }
 
-// Keyboard: Esc closes
+// Keyboard shortcuts for nested dialogs; the settings surface remains open.
 document.addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && pendingDangerAction &&
+      document.getElementById('danger-dialog-backdrop').classList.contains('open') &&
+      document.activeElement.id !== 'danger-dialog-cancel') {
+    e.preventDefault();
+    runDangerAction();
+    return;
+  }
   if (e.key === 'Escape') {
     if (pendingDangerAction) { closeDangerDialog(); return; }
     if (pendingRotationKey) { closeRotateDialog(); return; }
@@ -1183,6 +1194,13 @@ function performRevokeSession(sid) {
 var contentEl = document.getElementById('settings-content');
 contentEl.addEventListener('input', function (e) { if (e.target.id === 'lf-text') loadAdminLogs(); });
 contentEl.addEventListener('change', function (e) { if (e.target.id === 'lf-kind') loadAdminLogs(); });
+contentEl.addEventListener('keydown', function (e) {
+  if (e.key !== 'Enter' || activePane !== 'admin-settings') return;
+  if (!e.target.matches('#brand-title, #brand-subtitle, #brand-footer, [data-config-key]')) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (!pendingDangerAction) confirmSettingsSave();
+});
 
 setInterval(fetchState, 5000);
 
