@@ -111,7 +111,7 @@ jobs:
           cache-dependency-path: forward-auth/go.sum
       # install-mode: goinstall compiles golangci-lint with the patched Go
       # toolchain set up above, avoiding prebuilt-binary/toolchain skew.
-      - uses: golangci/golangci-lint-action@db9de0fc1a667e1a49d2291a1a042dff081d78f6 # v9
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9
         with:
           working-directory: forward-auth
           version: v2.12.2
