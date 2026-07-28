@@ -830,8 +830,10 @@ func TestRecoveryTokenSingleUse(t *testing.T) {
 
 func TestRecoveryRateLimit(t *testing.T) {
 	rl := rateLimiter{max: 2, window: 60 * time.Millisecond}
-	if !rl.allow("1.2.3.4") || !rl.allow("1.2.3.4") {
-		t.Fatal("first two requests denied")
+	for i := 0; i < 2; i++ {
+		if !rl.allow("1.2.3.4") {
+			t.Fatalf("request %d denied", i+1)
+		}
 	}
 	if rl.allow("1.2.3.4") {
 		t.Fatal("third request within window allowed")
