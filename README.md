@@ -347,7 +347,6 @@ CodeQL, secret scanning and workflow linting (actionlint + zizmor).
 - [docs/CREDENTIAL-RECOVERY.md](docs/CREDENTIAL-RECOVERY.md) — break-glass recovery
 - [docs/ADMIN-UI-GUIDE.md](docs/ADMIN-UI-GUIDE.md) — admin panel
 - [docs/TOKEN-HARDENING-GUIDE.md](docs/TOKEN-HARDENING-GUIDE.md) — session token design
-- [docs/MTLS-SESSION-BINDING-GUIDE.md](docs/MTLS-SESSION-BINDING-GUIDE.md) — mTLS session binding
 - [docs/SECURITY-FIXES-GUIDE.md](docs/SECURITY-FIXES-GUIDE.md) — security hardening history
 - [docs/UI-REDESIGN-GUIDE.md](docs/UI-REDESIGN-GUIDE.md) / [docs/THEME-GUIDE.md](docs/THEME-GUIDE.md) — UI and shared-theme integration
 

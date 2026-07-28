@@ -20,7 +20,6 @@
 | [`ADMIN-UI-GUIDE.md`](./ADMIN-UI-GUIDE.md) | Settings modal, admin panel, new Go routes |
 | [`IMPROVEMENT-GUIDE.md`](./IMPROVEMENT-GUIDE.md) | Security gaps, missing features, priority matrix |
 | [`TOKEN-HARDENING-GUIDE.md`](./TOKEN-HARDENING-GUIDE.md) | PASETO v4.local migration, key rotation |
-| [`MTLS-SESSION-BINDING-GUIDE.md`](./MTLS-SESSION-BINDING-GUIDE.md) | mTLS session binding, cert thumbprint, Traefik config |
 | [`CREDENTIAL-RECOVERY.md`](./CREDENTIAL-RECOVERY.md) | Admin-mediated recovery runbook (already complete) |
 
 ---
@@ -77,6 +76,19 @@ Steps in the same phase can be parallelised if there are no `Blocked by` depende
 | Step 23 — Redis backends | ✅ done (2026-07-28) | `ThrottleBackend`/`SessionBackend` interfaces; memory+JSON default unchanged; `redisBackends` (go-redis/v9) for both when `REDIS_URL` set; fail-open on Redis errors except `revoke()`; startup fails if Redis unreachable; miniredis tests |
 | Step 24 — Risk-based authentication | ✅ done (2026-07-28) | Login history (25 records) in user store; score = unseen subnet /24-/64 (40) + unseen UA (30) + unseen hour w/ ≥5 samples (20); score > 50 overrides trusted device → TOTP page, `rba_totp_required` audit |
 | Fix — modal click-through + post-login landing | ✅ done (2026-07-28) | Closed `.modal-backdrop`/`.modal` swallowed all clicks (invisible overlay) → `pointer-events`/`display:none` when closed; post-login fallback redirect is now `/auth/app` (was old `/_auth/ok` page) |
+| Fix — recovery identity model | ✅ done (2026-07-28) | Optional validated `User.Email` field (admin API + UI) is the recovery address; email-shaped usernames keep working unchanged; normalization never rewrites usernames; responses stay anti-enumeration |
+| Fix — atomic single-use recovery tokens | ✅ done (2026-07-28) | Fingerprint re-checked under the store lock inside the reset mutation (`userStore.mutateIf`): exactly one concurrent reset succeeds; Gen/DeviceGen bump exactly once; deterministic 8-racer regression test |
+| Fix — Redis backends fail closed | ✅ done (2026-07-28) | Supersedes Step 23's fail-open note: `locked/fail/isRevoked/lastActive/touch` return "backend unavailable" errors; login/TOTP/passkey answer controlled 503; unverifiable sessions rejected; throttle/touch/revoke transitions are atomic Lua scripts; miniredis + real-Redis outage/atomicity/TTL tests |
+| Fix — SMTP transport security | ✅ done (2026-07-28) | STARTTLS required for `smtp://`, TLS 1.2+ for `smtps://`, schemes validated; plaintext only via explicit `SMTP_ALLOW_INSECURE=true` dev opt-in; fake-SMTP-server tests |
+| Fix — bounded recovery limiter | ✅ done (2026-07-28) | TTL pruning + 10k-key cap with oldest-first eviction; injectable clock (no flaky sleeps) |
+| Deploy — security hardening to VPS | ✅ done (2026-07-28) | `a5b6b05` live at auth.xore.rocks via `docker compose up -d --build auth-portal`; healthy |
+| Step 22 — OIDC upstream IdP | ⬜ open | Only the `SSO_URL` redirect button exists; includes the deferred Google OAuth button from Step 5b |
+| Step 25 — Split `main.go` | ✅ done (2026-07-28) | Extracted `config.go`, `token.go`, `throttle.go`, `server.go`, `handlers.go` plus `cli.go` (subcommands), `backends.go` (backend selection) and `routes.go` (mux wiring); `main.go` = 138 lines (criterion < 150); no symbol renamed; full race suite, vet, golangci-lint, govulncheck and real-Redis integration green |
+| §4.3 — HIBP online pwned-password check | ⬜ open (superseded?) | Step 7 shipped the offline NCSC top-100k list instead; k-anonymity HIBP API never added |
+| §4.4 — Signed audit log chain | ⬜ open | Tamper-evident hash chaining; `audit.go` is still a plain ring + JSONL writer |
+| §4.2 — Passkey-only (passwordless) mode | ⬜ open (partial) | Passkey sign-in works, but passwords remain mandatory for every account |
+| Step 21 extra — email magic-link/OTP login + `/auth/resend` | ⬜ open (deferred) | Deferred in the Step 5b deviation notes; recovery mail exists, passwordless email login does not |
+| §2.5 — Strict SameSite / GET-CSRF hardening | ⬜ open (accepted risk) | Mutations are all POST + form token/CSRF header; `SameSite=Lax` kept deliberately |
 
 **Step 5b deviation notes (approved design):**
 - Login is a **two-step UI** (username → password/passkey, client-side) followed by a
@@ -1191,7 +1203,7 @@ The implementation is complete when all of the following are true:
 4. The login page uses the shared theme and passes Chrome DevTools Lighthouse accessibility check ≥ 90.
 5. All new session cookies start with `v4.local.`.
 6. The admin panel System pane shows live data.
-7. `/_auth/metrics` includes `forwardauth_cert_bound_sessions`.
+7. ~~`/_auth/metrics` includes `forwardauth_cert_bound_sessions`.~~ *(void — mTLS skipped by owner decision)*
 8. Argon2id hashes are used for all new passwords.
 9. Common passwords are rejected at `/_auth/password`.
 10. Sessions idle longer than `IDLE_TIMEOUT_MINUTES` are automatically revoked.
@@ -1203,16 +1215,21 @@ The implementation is complete when all of the following are true:
 
 | File | Purpose |
 |---|---|
-| `forward-auth/main.go` | Entry point only (after Step 25) |
-| `forward-auth/config.go` | *(create in Step 25)* Config struct, env loading, validation |
-| `forward-auth/token.go` | *(create in Step 25)* Session/device/form token issue + parse |
-| `forward-auth/throttle.go` | *(create in Step 25)* Brute-force throttle |
-| `forward-auth/server.go` | *(create in Step 25)* Server struct, cookie helpers, session validation |
-| `forward-auth/handlers.go` | *(create in Step 25)* HTTP handlers (verify, login, logout, enroll, password, metrics) |
+| `forward-auth/main.go` | Entry point only (138 lines after Step 25) |
+| `forward-auth/config.go` | Config struct, env loading, validation |
+| `forward-auth/token.go` | Session/device/form/pending token issue + parse (HMAC + PASETO) |
+| `forward-auth/throttle.go` | Brute-force throttle (in-memory backend) |
+| `forward-auth/server.go` | Server struct, cookie helpers, session validation, shutdown |
+| `forward-auth/handlers.go` | HTTP handlers (verify, login, totp, logout, enroll, password, metrics) + risk scoring |
+| `forward-auth/cli.go` | `-healthcheck` / `-hash` subcommands |
+| `forward-auth/backends.go` | Throttle/session backend selection (memory vs Redis) |
+| `forward-auth/routes.go` | Mux route registration |
 | `forward-auth/users.go` | User store, password hashing, TOTP |
 | `forward-auth/sessions.go` | Session registry, revocation list |
+| `forward-auth/redis.go` | Redis throttle/session backends |
+| `forward-auth/recover.go` | Email recovery, SMTP transport, rate limiter |
 | `forward-auth/admin.go` | Admin API handlers |
-| `forward-auth/adminpage.go` | Admin panel HTML template |
+| `forward-auth/settings.go` | Admin settings store |
 | `forward-auth/page.go` | Login / enroll / password page templates |
 | `forward-auth/notify.go` | Webhook notifier |
 | `forward-auth/passkeys.go` | Passkey API handlers |
@@ -1220,9 +1237,8 @@ The implementation is complete when all of the following are true:
 | `forward-auth/totp.go` | TOTP validation helpers |
 | `forward-auth/qr.go` | QR code generator |
 | `forward-auth/audit.go` | Audit ring + file logger |
-| `forward-auth/ui/theme.css` | *(create in Step 1)* CSS design system |
-| `forward-auth/ui/app.html` | *(create in Step 3)* App shell + settings modal |
-| `forward-auth/apppage.go` | *(create in Step 3)* `/auth/app` handler |
-| `forward-auth/mtls.go` | *(create in Step 18)* mTLS cert helpers |
-| `forward-auth/mysessions.go` | *(create in Step 5)* `/_auth/sessions/mine` handler |
-| `forward-auth/pwcheck.go` | *(create in Step 7)* Common-password embed + check |
+| `forward-auth/ui/theme.css` | CSS design system |
+| `forward-auth/ui/app.html` | App shell + settings modal |
+| `forward-auth/apppage.go` | `/auth/app` handler |
+| `forward-auth/mysessions.go` | `/_auth/sessions/mine` handler |
+| `forward-auth/pwcheck.go` | Common-password embed + check |
