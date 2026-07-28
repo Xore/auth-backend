@@ -65,41 +65,42 @@ import (
 )
 
 type config struct {
-	listen          string
-	authHost        string
-	cookieName      string
-	cookieDom       string
-	secret          []byte
-	oldSecrets      [][]byte
-	username        string // bootstrap only
-	password        string // bootstrap only (plaintext or bcrypt hash)
-	totpSecret      string // bootstrap only
-	totpIssuer      string
-	usersFile       string
-	requireTOTP     bool
-	trustDevDays    int
-	ttl             time.Duration
-	idleTimeout     time.Duration
-	maxAttempts     int
-	lockout         time.Duration
-	minDwell        time.Duration
-	formTTL         time.Duration
-	secure          bool
-	auditLog        string
-	ringCap         int
-	webhookURL      string
-	webhookProvider string
-	metricsToken    string
-	trustedNets     []*net.IPNet
-	maxBodyBytes    int64
-	orgID           string
-	ssoURL          string
-	smtpURL         string
-	smtpFrom        string
-	redisURL        string
-	pasetoKey       pasetov4.LocalKey // XChaCha20 + BLAKE2b key for PASETO v4.local session tokens
-	pasetoKeySet    bool              // true when PASETO_KEY was set explicitly
-	oldPasetoKeys   []pasetov4.LocalKey
+	listen            string
+	authHost          string
+	cookieName        string
+	cookieDom         string
+	secret            []byte
+	oldSecrets        [][]byte
+	username          string // bootstrap only
+	password          string // bootstrap only (plaintext or bcrypt hash)
+	totpSecret        string // bootstrap only
+	totpIssuer        string
+	usersFile         string
+	requireTOTP       bool
+	trustDevDays      int
+	ttl               time.Duration
+	idleTimeout       time.Duration
+	maxAttempts       int
+	lockout           time.Duration
+	minDwell          time.Duration
+	formTTL           time.Duration
+	secure            bool
+	auditLog          string
+	ringCap           int
+	webhookURL        string
+	webhookProvider   string
+	metricsToken      string
+	trustedNets       []*net.IPNet
+	maxBodyBytes      int64
+	orgID             string
+	ssoURL            string
+	smtpURL           string
+	smtpFrom          string
+	smtpAllowInsecure bool // dev-only: permit smtp:// without STARTTLS
+	redisURL          string
+	pasetoKey         pasetov4.LocalKey // XChaCha20 + BLAKE2b key for PASETO v4.local session tokens
+	pasetoKeySet      bool              // true when PASETO_KEY was set explicitly
+	oldPasetoKeys     []pasetov4.LocalKey
 }
 
 func getenv(k, def string) string {
@@ -222,41 +223,42 @@ func loadConfig(logger *slog.Logger) config {
 		}
 	}
 	return config{
-		listen:          getenv("LISTEN_ADDR", ":4181"),
-		authHost:        authHost,
-		cookieName:      getenv("COOKIE_NAME", "xore_sso"),
-		cookieDom:       getenv("COOKIE_DOMAIN", ""),
-		secret:          secret,
-		oldSecrets:      oldSecrets,
-		username:        requireEnv("AUTH_USERNAME"),
-		password:        requireEnvFile("AUTH_PASSWORD"),
-		totpSecret:      normalizeB32(getenvFile("TOTP_SECRET", "")),
-		totpIssuer:      getenv("TOTP_ISSUER", authHost),
-		usersFile:       getenv("USERS_FILE", "/data/users.json"),
-		requireTOTP:     getenv("REQUIRE_TOTP", "true") != "false",
-		trustDevDays:    atoi(os.Getenv("TRUST_DEVICE_DAYS"), 0),
-		ttl:             time.Duration(atoi(os.Getenv("SESSION_TTL_HOURS"), 12)) * time.Hour,
-		idleTimeout:     time.Duration(atoi(os.Getenv("IDLE_TIMEOUT_MINUTES"), 60)) * time.Minute,
-		maxAttempts:     atoi(os.Getenv("MAX_ATTEMPTS"), 5),
-		lockout:         time.Duration(atoi(os.Getenv("LOCKOUT_MINUTES"), 15)) * time.Minute,
-		minDwell:        time.Duration(atoi(os.Getenv("MIN_DWELL_SECONDS"), 2)) * time.Second,
-		formTTL:         time.Duration(atoi(os.Getenv("FORM_TTL_MINUTES"), 15)) * time.Minute,
-		secure:          getenv("COOKIE_SECURE", "true") != "false",
-		auditLog:        getenv("AUDIT_LOG", ""),
-		ringCap:         atoi(os.Getenv("AUDIT_RING"), 500),
-		webhookURL:      getenv("WEBHOOK_URL", ""),
-		webhookProvider: getenv("WEBHOOK_PROVIDER", "raw"),
-		metricsToken:    getenvFile("METRICS_TOKEN", ""),
-		trustedNets:     parseCIDRs(getenv("TRUSTED_PROXIES", defaultTrustedProxies), logger),
-		maxBodyBytes:    int64(atoi(os.Getenv("MAX_BODY_KB"), 64)) * 1024,
-		orgID:           getenv("ORG_ID", ""),
-		ssoURL:          getenv("SSO_URL", ""),
-		smtpURL:         getenv("SMTP_URL", ""),
-		smtpFrom:        getenv("SMTP_FROM", "forward-auth@"+authHost),
-		redisURL:        getenv("REDIS_URL", ""),
-		pasetoKey:       pasetoKey,
-		pasetoKeySet:    pasetoKeySet,
-		oldPasetoKeys:   oldPasetoKeys,
+		listen:            getenv("LISTEN_ADDR", ":4181"),
+		authHost:          authHost,
+		cookieName:        getenv("COOKIE_NAME", "xore_sso"),
+		cookieDom:         getenv("COOKIE_DOMAIN", ""),
+		secret:            secret,
+		oldSecrets:        oldSecrets,
+		username:          requireEnv("AUTH_USERNAME"),
+		password:          requireEnvFile("AUTH_PASSWORD"),
+		totpSecret:        normalizeB32(getenvFile("TOTP_SECRET", "")),
+		totpIssuer:        getenv("TOTP_ISSUER", authHost),
+		usersFile:         getenv("USERS_FILE", "/data/users.json"),
+		requireTOTP:       getenv("REQUIRE_TOTP", "true") != "false",
+		trustDevDays:      atoi(os.Getenv("TRUST_DEVICE_DAYS"), 0),
+		ttl:               time.Duration(atoi(os.Getenv("SESSION_TTL_HOURS"), 12)) * time.Hour,
+		idleTimeout:       time.Duration(atoi(os.Getenv("IDLE_TIMEOUT_MINUTES"), 60)) * time.Minute,
+		maxAttempts:       atoi(os.Getenv("MAX_ATTEMPTS"), 5),
+		lockout:           time.Duration(atoi(os.Getenv("LOCKOUT_MINUTES"), 15)) * time.Minute,
+		minDwell:          time.Duration(atoi(os.Getenv("MIN_DWELL_SECONDS"), 2)) * time.Second,
+		formTTL:           time.Duration(atoi(os.Getenv("FORM_TTL_MINUTES"), 15)) * time.Minute,
+		secure:            getenv("COOKIE_SECURE", "true") != "false",
+		auditLog:          getenv("AUDIT_LOG", ""),
+		ringCap:           atoi(os.Getenv("AUDIT_RING"), 500),
+		webhookURL:        getenv("WEBHOOK_URL", ""),
+		webhookProvider:   getenv("WEBHOOK_PROVIDER", "raw"),
+		metricsToken:      getenvFile("METRICS_TOKEN", ""),
+		trustedNets:       parseCIDRs(getenv("TRUSTED_PROXIES", defaultTrustedProxies), logger),
+		maxBodyBytes:      int64(atoi(os.Getenv("MAX_BODY_KB"), 64)) * 1024,
+		orgID:             getenv("ORG_ID", ""),
+		ssoURL:            getenv("SSO_URL", ""),
+		smtpURL:           getenv("SMTP_URL", ""),
+		smtpFrom:          getenv("SMTP_FROM", "forward-auth@"+authHost),
+		smtpAllowInsecure: getenv("SMTP_ALLOW_INSECURE", "false") == "true",
+		redisURL:          getenv("REDIS_URL", ""),
+		pasetoKey:         pasetoKey,
+		pasetoKeySet:      pasetoKeySet,
+		oldPasetoKeys:     oldPasetoKeys,
 	}
 }
 
@@ -579,9 +581,14 @@ func (c config) totpURI(user, secret string) string {
 // ThrottleBackend is the brute-force throttle contract. The default is the
 // in-memory throttle below (with JSON file persistence); a Redis backend
 // (redis.go) takes over when REDIS_URL is set.
+//
+// Error policy: a non-nil error means "backend unavailable", never "not
+// locked". Callers must fail closed — return a controlled 503 rather than
+// letting a request through with brute-force protection silently disabled.
+// The in-memory implementation never errors.
 type ThrottleBackend interface {
-	locked(ip string) (bool, time.Duration)
-	fail(ip string) (lockedNow bool)
+	locked(ip string) (bool, time.Duration, error)
+	fail(ip string) (lockedNow bool, err error)
 	reset(ip string)
 	snapshot() []lockedIP
 }
@@ -678,27 +685,27 @@ func (t *throttle) persistLocked(path string) error {
 	return os.Rename(name, path)
 }
 
-func (t *throttle) locked(ip string) (bool, time.Duration) {
+func (t *throttle) locked(ip string) (bool, time.Duration, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	e := t.m[ip]
 	if e == nil {
-		return false, 0
+		return false, 0, nil
 	}
 	if e.lockUntil.IsZero() {
 		// counting entry, no lock yet — keep it, the fails must accumulate
-		return false, 0
+		return false, 0, nil
 	}
 	if d := time.Until(e.lockUntil); d > 0 {
-		return true, d
+		return true, d, nil
 	}
 	if time.Since(e.lockUntil) > t.cfg.lockout {
 		delete(t.m, ip)
 	}
-	return false, 0
+	return false, 0, nil
 }
 
-func (t *throttle) fail(ip string) (lockedNow bool) {
+func (t *throttle) fail(ip string) (lockedNow bool, err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	e := t.m[ip]
@@ -720,9 +727,9 @@ func (t *throttle) fail(ip string) (lockedNow bool) {
 		if t.path != "" {
 			_ = t.persistLocked(t.path) // durable lockout; best-effort
 		}
-		return true
+		return true, nil
 	}
-	return false
+	return false, nil
 }
 
 func (t *throttle) pruneLocked(now time.Time) {
@@ -968,7 +975,16 @@ func (s *server) session(w http.ResponseWriter, r *http.Request) (sessionClaims,
 		return sessionClaims{}, nil, false
 	}
 	cl, ok, usedOldKey := s.cfg.parseSessionPASETO(c.Value)
-	if !ok || s.reg.isRevoked(cl.sid) {
+	if !ok {
+		return sessionClaims{}, nil, false
+	}
+	revoked, err := s.reg.isRevoked(cl.sid)
+	if err != nil {
+		// fail closed: revocation state unverifiable → do not accept
+		s.log.Warn("session revocation check failed — rejecting session", "error", err)
+		return sessionClaims{}, nil, false
+	}
+	if revoked {
 		return sessionClaims{}, nil, false
 	}
 	if usedOldKey {
@@ -981,8 +997,13 @@ func (s *server) session(w http.ResponseWriter, r *http.Request) (sessionClaims,
 		return sessionClaims{}, nil, false
 	}
 	if s.cfg.idleTimeout > 0 {
-		if last := s.reg.lastActive(cl.sid); !last.IsZero() &&
-			time.Since(last) > s.cfg.idleTimeout {
+		last, err := s.reg.lastActive(cl.sid)
+		if err != nil {
+			// fail closed: idle state unverifiable → do not accept
+			s.log.Warn("session idle check failed — rejecting session", "error", err)
+			return sessionClaims{}, nil, false
+		}
+		if !last.IsZero() && time.Since(last) > s.cfg.idleTimeout {
 			_ = s.reg.revoke(cl.sid)
 			s.audit("idle_timeout", s.clientIP(r), cl.user, r)
 			return sessionClaims{}, nil, false
@@ -1094,7 +1115,11 @@ func (s *server) verify(w http.ResponseWriter, r *http.Request) {
 			s.renderForbidden(w, normalizeHost(host), n)
 			return
 		}
-		s.reg.touch(cl.sid, u.Username, s.clientIP(r), r.UserAgent())
+		if err := s.reg.touch(cl.sid, u.Username, s.clientIP(r), r.UserAgent()); err != nil {
+			// the session itself was verified above; losing the activity
+			// record only makes later idle checks fail closed
+			s.log.Warn("session touch failed", "error", err)
+		}
 		w.Header().Set("X-Auth-User", u.Username)
 		w.Header().Set("X-Auth-Role", u.Role)
 		w.WriteHeader(http.StatusOK)
@@ -1134,7 +1159,11 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.maxBodyBytes)
 
-	if locked, d := s.tr.locked(ip); locked {
+	if locked, d, err := s.tr.locked(ip); err != nil {
+		s.log.Warn("throttle check failed — failing closed", "error", err)
+		http.Error(w, "authentication storage unavailable", http.StatusServiceUnavailable)
+		return
+	} else if locked {
 		s.audit("locked_out", ip, "", r)
 		s.renderLogin(w, rd, "Too many attempts. Try again in "+d.Round(time.Second).String()+".", n)
 		return
@@ -1155,7 +1184,11 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	username := r.PostForm.Get("username")
-	if locked, d := s.tr.locked("user:" + strings.ToLower(username)); locked {
+	if locked, d, err := s.tr.locked("user:" + strings.ToLower(username)); err != nil {
+		s.log.Warn("throttle check failed — failing closed", "error", err)
+		http.Error(w, "authentication storage unavailable", http.StatusServiceUnavailable)
+		return
+	} else if locked {
 		s.audit("locked_out", ip, "", r)
 		s.renderLogin(w, rd, "Too many attempts. Try again in "+d.Round(time.Second).String()+".", n)
 		return
@@ -1221,7 +1254,9 @@ func (s *server) finishLogin(w http.ResponseWriter, r *http.Request, u *User, ip
 		exp:   time.Now().Add(s.cfg.ttl).Unix(),
 	}
 	s.setCookie(w, cl)
-	s.reg.touch(cl.sid, u.Username, ip, r.UserAgent())
+	if err := s.reg.touch(cl.sid, u.Username, ip, r.UserAgent()); err != nil {
+		s.log.Warn("session touch failed", "error", err)
+	}
 	s.audit("login_ok", ip, u.Username, r)
 	if p := pendingRedirect(cl, s.cfg.authHost); p != "" {
 		http.Redirect(w, r, p, http.StatusFound)
@@ -1232,9 +1267,21 @@ func (s *server) finishLogin(w http.ResponseWriter, r *http.Request, u *User, ip
 
 func (s *server) fail(w http.ResponseWriter, r *http.Request, ip, rd, reason, nonce string) {
 	username := strings.ToLower(strings.TrimSpace(r.PostForm.Get("username")))
-	locked := s.tr.fail(ip)
-	if username != "" && s.tr.fail("user:"+username) {
-		locked = true
+	locked, err := s.tr.fail(ip)
+	if err == nil && username != "" {
+		userLocked, uErr := s.tr.fail("user:" + username)
+		if uErr != nil {
+			err = uErr
+		} else if userLocked {
+			locked = true
+		}
+	}
+	if err != nil {
+		// throttle state could not be recorded — fail closed with a
+		// controlled 503 rather than letting attempts through unthrottled
+		s.log.Warn("throttle record failed — failing closed", "error", err)
+		http.Error(w, "authentication storage unavailable", http.StatusServiceUnavailable)
+		return
 	}
 	if locked {
 		s.ntf.send("locked_out", r.PostForm.Get("username"), ip, s.cfg.authHost, reason)
@@ -1275,12 +1322,20 @@ func (s *server) totp(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, loginURL, http.StatusSeeOther)
 		return
 	}
-	if locked, d := s.tr.locked(ip); locked {
+	if locked, d, err := s.tr.locked(ip); err != nil {
+		s.log.Warn("throttle check failed — failing closed", "error", err)
+		http.Error(w, "authentication storage unavailable", http.StatusServiceUnavailable)
+		return
+	} else if locked {
 		s.audit("locked_out", ip, user, r)
 		s.renderVerify(w, rd, "Too many attempts. Try again in "+d.Round(time.Second).String()+".", n)
 		return
 	}
-	if locked, d := s.tr.locked("user:" + strings.ToLower(user)); locked {
+	if locked, d, err := s.tr.locked("user:" + strings.ToLower(user)); err != nil {
+		s.log.Warn("throttle check failed — failing closed", "error", err)
+		http.Error(w, "authentication storage unavailable", http.StatusServiceUnavailable)
+		return
+	} else if locked {
 		s.audit("locked_out", ip, user, r)
 		s.renderVerify(w, rd, "Too many attempts. Try again in "+d.Round(time.Second).String()+".", n)
 		return
@@ -1310,9 +1365,19 @@ func (s *server) totp(w http.ResponseWriter, r *http.Request) {
 // totpFail is s.fail for the 2FA step: throttle, audit, re-render the
 // verify page with a generic error.
 func (s *server) totpFail(w http.ResponseWriter, r *http.Request, ip, user, rd, reason, nonce string) {
-	locked := s.tr.fail(ip)
-	if user != "" && s.tr.fail("user:"+strings.ToLower(user)) {
-		locked = true
+	locked, err := s.tr.fail(ip)
+	if err == nil && user != "" {
+		userLocked, uErr := s.tr.fail("user:" + strings.ToLower(user))
+		if uErr != nil {
+			err = uErr
+		} else if userLocked {
+			locked = true
+		}
+	}
+	if err != nil {
+		s.log.Warn("throttle record failed — failing closed", "error", err)
+		http.Error(w, "authentication storage unavailable", http.StatusServiceUnavailable)
+		return
 	}
 	if locked {
 		s.ntf.send("locked_out", user, ip, s.cfg.authHost, reason)
@@ -1596,6 +1661,9 @@ func main() {
 		log.Error("invalid configuration", "error", err)
 		os.Exit(2)
 	}
+	if cfg.smtpAllowInsecure && cfg.smtpURL != "" {
+		log.Warn("SMTP_ALLOW_INSECURE=true — recovery mail may be sent without TLS; development only")
+	}
 	aud := newAuditor(cfg.auditLog, cfg.ringCap)
 
 	users := newUserStore(cfg.usersFile)
@@ -1650,7 +1718,7 @@ func main() {
 		ntf:   newNotifier(cfg.webhookURL, cfg.webhookProvider, log),
 
 		startedAt:    time.Now(),
-		recoverLimit: rateLimiter{max: 3, window: time.Hour},
+		recoverLimit: rateLimiter{max: 3, window: time.Hour, maxKeys: rateLimiterMaxKeys},
 	}
 	wa, err := webauthn.New(&webauthn.Config{
 		RPDisplayName: cfg.totpIssuer,

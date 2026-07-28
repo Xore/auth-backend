@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -143,7 +144,7 @@ func TestThrottleBoundsAndExpires(t *testing.T) {
 	c := testConfig(t)
 	tr := newThrottle(c)
 	for i := 0; i < 9000; i++ {
-		tr.fail(fmt.Sprintf("192.0.2.%d", i))
+		_, _ = tr.fail(fmt.Sprintf("192.0.2.%d", i))
 	}
 	tr.mu.Lock()
 	size := len(tr.m)
@@ -154,7 +155,7 @@ func TestThrottleBoundsAndExpires(t *testing.T) {
 	tr.mu.Lock()
 	tr.m["expired"] = &entry{fails: 5, lockUntil: time.Now().Add(-2 * time.Minute)}
 	tr.mu.Unlock()
-	if locked, _ := tr.locked("expired"); locked {
+	if locked, _, _ := tr.locked("expired"); locked {
 		t.Fatal("expired lock remains active")
 	}
 }
@@ -553,15 +554,15 @@ func TestThrottleLockoutAccumulates(t *testing.T) {
 	// otherwise the fail counter resets on every attempt and no lockout ever
 	// triggers
 	for i := 0; i < 2; i++ {
-		if locked, _ := tr.locked("192.0.2.1"); locked {
+		if locked, _, _ := tr.locked("192.0.2.1"); locked {
 			t.Fatalf("locked after %d fails", i)
 		}
-		tr.fail("192.0.2.1")
+		_, _ = tr.fail("192.0.2.1")
 	}
-	if !tr.fail("192.0.2.1") {
+	if locked, _ := tr.fail("192.0.2.1"); !locked {
 		t.Fatal("lockout did not trigger at maxAttempts")
 	}
-	if locked, _ := tr.locked("192.0.2.1"); !locked {
+	if locked, _, _ := tr.locked("192.0.2.1"); !locked {
 		t.Fatal("ip not locked after maxAttempts")
 	}
 }
@@ -574,9 +575,9 @@ func TestThrottlePersistRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 3; i++ {
-		tr.fail("192.0.2.9")
+		_, _ = tr.fail("192.0.2.9")
 	}
-	if locked, d := tr.locked("192.0.2.9"); !locked || d <= 0 {
+	if locked, d, _ := tr.locked("192.0.2.9"); !locked || d <= 0 {
 		t.Fatal("ip not locked before persist")
 	}
 	// simulate a restart: fresh throttle, same file
@@ -584,7 +585,7 @@ func TestThrottlePersistRoundTrip(t *testing.T) {
 	if err := tr2.load(path); err != nil {
 		t.Fatal(err)
 	}
-	if locked, d := tr2.locked("192.0.2.9"); !locked || d <= 0 {
+	if locked, d, _ := tr2.locked("192.0.2.9"); !locked || d <= 0 {
 		t.Fatal("lockout did not survive the restart")
 	}
 	// an expired lockout is pruned on persist, not written
@@ -598,7 +599,7 @@ func TestThrottlePersistRoundTrip(t *testing.T) {
 	if err := tr3.load(path); err != nil {
 		t.Fatal(err)
 	}
-	if locked, _ := tr3.locked("192.0.2.10"); locked {
+	if locked, _, _ := tr3.locked("192.0.2.10"); locked {
 		t.Fatal("expired lockout persisted")
 	}
 }
@@ -626,24 +627,24 @@ func TestIdleSessionExpiry(t *testing.T) {
 		t.Fatal("session without registry entry rejected")
 	}
 	// recently seen → allowed
-	reg.touch("sid-active", u.Username, "127.0.0.1", "test")
+	_ = reg.touch("sid-active", u.Username, "127.0.0.1", "test")
 	if _, _, ok := s.session(httptest.NewRecorder(), mkReq("sid-active")); !ok {
 		t.Fatal("active session rejected")
 	}
 	// last seen beyond the idle timeout → rejected and revoked
-	reg.touch("sid-stale", u.Username, "127.0.0.1", "test")
+	_ = reg.touch("sid-stale", u.Username, "127.0.0.1", "test")
 	reg.mu.Lock()
 	reg.m["sid-stale"].LastSeen = time.Now().Add(-2 * time.Hour)
 	reg.mu.Unlock()
 	if _, _, ok := s.session(httptest.NewRecorder(), mkReq("sid-stale")); ok {
 		t.Fatal("idle session accepted")
 	}
-	if !reg.isRevoked("sid-stale") {
+	if revoked, _ := reg.isRevoked("sid-stale"); !revoked {
 		t.Fatal("idle session not revoked")
 	}
 	// idleTimeout == 0 disables the check entirely
 	s.cfg.idleTimeout = 0
-	reg.touch("sid-old", u.Username, "127.0.0.1", "test")
+	_ = reg.touch("sid-old", u.Username, "127.0.0.1", "test")
 	reg.mu.Lock()
 	reg.m["sid-old"].LastSeen = time.Now().Add(-720 * time.Hour)
 	reg.mu.Unlock()
@@ -829,7 +830,8 @@ func TestRecoveryTokenSingleUse(t *testing.T) {
 }
 
 func TestRecoveryRateLimit(t *testing.T) {
-	rl := rateLimiter{max: 2, window: 60 * time.Millisecond}
+	now := time.Now()
+	rl := rateLimiter{max: 2, window: time.Minute, now: func() time.Time { return now }}
 	for i := 0; i < 2; i++ {
 		if !rl.allow("1.2.3.4") {
 			t.Fatalf("request %d denied", i+1)
@@ -841,9 +843,96 @@ func TestRecoveryRateLimit(t *testing.T) {
 	if !rl.allow("5.6.7.8") {
 		t.Fatal("limiter leaks across keys")
 	}
-	time.Sleep(70 * time.Millisecond)
+	now = now.Add(2 * time.Minute)
 	if !rl.allow("1.2.3.4") {
 		t.Fatal("request after window denied")
+	}
+}
+
+// Expired keys must be pruned once their newest timestamp ages out — the
+// old limiter kept inactive IPs forever.
+func TestRateLimiterPrunesExpiredKeys(t *testing.T) {
+	now := time.Now()
+	rl := rateLimiter{max: 1, window: time.Minute, now: func() time.Time { return now }}
+	if !rl.allow("1.1.1.1") {
+		t.Fatal("first request denied")
+	}
+	if rl.allow("1.1.1.1") {
+		t.Fatal("second request within window allowed")
+	}
+	now = now.Add(2 * time.Minute)
+	// at capacity the expired key is pruned rather than kept (or evicting
+	// a live key); a fresh window starts
+	if !rl.allow("1.1.1.1") {
+		t.Fatal("expired key not pruned / window not reset")
+	}
+	rl.mu.Lock()
+	n := len(rl.m)
+	rl.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("limiter retains expired keys: %d", n)
+	}
+}
+
+// Capacity pressure: the map is bounded; when full, the least-recently
+// active key is evicted and live keys keep their limits.
+func TestRateLimiterBoundedCapacity(t *testing.T) {
+	now := time.Now()
+	rl := rateLimiter{max: 1, window: time.Hour, maxKeys: 4, now: func() time.Time { return now }}
+	for i := 0; i < 4; i++ {
+		if !rl.allow(fmt.Sprintf("10.0.0.%d", i)) {
+			t.Fatalf("fill request %d denied", i)
+		}
+		now = now.Add(time.Second) // establish an eviction order
+	}
+	// a 5th key evicts the oldest (10.0.0.0)
+	if !rl.allow("10.0.0.9") {
+		t.Fatal("new key denied under capacity pressure")
+	}
+	rl.mu.Lock()
+	n := len(rl.m)
+	_, evicted := rl.m["10.0.0.0"]
+	_, kept := rl.m["10.0.0.3"]
+	rl.mu.Unlock()
+	if n > 4 {
+		t.Fatalf("limiter map unbounded: %d", n)
+	}
+	if evicted {
+		t.Fatal("oldest key was not evicted")
+	}
+	if !kept {
+		t.Fatal("recent key wrongly evicted")
+	}
+	// the surviving keys are still limited
+	if rl.allow("10.0.0.3") {
+		t.Fatal("eviction reset a live key's limit")
+	}
+}
+
+func TestRateLimiterConcurrent(t *testing.T) {
+	rl := rateLimiter{max: 8, window: time.Hour, maxKeys: 16}
+	var wg sync.WaitGroup
+	allowed := make(chan bool, 8*16)
+	for i := 0; i < 16; i++ {
+		for j := 0; j < 8; j++ {
+			wg.Add(1)
+			go func(key string) {
+				defer wg.Done()
+				allowed <- rl.allow(key)
+			}(fmt.Sprintf("10.1.0.%d", j%4))
+		}
+	}
+	wg.Wait()
+	close(allowed)
+	count := 0
+	for a := range allowed {
+		if a {
+			count++
+		}
+	}
+	// 4 distinct keys × 8 allowed each, regardless of interleaving
+	if count != 4*8 {
+		t.Fatalf("allowed = %d, want %d", count, 4*8)
 	}
 }
 
@@ -859,7 +948,7 @@ func TestRecoverResetFlow(t *testing.T) {
 
 	var sentTo, sentBody string
 	old := sendMailFunc
-	sendMailFunc = func(_, from, to, subject, body string) error {
+	sendMailFunc = func(_, from, to, subject, body string, _ bool) error {
 		sentTo, sentBody = to, body
 		return nil
 	}

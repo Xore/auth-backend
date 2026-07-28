@@ -135,6 +135,13 @@ or `/_auth/passkeys` to register a passkey.
 Locked out, need to reset a user, or want a full wipe? See
 [docs/CREDENTIAL-RECOVERY.md](docs/CREDENTIAL-RECOVERY.md).
 
+Self-service email recovery (`/_auth/recover`) is enabled by `SMTP_URL`.
+Mail is sent to the user's optional **Email** field (set from the admin
+panel); accounts created before that field existed keep working if their
+username is an email address. Transport is always encrypted — STARTTLS for
+`smtp://`, TLS 1.2+ for `smtps://` — unless `SMTP_ALLOW_INSECURE=true`
+explicitly opts in to plaintext for local development.
+
 > **Fail-closed:** if auth-portal is down, `forward-auth` returns 5xx and
 > protected services stay locked — never open. Keep the stack running.
 

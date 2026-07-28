@@ -28,6 +28,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/mail"
 	"os"
 	"path/filepath"
 	"sort"
@@ -45,10 +46,52 @@ const (
 	roleUser  = "user"
 )
 
+// errNoSuchUser is returned by store mutations for a missing username.
+var errNoSuchUser = errors.New("no such user")
+
+// normalizeEmail validates and normalizes an email address for storage.
+// The local part is kept verbatim (it is case-sensitive per RFC 5321); the
+// domain is lowercased. An empty input normalizes to "" (field cleared).
+// The username is never derived from or rewritten by this — it only ever
+// feeds the dedicated Email field.
+func normalizeEmail(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", nil
+	}
+	if len(s) > 254 {
+		return "", errors.New("email address too long")
+	}
+	a, err := mail.ParseAddress(s)
+	if err != nil || a.Address != s {
+		return "", errors.New("invalid email address")
+	}
+	local, domain, ok := strings.Cut(a.Address, "@")
+	if !ok || local == "" || domain == "" {
+		return "", errors.New("invalid email address")
+	}
+	return local + "@" + strings.ToLower(domain), nil
+}
+
+// recoveryEmail returns the address recovery mail is sent to: the validated
+// Email field when set, otherwise — for backward compatibility with
+// email-shaped usernames — the username itself when it parses as an email
+// address. "" means the account is not reachable by recovery mail.
+func (u *User) recoveryEmail() string {
+	if u.Email != "" {
+		return u.Email
+	}
+	if e, err := normalizeEmail(u.Username); err == nil {
+		return e
+	}
+	return ""
+}
+
 type User struct {
 	Username      string        `json:"username"`
 	Hash          string        `json:"hash"`
 	Role          string        `json:"role"`
+	Email         string        `json:"email,omitempty"` // optional recovery address; usernames stay opaque IDs
 	Disabled      bool          `json:"disabled,omitempty"`
 	MustChange    bool          `json:"must_change,omitempty"`
 	TOTPSecret    string        `json:"totp_secret,omitempty"`
@@ -308,20 +351,31 @@ func (st *userStore) adminCount() int {
 // mutate runs fn on the named user under the lock and persists the store if
 // fn returns true.
 func (st *userStore) mutate(name string, fn func(*User) bool) error {
+	_, err := st.mutateIf(name, fn)
+	return err
+}
+
+// mutateIf is mutate with the application result exposed: fn runs under the
+// store lock, so it can re-verify preconditions (e.g. a recovery token's
+// password-hash fingerprint) and mutate atomically — no other mutation can
+// interleave between check and write. applied is false when the user is
+// missing (errNoSuchUser) or fn returned false (precondition failed).
+func (st *userStore) mutateIf(name string, fn func(*User) bool) (applied bool, err error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	u := st.users[name]
 	if u == nil {
-		return errors.New("no such user")
+		return false, errNoSuchUser
 	}
 	before := cloneUser(u)
-	if fn(u) {
-		if err := st.saveLocked(); err != nil {
-			st.users[name] = before
-			return err
-		}
+	if !fn(u) {
+		return false, nil
 	}
-	return nil
+	if err := st.saveLocked(); err != nil {
+		st.users[name] = before
+		return false, err
+	}
+	return true, nil
 }
 
 func (st *userStore) create(u *User) error {

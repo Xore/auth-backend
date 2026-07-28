@@ -21,14 +21,19 @@ import (
 // SessionBackend is the session-registry contract (roadmap Step 23). The
 // default is the in-memory registry below (revocations persisted to JSON);
 // a Redis backend (redis.go) takes over when REDIS_URL is set.
+//
+// Error policy: a non-nil error means "backend unavailable", never "not
+// revoked" / "no activity". Authorization checks (isRevoked, lastActive for
+// idle enforcement) must fail closed: an unverifiable session is rejected.
+// The in-memory implementation never errors.
 type SessionBackend interface {
-	touch(sid, user, ip, ua string)
+	touch(sid, user, ip, ua string) error
 	revoke(sid string) error
-	isRevoked(sid string) bool
+	isRevoked(sid string) (bool, error)
 	list() []sessionInfo
 	active() int
 	forUser(username string) []sessionInfo
-	lastActive(sid string) time.Time
+	lastActive(sid string) (time.Time, error)
 }
 
 type sessionInfo struct {
@@ -74,9 +79,9 @@ func (sr *sessionRegistry) load() error {
 	return nil
 }
 
-func (sr *sessionRegistry) touch(sid, user, ip, ua string) {
+func (sr *sessionRegistry) touch(sid, user, ip, ua string) error {
 	if sid == "" {
-		return
+		return nil
 	}
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
@@ -84,10 +89,11 @@ func (sr *sessionRegistry) touch(sid, user, ip, ua string) {
 	if s := sr.m[sid]; s != nil {
 		s.LastSeen = now
 		s.IP = ip
-		return
+		return nil
 	}
 	sr.m[sid] = &sessionInfo{SID: sid, User: user, IP: ip, UA: ua, Created: now, LastSeen: now}
 	sr.pruneLocked(now)
+	return nil
 }
 
 func (sr *sessionRegistry) revoke(sid string) error {
@@ -131,11 +137,11 @@ func (sr *sessionRegistry) saveLocked() error {
 	return os.Rename(name, sr.path)
 }
 
-func (sr *sessionRegistry) isRevoked(sid string) bool {
+func (sr *sessionRegistry) isRevoked(sid string) (bool, error) {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
 	_, ok := sr.revoked[sid]
-	return ok
+	return ok, nil
 }
 
 func (sr *sessionRegistry) list() []sessionInfo {
@@ -154,13 +160,13 @@ func (sr *sessionRegistry) list() []sessionInfo {
 // lastActive returns when the session was last seen, or the zero time if the
 // session is not in the registry (e.g. after a restart, before its first
 // touch — the caller treats that as "no idle data", not "idle").
-func (sr *sessionRegistry) lastActive(sid string) time.Time {
+func (sr *sessionRegistry) lastActive(sid string) (time.Time, error) {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
 	if s := sr.m[sid]; s != nil {
-		return s.LastSeen
+		return s.LastSeen, nil
 	}
-	return time.Time{}
+	return time.Time{}, nil
 }
 
 func (sr *sessionRegistry) forUser(username string) []sessionInfo {

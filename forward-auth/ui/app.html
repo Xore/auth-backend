@@ -170,10 +170,12 @@ function confirmAct(msg, action, extra) {
 function createUser() {
   var name = document.getElementById('nu-name').value.trim();
   var role = document.getElementById('nu-role').value;
+  var email = document.getElementById('nu-email').value.trim();
   var hosts = document.getElementById('nu-hosts').value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
   if (!name) { flash('username required', true); return; }
-  api('user', {username: name, role: role, allowed_hosts: hosts}).then(function (j) {
+  api('user', {username: name, role: role, email: email, allowed_hosts: hosts}).then(function (j) {
     document.getElementById('nu-name').value = '';
+    document.getElementById('nu-email').value = '';
     document.getElementById('nu-hosts').value = '';
     flash('created <b>' + esc(name) + '</b> — temp password: <b>' + esc(j.temp_password) + '</b><br>shown once — they must change it on first login');
     fetchState();
@@ -185,6 +187,12 @@ function editHosts(name, cur) {
   if (v === null) return;
   var hosts = v.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
   act('set_hosts', {username: name, hosts: hosts});
+}
+
+function editEmail(name, cur) {
+  var v = prompt('Recovery email for ' + name + ' (blank = none — disables email recovery):', cur);
+  if (v === null) return;
+  act('set_email', {username: name, email: v.trim()});
 }
 
 // ── sidebar nav ──────────────────────────────────────────────────────────
@@ -298,6 +306,8 @@ var PANE_TEMPLATES = {
       '<div class="newuser">' +
         '<div><label class="form-label">username</label>' +
         '<input class="form-input" id="nu-name" autocomplete="off" autocapitalize="none" spellcheck="false"></div>' +
+        '<div><label class="form-label">recovery email <span class="card__value">— optional</span></label>' +
+        '<input class="form-input" id="nu-email" type="email" autocomplete="off" placeholder="user@example.com"></div>' +
         '<div><label class="form-label">role</label>' +
         '<select class="form-input" id="nu-role"><option value="user">user</option><option value="admin">admin</option></select></div>' +
         '<div><label class="form-label">allowed hosts <span class="card__value">— blank = all</span></label>' +
@@ -473,7 +483,8 @@ function loadAdminUsers() {
       ? '<span class="badge badge--green">2FA on</span> <span class="card__value">' + u.backup_codes + ' codes · ' + u.passkeys + ' keys</span>'
       : '<span class="badge badge--orange">pending</span>';
     return '<tr>' +
-      '<td class="cell-mono">' + esc(u.username) + '</td>' +
+      '<td class="cell-mono">' + esc(u.username) +
+      (u.email ? '<br><span class="card__value">' + esc(u.email) + '</span>' : '') + '</td>' +
       '<td><span class="badge ' + (u.role === 'admin' ? 'badge--blue' : 'badge--muted') + '">' + esc(u.role) + '</span></td>' +
       '<td>' + status + '</td>' +
       '<td>' + totp + '</td>' +
@@ -488,6 +499,7 @@ function loadAdminUsers() {
       (u.passkeys ? '<button class="btn btn-secondary btn-sm" data-act="reset_passkeys" data-msg="Remove all passkeys for ' + esc(u.username) + '?" data-user="' + esc(u.username) + '">reset keys</button>' : '') +
       '<button class="btn btn-secondary btn-sm" data-act="logout_user" data-msg="Log ' + esc(u.username) + ' out everywhere?" data-user="' + esc(u.username) + '">logout</button>' +
       '<button class="btn btn-secondary btn-sm" data-act="edit_hosts" data-user="' + esc(u.username) + '" data-hosts="' + esc((u.allowed_hosts || []).join(', ')) + '">hosts</button>' +
+      '<button class="btn btn-secondary btn-sm" data-act="edit_email" data-user="' + esc(u.username) + '" data-email="' + esc(u.email || '') + '">email</button>' +
       '<button class="btn btn-secondary btn-sm" data-act="set_role" data-user="' + esc(u.username) + '" data-role="' + (u.role === 'admin' ? 'user' : 'admin') + '">' + (u.role === 'admin' ? 'demote' : 'promote') + '</button>' +
       '<button class="btn btn-danger btn-sm" data-act="delete" data-msg="DELETE ' + esc(u.username) + '? This cannot be undone." data-user="' + esc(u.username) + '">delete</button>' +
       '</div></td>' +
@@ -646,6 +658,7 @@ document.addEventListener('click', function (e) {
   if (!b) return;
   var d = b.dataset;
   if (d.act === 'edit_hosts') { editHosts(d.user, d.hosts); return; }
+  if (d.act === 'edit_email') { editEmail(d.user, d.email); return; }
   var extra = {};
   if (d.user) extra.username = d.user;
   if (d.ip) extra.ip = d.ip;

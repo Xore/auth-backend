@@ -54,6 +54,7 @@ func jsonErr(w http.ResponseWriter, msg string) {
 type adminUserView struct {
 	Username     string    `json:"username"`
 	Role         string    `json:"role"`
+	Email        string    `json:"email"`
 	Disabled     bool      `json:"disabled"`
 	MustChange   bool      `json:"must_change"`
 	TOTPEnrolled bool      `json:"totp_enrolled"`
@@ -79,7 +80,7 @@ func (s *server) adminState(w http.ResponseWriter, r *http.Request) {
 			hosts = []string{}
 		}
 		views = append(views, adminUserView{
-			Username: u.Username, Role: u.Role, Disabled: u.Disabled,
+			Username: u.Username, Role: u.Role, Email: u.Email, Disabled: u.Disabled,
 			MustChange: u.MustChange, TOTPEnrolled: u.TOTPSecret != "",
 			BackupCodes: len(u.BackupCodes), AllowedHosts: hosts,
 			Created: u.Created, LastLogin: u.LastLogin, LastIP: u.LastIP,
@@ -107,6 +108,7 @@ func (s *server) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username     string   `json:"username"`
 		Role         string   `json:"role"`
+		Email        string   `json:"email"`
 		AllowedHosts []string `json:"allowed_hosts"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.maxBodyBytes)
@@ -124,6 +126,11 @@ func (s *server) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, "role must be admin or user")
 		return
 	}
+	email, err := normalizeEmail(req.Email)
+	if err != nil {
+		jsonErr(w, err.Error())
+		return
+	}
 	temp := newTempPassword()
 	hash, err := hashPassword(temp)
 	if err != nil {
@@ -131,7 +138,7 @@ func (s *server) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err = s.users.create(&User{
-		Username: req.Username, Hash: hash, Role: req.Role,
+		Username: req.Username, Hash: hash, Role: req.Role, Email: email,
 		MustChange: true, AllowedHosts: req.AllowedHosts,
 		Gen: 1, DeviceGen: 1, PasskeyUserID: randomBytes(32), Created: time.Now().UTC(),
 	})
@@ -158,6 +165,7 @@ func (s *server) adminAction(w http.ResponseWriter, r *http.Request) {
 		Action   string   `json:"action"`
 		Username string   `json:"username"`
 		Role     string   `json:"role"`
+		Email    string   `json:"email"`
 		Hosts    []string `json:"hosts"`
 		IP       string   `json:"ip"`
 		SID      string   `json:"sid"`
@@ -279,6 +287,17 @@ func (s *server) adminAction(w http.ResponseWriter, r *http.Request) {
 		done(nil)
 	case "set_hosts":
 		if err := s.users.mutate(req.Username, func(u *User) bool { u.AllowedHosts = req.Hosts; return true }); err != nil {
+			jsonErr(w, err.Error())
+			return
+		}
+		done(nil)
+	case "set_email":
+		email, err := normalizeEmail(req.Email)
+		if err != nil {
+			jsonErr(w, err.Error())
+			return
+		}
+		if err := s.users.mutate(req.Username, func(u *User) bool { u.Email = email; return true }); err != nil {
 			jsonErr(w, err.Error())
 			return
 		}

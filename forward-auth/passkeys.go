@@ -164,17 +164,27 @@ func (s *server) passkeyLoginBegin(w http.ResponseWriter, r *http.Request) {
 	}
 	ip := s.clientIP(r)
 	name := strings.TrimSpace(req.Username)
-	if locked, _ := s.tr.locked(ip); locked {
+	if locked, _, err := s.tr.locked(ip); err != nil {
+		s.log.Warn("throttle check failed — failing closed", "error", err)
+		http.Error(w, "authentication storage unavailable", http.StatusServiceUnavailable)
+		return
+	} else if locked {
 		http.Error(w, "temporarily unavailable", http.StatusTooManyRequests)
 		return
 	}
-	if locked, _ := s.tr.locked("user:" + strings.ToLower(name)); locked {
+	if locked, _, err := s.tr.locked("user:" + strings.ToLower(name)); err != nil {
+		s.log.Warn("throttle check failed — failing closed", "error", err)
+		http.Error(w, "authentication storage unavailable", http.StatusServiceUnavailable)
+		return
+	} else if locked {
 		http.Error(w, "temporarily unavailable", http.StatusTooManyRequests)
 		return
 	}
 	u := s.users.get(name)
 	if u == nil || u.Disabled || len(u.Passkeys) == 0 {
-		s.passkeyFailure(r, ip, name, "unavailable")
+		if !s.passkeyThrottleOr503(w, r, ip, name, "unavailable") {
+			return
+		}
 		jsonErr(w, "passkey sign-in unavailable")
 		return
 	}
@@ -197,20 +207,26 @@ func (s *server) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.ceremonies.take(tx, "login")
 	ip := s.clientIP(r)
 	if !ok || c.IP != ip {
-		s.passkeyFailure(r, ip, c.User, "expired")
+		if !s.passkeyThrottleOr503(w, r, ip, c.User, "expired") {
+			return
+		}
 		jsonErr(w, "passkey sign-in failed")
 		return
 	}
 	u := s.users.get(c.User)
 	if u == nil || u.Disabled {
-		s.passkeyFailure(r, ip, c.User, "user")
+		if !s.passkeyThrottleOr503(w, r, ip, c.User, "user") {
+			return
+		}
 		jsonErr(w, "passkey sign-in failed")
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.maxBodyBytes)
 	cred, err := s.wa.FinishLogin(u, c.Data, r)
 	if err != nil {
-		s.passkeyFailure(r, ip, c.User, "verify")
+		if !s.passkeyThrottleOr503(w, r, ip, c.User, "verify") {
+			return
+		}
 		jsonErr(w, "passkey sign-in failed")
 		return
 	}
@@ -234,7 +250,9 @@ func (s *server) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !updated {
-		s.passkeyFailure(r, ip, c.User, "revoked")
+		if !s.passkeyThrottleOr503(w, r, ip, c.User, "revoked") {
+			return
+		}
 		jsonErr(w, "passkey sign-in failed")
 		return
 	}
@@ -244,7 +262,9 @@ func (s *server) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 	fresh := s.users.get(u.Username)
 	cl := sessionClaims{user: u.Username, gen: fresh.Gen, sid: newSID(), flags: s.flagsFor(fresh), exp: time.Now().Add(s.cfg.ttl).Unix()}
 	s.setCookie(w, cl)
-	s.reg.touch(cl.sid, u.Username, ip, r.UserAgent())
+	if err := s.reg.touch(cl.sid, u.Username, ip, r.UserAgent()); err != nil {
+		s.log.Warn("session touch failed", "error", err)
+	}
 	s.tr.reset(ip)
 	s.tr.reset("user:" + strings.ToLower(u.Username))
 	s.audit("passkey_login_ok", ip, u.Username, r)
@@ -312,10 +332,30 @@ func (s *server) passkeyGate(w http.ResponseWriter, r *http.Request) (sessionCla
 	return cl, u, true
 }
 
-func (s *server) passkeyFailure(r *http.Request, ip, user, reason string) {
-	s.tr.fail(ip)
+// passkeyThrottleOr503 runs passkeyFailure; when the throttle backend is
+// unavailable it answers a controlled 503 (fail closed) and reports false.
+func (s *server) passkeyThrottleOr503(w http.ResponseWriter, r *http.Request, ip, user, reason string) bool {
+	if err := s.passkeyFailure(r, ip, user, reason); err != nil {
+		http.Error(w, "authentication storage unavailable", http.StatusServiceUnavailable)
+		return false
+	}
+	return true
+}
+
+// passkeyFailure throttles and audits a failed passkey sign-in. A non-nil
+// error means the throttle backend is unavailable — callers answer 503
+// (fail closed) instead of letting attempts through unthrottled.
+func (s *server) passkeyFailure(r *http.Request, ip, user, reason string) error {
+	if _, err := s.tr.fail(ip); err != nil {
+		s.log.Warn("throttle record failed", "error", err)
+		return err
+	}
 	if user != "" {
-		s.tr.fail("user:" + strings.ToLower(user))
+		if _, err := s.tr.fail("user:" + strings.ToLower(user)); err != nil {
+			s.log.Warn("throttle record failed", "error", err)
+			return err
+		}
 	}
 	s.audit("passkey_login_fail:"+reason, ip, user, r)
+	return nil
 }

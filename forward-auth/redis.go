@@ -19,13 +19,20 @@ package main
 // <key> in the throttle keys is opaque: bare client IPs and "user:<name>"
 // strings both appear and are never parsed, only suffixed.
 //
-// Error policy: every Redis error is logged via the passed logger and
-// treated as fail-OPEN — locked() reports unlocked, fail() reports no new
-// lock, isRevoked() reports not revoked — so a Redis blip cannot DoS the
-// login portal for everyone. The one exception is revoke(): it returns the
-// error so an admin revoking a session sees the failure instead of a false
-// success. list()/forUser() return what they can (nil on error). Every
-// call runs under its own 2-second context timeout.
+// Error policy: FAIL CLOSED. A Redis error is returned to the caller as a
+// non-nil error meaning "backend unavailable" — never collapsed into a
+// safe-looking zero value. locked() erroring produces a controlled 503 at
+// the login/TOTP/passkey endpoints (brute-force protection is not silently
+// disabled); isRevoked()/lastActive() erroring rejects the session (a
+// revoked or idle-unverifiable session is never accepted during an outage).
+// list()/snapshot()/forUser() are admin-panel conveniences and return what
+// they can (nil on error). Every call runs under its own 2-second context
+// timeout.
+//
+// Multi-command transitions (throttle increment+lock, session touch,
+// revocation) run as Lua scripts so they are atomic: a crash or failover
+// mid-operation cannot leave a counter incremented without its TTL, a
+// session without expiry, or a revocation marker without the session drop.
 //
 // All key enumeration uses SCAN, never KEYS.
 
@@ -47,6 +54,51 @@ const (
 	redisKeyPrefix     = "fa:"
 	redisUserKeyPrefix = "user:"
 )
+
+// failScript atomically increments the failure counter, refreshes its TTL
+// and, once the count reaches maxAttempts, (re)sets the lock key with
+// exponential backoff. Returns the lock duration in ms, or 0 when no lock
+// was triggered. KEYS: 1=failKey 2=lockKey. ARGV: 1=failTTL seconds
+// 2=maxAttempts 3=lockout ms 4=maxLock ms.
+var failScript = redis.NewScript(`
+local n = redis.call('INCR', KEYS[1])
+redis.call('EXPIRE', KEYS[1], ARGV[1])
+local maxAttempts = tonumber(ARGV[2])
+if n < maxAttempts then
+	return 0
+end
+local over = math.min(n - maxAttempts, 10)
+local d = tonumber(ARGV[3]) * (2 ^ over)
+local maxLock = tonumber(ARGV[4])
+if d > maxLock then
+	d = maxLock
+end
+redis.call('SET', KEYS[2], n, 'PX', d)
+return d
+`)
+
+// touchScript atomically creates-or-refreshes a session entry and its TTL:
+// "created" survives via HSETNX, ip/last_seen always refresh, user/ua are
+// only written for a new entry. KEYS: 1=sessionKey. ARGV: 1=now
+// 2=ip 3=user 4=ua 5=TTL milliseconds.
+var touchScript = redis.NewScript(`
+local isNew = redis.call('HSETNX', KEYS[1], 'created', ARGV[1])
+redis.call('HSET', KEYS[1], 'ip', ARGV[2], 'last_seen', ARGV[1])
+if isNew == 1 then
+	redis.call('HSET', KEYS[1], 'user', ARGV[3], 'ua', ARGV[4])
+end
+redis.call('PEXPIRE', KEYS[1], ARGV[5])
+return isNew
+`)
+
+// revokeScript atomically writes the revocation marker (PX = ttl) and drops
+// the live session entry. KEYS: 1=revokedKey 2=sessionKey. ARGV: 1=now
+// 2=TTL ms.
+var revokeScript = redis.NewScript(`
+redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+redis.call('DEL', KEYS[2])
+return 1
+`)
 
 type redisBackends struct {
 	rdb *redis.Client
@@ -102,53 +154,43 @@ func (rb *redisBackends) scanKeys(ctx context.Context, pattern string) ([]string
 // locked reports whether key is currently locked and, if so, the remaining
 // lock duration. The fail counter is never touched here — a lookup must not
 // reset or expire accumulating failures (the zero-lockUntil regression in
-// the memory throttle).
-func (rb *redisBackends) locked(key string) (bool, time.Duration) {
+// the memory throttle). A Redis error is returned, not collapsed: callers
+// answer 503 rather than letting attempts through unthrottled.
+func (rb *redisBackends) locked(key string) (bool, time.Duration, error) {
 	ctx, cancel := rb.op()
 	defer cancel()
 	d, err := rb.rdb.PTTL(ctx, throttleLockKey(key)).Result()
 	if err != nil {
-		rb.log.Warn("redis locked() failed — fail-open", "key", key, "error", err)
-		return false, 0
+		rb.log.Warn("redis locked() failed", "key", key, "error", err)
+		return false, 0, err
 	}
 	if d <= 0 { // missing (-2) or expired (-1)
-		return false, 0
+		return false, 0, nil
 	}
-	return true, d
+	return true, d, nil
 }
 
 // fail increments the failure counter and, once it reaches maxAttempts,
 // sets the lock key with exponential backoff (lockout * 2^min(over, 10),
-// capped at 24h). It returns true when a lock was (re)triggered.
-func (rb *redisBackends) fail(key string) (lockedNow bool) {
+// capped at 24h). It returns true when a lock was (re)triggered. The whole
+// increment + TTL refresh + lock transition is one Lua script, so a partial
+// application is impossible.
+func (rb *redisBackends) fail(key string) (lockedNow bool, err error) {
 	ctx, cancel := rb.op()
 	defer cancel()
-	n, err := rb.rdb.Incr(ctx, throttleFailKey(key)).Result()
+	d, err := failScript.Run(ctx, rb.rdb,
+		[]string{throttleFailKey(key), throttleLockKey(key)},
+		int(redisFailKeyTTL.Seconds()), rb.cfg.maxAttempts,
+		rb.cfg.lockout.Milliseconds(), redisMaxLockDur.Milliseconds()).Int64()
 	if err != nil {
-		rb.log.Warn("redis fail() incr failed — fail-open", "key", key, "error", err)
-		return false
+		rb.log.Warn("redis fail() failed", "key", key, "error", err)
+		return false, err
 	}
-	// Refresh the counter TTL after each increment so idle counters
-	// self-clean but active attackers keep accumulating.
-	if err := rb.rdb.Expire(ctx, throttleFailKey(key), redisFailKeyTTL).Err(); err != nil {
-		rb.log.Warn("redis fail() expire failed", "key", key, "error", err)
-	}
-	if int(n) < rb.cfg.maxAttempts {
-		return false
-	}
-	mult := time.Duration(1) << uint(min(int(n)-rb.cfg.maxAttempts, 10))
-	d := rb.cfg.lockout * mult
-	if d > redisMaxLockDur {
-		d = redisMaxLockDur
-	}
-	if err := rb.rdb.Set(ctx, throttleLockKey(key), n, d).Err(); err != nil {
-		rb.log.Warn("redis fail() lock set failed — fail-open", "key", key, "error", err)
-		return false
-	}
-	return true
+	return d > 0, nil
 }
 
-// reset deletes all throttle state for key (counter and lock).
+// reset deletes all throttle state for key (counter and lock) — a single
+// DEL command, already atomic.
 func (rb *redisBackends) reset(key string) {
 	ctx, cancel := rb.op()
 	defer cancel()
@@ -189,61 +231,53 @@ func (rb *redisBackends) snapshot() []lockedIP {
 
 // touch records activity for sid: on first sight the entry is created with
 // user/ua/created set; afterwards only ip and last_seen are refreshed
-// (created survives via HSetNX). The entry TTL is refreshed to cfg.ttl.
-func (rb *redisBackends) touch(sid, user, ip, ua string) {
+// (created survives via HSETNX). The entry TTL is refreshed to cfg.ttl.
+// One Lua script — a session can never be left without an expiry.
+func (rb *redisBackends) touch(sid, user, ip, ua string) error {
 	if sid == "" {
-		return
+		return nil
 	}
 	ctx, cancel := rb.op()
 	defer cancel()
-	key := sessionKey(sid)
 	now := time.Now().Format(time.RFC3339Nano)
-	isNew, err := rb.rdb.HSetNX(ctx, key, "created", now).Result()
+	err := touchScript.Run(ctx, rb.rdb, []string{sessionKey(sid)},
+		now, ip, user, ua, rb.cfg.ttl.Milliseconds()).Err()
 	if err != nil {
 		rb.log.Warn("redis touch() failed", "sid", sid, "error", err)
-		return
-	}
-	fields := []any{"ip", ip, "last_seen", now}
-	if isNew {
-		fields = append(fields, "user", user, "ua", ua)
-	}
-	if err := rb.rdb.HSet(ctx, key, fields...).Err(); err != nil {
-		rb.log.Warn("redis touch() hset failed", "sid", sid, "error", err)
-		return
-	}
-	if err := rb.rdb.Expire(ctx, key, rb.cfg.ttl).Err(); err != nil {
-		rb.log.Warn("redis touch() expire failed", "sid", sid, "error", err)
-	}
-}
-
-// revoke durably marks sid revoked for cfg.ttl and drops the live entry.
-// Unlike the other methods this returns Redis errors — an admin revoking a
-// session must see the failure, not a false success.
-func (rb *redisBackends) revoke(sid string) error {
-	ctx, cancel := rb.op()
-	defer cancel()
-	if err := rb.rdb.Set(ctx, revokedKey(sid), time.Now().Format(time.RFC3339Nano), rb.cfg.ttl).Err(); err != nil {
-		rb.log.Warn("redis revoke() failed", "sid", sid, "error", err)
-		return err
-	}
-	if err := rb.rdb.Del(ctx, sessionKey(sid)).Err(); err != nil {
-		rb.log.Warn("redis revoke() session drop failed", "sid", sid, "error", err)
 		return err
 	}
 	return nil
 }
 
-// isRevoked reports whether sid is on the revocation list. Fail-open: a
-// Redis error reports "not revoked" so the portal stays up.
-func (rb *redisBackends) isRevoked(sid string) bool {
+// revoke durably marks sid revoked for cfg.ttl and drops the live entry in
+// one Lua script, so the marker and the drop cannot be separated by a
+// failure. Errors are returned — an admin revoking a session must see the
+// failure, not a false success.
+func (rb *redisBackends) revoke(sid string) error {
+	ctx, cancel := rb.op()
+	defer cancel()
+	err := revokeScript.Run(ctx, rb.rdb,
+		[]string{revokedKey(sid), sessionKey(sid)},
+		time.Now().Format(time.RFC3339Nano), rb.cfg.ttl.Milliseconds()).Err()
+	if err != nil {
+		rb.log.Warn("redis revoke() failed", "sid", sid, "error", err)
+		return err
+	}
+	return nil
+}
+
+// isRevoked reports whether sid is on the revocation list. Fail CLOSED: a
+// Redis error is returned so the caller rejects the session — a session
+// whose revocation state cannot be verified is never accepted.
+func (rb *redisBackends) isRevoked(sid string) (bool, error) {
 	ctx, cancel := rb.op()
 	defer cancel()
 	n, err := rb.rdb.Exists(ctx, revokedKey(sid)).Result()
 	if err != nil {
-		rb.log.Warn("redis isRevoked() failed — fail-open", "sid", sid, "error", err)
-		return false
+		rb.log.Warn("redis isRevoked() failed", "sid", sid, "error", err)
+		return false, err
 	}
-	return n > 0
+	return n > 0, nil
 }
 
 // readSession loads one session hash; ok is false when the entry is gone or
@@ -313,21 +347,24 @@ func (rb *redisBackends) forUser(username string) []sessionInfo {
 	return out
 }
 
-// lastActive returns when sid was last seen, or the zero time when unknown
-// (caller treats that as "no idle data", matching the memory registry).
-func (rb *redisBackends) lastActive(sid string) time.Time {
+// lastActive returns when sid was last seen. A missing entry is the zero
+// time with a nil error ("no idle data", matching the memory registry); a
+// Redis error is a non-nil error so idle enforcement fails closed instead
+// of being silently skipped.
+func (rb *redisBackends) lastActive(sid string) (time.Time, error) {
 	ctx, cancel := rb.op()
 	defer cancel()
 	raw, err := rb.rdb.HGet(ctx, sessionKey(sid), "last_seen").Result()
+	if err == redis.Nil {
+		return time.Time{}, nil
+	}
 	if err != nil {
-		if err != redis.Nil {
-			rb.log.Warn("redis lastActive() failed", "sid", sid, "error", err)
-		}
-		return time.Time{}
+		rb.log.Warn("redis lastActive() failed", "sid", sid, "error", err)
+		return time.Time{}, err
 	}
 	t, err := time.Parse(time.RFC3339Nano, raw)
 	if err != nil {
-		return time.Time{}
+		return time.Time{}, nil
 	}
-	return t
+	return t, nil
 }
