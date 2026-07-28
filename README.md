@@ -263,6 +263,13 @@ to JSON files (`throttle.json`, `revoked-sessions.json`) next to
 transitions, startup connectivity check) so multiple replicas share
 lockouts, sessions and revocations.
 
+On Linux production hosts, enable Redis background persistence safely once:
+
+```bash
+printf 'vm.overcommit_memory = 1\n' >/etc/sysctl.d/99-redis-overcommit.conf
+sysctl --system
+```
+
 **Fail-closed policy:** when a security backend cannot be reached, the
 portal does not degrade to "allow". Login/TOTP/passkey endpoints answer a
 controlled **503**, and sessions whose revocation or idle state cannot be
