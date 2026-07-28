@@ -27,6 +27,9 @@ jobs:
           persist-credentials: false
 
       - name: Validate Compose configuration
+        env:
+          COOKIE_SECRET: ci-compose-validation-secret-32-chars
+          AUTH_PASSWORD: ci-compose-validation-password
         run: docker compose config --quiet
 
       - name: Log in to GHCR
@@ -69,6 +72,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Validate Compose configuration
+        env:
+          COOKIE_SECRET: ci-compose-validation-secret-32-chars
+          AUTH_PASSWORD: ci-compose-validation-password
         run: docker compose config --quiet
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
