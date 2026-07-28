@@ -12,7 +12,7 @@ import (
 func GenerateQRSVG(text string, px int) string {
 	png, err := qrcode.Encode(text, qrcode.Medium, px)
 	if err != nil {
-		return fmt.Sprintf(`<p style="color:red">QR error: %s</p>`, err)
+		return fmt.Sprintf(`<p class="status-err">QR error: %s</p>`, err)
 	}
 	b64 := base64.StdEncoding.EncodeToString(png)
 	return fmt.Sprintf(

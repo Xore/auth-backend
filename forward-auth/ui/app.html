@@ -4,9 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
+<meta name="csrf-token" content="{{.CSRF}}">
 <title>xore//auth — app</title>
 <link rel="stylesheet" href="/static/theme.css">
 <style nonce="{{.Nonce}}">
+  .u-mt8{margin-top:8px}.u-mt12{margin-top:12px}.u-mt14{margin-top:14px}
   body{overflow:hidden}
   .modal.modal--permanent{display:flex;opacity:1;visibility:visible;inset:0;width:100vw;height:100dvh;
     max-width:none;max-height:none;transform:none;border:0;border-radius:0}
@@ -148,7 +150,7 @@
 <script nonce="{{.Nonce}}">
 var IS_ADMIN = {{.IsAdmin}};
 var CURRENT_USER = "{{.User}}";
-var CSRF_TOKEN = "{{.CSRF}}";
+var CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
 var FORM_TOKEN = "{{.FT}}";
 
 var activePane = 'account';
@@ -264,7 +266,7 @@ function confirmAct(msg, action, extra) {
   };
   var copy = details[action] || [msg || 'Confirm action?', msg || 'This changes authentication state.', 'Confirm'];
   openDangerDialog(copy[0], 'Review the consequences before continuing.',
-    '<b>This action takes effect immediately:</b><p style="margin:8px 0 0">' + esc(copy[1]) + '</p>',
+    '<b>This action takes effect immediately:</b><p class="u-mt8">' + esc(copy[1]) + '</p>',
     copy[2], function () {
       act(action, extra).then(function (j) {
         if (j.temp_password) flash('temp password for ' + esc(extra.username) + ': <b>' + esc(j.temp_password) + '</b><br>shown once — send it over a secure channel');
@@ -280,7 +282,7 @@ function createUser(confirmed) {
   if (!name) { flash('username required', true); return; }
   if (role === 'admin' && !confirmed) {
     openDangerDialog('Create a new administrator?', 'The new account will receive full administrative access after completing its first sign-in.',
-      '<b>This grants sensitive access:</b><p style="margin:8px 0 0">The account can manage users, inspect audit and session data, alter system configuration, and rotate authentication keys.</p>',
+      '<b>This grants sensitive access:</b><p class="u-mt8">The account can manage users, inspect audit and session data, alter system configuration, and rotate authentication keys.</p>',
       'Create administrator', function () { createUser(true); });
     return;
   }
@@ -380,7 +382,7 @@ function renderNav() {
       '" data-pane="' + item.id + '">' + item.icon + ' ' + item.label + '</button>';
   });
   if (IS_ADMIN) {
-    html += '<div class="sidebar__section-label" style="margin-top:12px">Administration</div>';
+    html += '<div class="sidebar__section-label u-mt12">Administration</div>';
     ADMIN_NAV.forEach(function (item) {
       html += '<button class="sidebar__item' + (activePane === item.id ? ' active' : '') +
         '" data-pane="' + item.id + '">' + item.icon + ' ' + item.label + '</button>';
@@ -554,7 +556,7 @@ var PANE_TEMPLATES = {
     '<h2 id="settings-title">Configuration</h2>' +
     '<p class="pane__desc">Branding changes apply immediately. Runtime and infrastructure settings are staged for the next restart. Secret values are never displayed.</p>' +
     '<div class="card"><div class="card__title">Login page branding</div>' +
-      '<div class="settings-grid" style="margin-top:14px">' +
+      '<div class="settings-grid u-mt14">' +
         '<div class="settings-field"><label class="form-label" for="brand-title">Title</label><input class="form-input" id="brand-title" maxlength="80"></div>' +
         '<div class="settings-field"><label class="form-label" for="brand-subtitle">Subtitle</label><input class="form-input" id="brand-subtitle" maxlength="200"></div>' +
         '<div class="settings-field"><label class="form-label" for="brand-footer">Footer</label><input class="form-input" id="brand-footer" maxlength="200"></div>' +
@@ -1024,7 +1026,7 @@ function addPasskey() {
 
 function removePasskey(id, name) {
   openDangerDialog('Remove this passkey?', 'The passkey “' + name + '” will no longer sign in to this account.',
-    '<b>This action takes effect immediately:</b><p style="margin:8px 0 0">This credential cannot be restored. Make sure you retain another sign-in method before removing it.</p>',
+    '<b>This action takes effect immediately:</b><p class="u-mt8">This credential cannot be restored. Make sure you retain another sign-in method before removing it.</p>',
     'Remove passkey', function () {
       fetch('/_auth/passkeys/delete', {
         method: 'POST',
@@ -1154,7 +1156,7 @@ document.addEventListener('click', function (e) {
   if (e.target.closest('#nu-create')) { createUser(); return; }
   if (e.target.closest('#regenerate-backup-codes')) {
     openDangerDialog('Regenerate backup codes?', 'The current recovery codes will stop working.',
-      '<b>This action takes effect immediately:</b><p style="margin:8px 0 0">All existing backup codes and trusted-device tokens are invalidated. Store the newly generated codes before leaving the next screen.</p>',
+      '<b>This action takes effect immediately:</b><p class="u-mt8">All existing backup codes and trusted-device tokens are invalidated. Store the newly generated codes before leaving the next screen.</p>',
       'Regenerate codes', function () { document.getElementById('backup-codes-form').submit(); });
     return;
   }
@@ -1177,7 +1179,7 @@ document.addEventListener('click', function (e) {
 
 function revokeSession(sid) {
   openDangerDialog('Revoke this session?', 'The selected browser session will be invalidated immediately.',
-    '<b>This action takes effect immediately:</b><p style="margin:8px 0 0">The session cannot be restored. The user must authenticate again on that device.</p>',
+    '<b>This action takes effect immediately:</b><p class="u-mt8">The session cannot be restored. The user must authenticate again on that device.</p>',
     'Revoke session', function () { performRevokeSession(sid); });
 }
 

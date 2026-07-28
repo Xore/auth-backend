@@ -152,7 +152,7 @@ func secHeaders(w http.ResponseWriter, n string) {
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("Cache-Control", "no-store")
 	h.Set("Content-Security-Policy",
-		"default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'nonce-"+n+"'; img-src data:; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+		"default-src 'none'; style-src 'self' 'nonce-"+n+"'; script-src 'nonce-"+n+"'; img-src data:; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 }
 
 func (s *server) setCookie(w http.ResponseWriter, cl sessionClaims) {
