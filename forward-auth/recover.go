@@ -331,7 +331,7 @@ func (s *server) recoverRequest(w http.ResponseWriter, r *http.Request, n string
 					u.Username, s.cfg.authHost, link)
 				if err := sendMailFunc(s.cfg.smtpURL, s.cfg.smtpFrom, to,
 					"Password reset — "+s.cfg.authHost, body, s.cfg.smtpAllowInsecure); err != nil {
-					s.log.Error("recovery email failed", "user", username, "error", err)
+					s.log.Error("recovery email failed", "user", sanitizeLogField(username), "error", err)
 				} else {
 					s.audit("recover_request", ip, username, r)
 				}
@@ -386,7 +386,7 @@ func (s *server) recoverReset(w http.ResponseWriter, r *http.Request, n string) 
 	if errors.Is(err, errNoSuchUser) {
 		applied = false
 	} else if err != nil {
-		s.log.Error("persist password recovery", "user", username, "error", err)
+		s.log.Error("persist password recovery", "user", sanitizeLogField(username), "error", err)
 		http.Error(w, "authentication storage unavailable", http.StatusServiceUnavailable)
 		return
 	}

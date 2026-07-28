@@ -161,7 +161,7 @@ func (rb *redisBackends) locked(key string) (bool, time.Duration, error) {
 	defer cancel()
 	d, err := rb.rdb.PTTL(ctx, throttleLockKey(key)).Result()
 	if err != nil {
-		rb.log.Warn("redis locked() failed", "key", key, "error", err)
+		rb.log.Warn("redis locked() failed", "key", sanitizeLogField(key), "error", err)
 		return false, 0, err
 	}
 	if d <= 0 { // missing (-2) or expired (-1)
@@ -183,7 +183,7 @@ func (rb *redisBackends) fail(key string) (lockedNow bool, err error) {
 		int(redisFailKeyTTL.Seconds()), rb.cfg.maxAttempts,
 		rb.cfg.lockout.Milliseconds(), redisMaxLockDur.Milliseconds()).Int64()
 	if err != nil {
-		rb.log.Warn("redis fail() failed", "key", key, "error", err)
+		rb.log.Warn("redis fail() failed", "key", sanitizeLogField(key), "error", err)
 		return false, err
 	}
 	return d > 0, nil
@@ -195,7 +195,7 @@ func (rb *redisBackends) reset(key string) {
 	ctx, cancel := rb.op()
 	defer cancel()
 	if err := rb.rdb.Del(ctx, throttleFailKey(key), throttleLockKey(key)).Err(); err != nil {
-		rb.log.Warn("redis reset() failed", "key", key, "error", err)
+		rb.log.Warn("redis reset() failed", "key", sanitizeLogField(key), "error", err)
 	}
 }
 
@@ -260,7 +260,7 @@ func (rb *redisBackends) revoke(sid string) error {
 		[]string{revokedKey(sid), sessionKey(sid)},
 		time.Now().Format(time.RFC3339Nano), rb.cfg.ttl.Milliseconds()).Err()
 	if err != nil {
-		rb.log.Warn("redis revoke() failed", "sid", sid, "error", err)
+		rb.log.Warn("redis revoke() failed", "sid", sanitizeLogField(sid), "error", err)
 		return err
 	}
 	return nil

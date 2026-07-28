@@ -192,7 +192,7 @@ func (a *auditor) snapshot(n int) auditSnapshot {
 		n = 1000
 	}
 
-	recent := make([]authEvent, 0, n)
+	recent := make([]authEvent, 0, min(n, len(a.ring)))
 	for i := len(a.ring) - 1; i >= 0 && len(recent) < n; i-- {
 		recent = append(recent, a.ring[i])
 	}

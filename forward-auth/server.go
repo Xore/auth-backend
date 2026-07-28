@@ -145,6 +145,23 @@ func nonce() string {
 	return hex.EncodeToString(b)
 }
 
+// sanitizeLogField neutralizes user-controlled values before they enter log
+// output: control characters (CR, LF, …) are stripped so an attacker cannot
+// forge log lines, and the value is capped to bound log volume.
+func sanitizeLogField(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
+	const maxLogField = 256
+	if len(s) > maxLogField {
+		s = s[:maxLogField] + "…"
+	}
+	return s
+}
+
 func secHeaders(w http.ResponseWriter, n string) {
 	h := w.Header()
 	h.Set("X-Content-Type-Options", "nosniff")

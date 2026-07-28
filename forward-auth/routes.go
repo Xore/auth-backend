@@ -60,6 +60,10 @@ func (s *server) registerRoutes(mux *http.ServeMux) {
 			if strings.Contains(s.cfg.ssoURL, "?") {
 				sep = "&"
 			}
+			// The redirect target is the operator-configured SSO_URL (validated
+			// as https:// at startup); rd is appended only as an escaped query
+			// parameter, never as the target.
+			// codeql[go/unvalidated-url-redirection]
 			http.Redirect(w, r, s.cfg.ssoURL+sep+"rd="+url.QueryEscape(rd), http.StatusFound)
 		})
 	}

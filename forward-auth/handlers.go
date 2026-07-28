@@ -121,6 +121,9 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 				http.Redirect(w, r, p, http.StatusFound)
 				return
 			}
+			// rd comes from safeRedirect(): HTTPS-only, restricted to the
+			// cookie domain, constant fallback — never attacker-controlled.
+			// codeql[go/unvalidated-url-redirection]
 			http.Redirect(w, r, rd, http.StatusFound)
 			return
 		}
@@ -568,7 +571,7 @@ func (s *server) password(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) audit(event, ip, user string, r *http.Request) {
 	host := firstNonEmpty(r.Header.Get("X-Forwarded-Host"), r.Host)
-	s.log.Info("auth", "event", event, "ip", ip, "user", user, "ua", r.UserAgent(), "host", host)
+	s.log.Info("auth", "event", sanitizeLogField(event), "ip", sanitizeLogField(ip), "user", sanitizeLogField(user), "ua", sanitizeLogField(r.UserAgent()), "host", sanitizeLogField(host))
 	s.aud.record(authEvent{
 		Time: time.Now().UTC(), Event: event, IP: ip, User: user,
 		UA: r.UserAgent(), Host: host,

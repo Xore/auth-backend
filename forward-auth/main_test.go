@@ -1296,3 +1296,21 @@ func TestPasswordlessMode(t *testing.T) {
 		t.Fatalf("recover route = %d, want 404 in passwordless mode", w.Code)
 	}
 }
+
+func TestSanitizeLogField(t *testing.T) {
+	// CR/LF and other control characters are stripped — no forged log lines
+	if got := sanitizeLogField("alice\n2026-07-28 INFO auth event=login_ok"); strings.ContainsAny(got, "\n\r") {
+		t.Fatalf("newline survived sanitizing: %q", got)
+	}
+	if got := sanitizeLogField("a\tb\x00c\x7fd"); got != "abcd" {
+		t.Fatalf("control chars not stripped: %q", got)
+	}
+	// printable input passes through unchanged
+	if got := sanitizeLogField("alice@example.com"); got != "alice@example.com" {
+		t.Fatalf("clean input mangled: %q", got)
+	}
+	// capped length
+	if got := sanitizeLogField(strings.Repeat("x", 500)); len(got) > 260 {
+		t.Fatalf("field not capped: %d bytes", len(got))
+	}
+}

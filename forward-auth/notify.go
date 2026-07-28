@@ -124,20 +124,20 @@ func (n *notifier) send(event, user, ip, host, detail string) {
 	}
 	body, headers, err := formatPayload(n.provider, p)
 	if err != nil {
-		n.log.Warn("webhook encode failed", "event", event, "error", err)
+		n.log.Warn("webhook encode failed", "event", sanitizeLogField(event), "error", err)
 		return
 	}
 	select {
 	case n.sem <- struct{}{}:
 	default:
-		n.log.Warn("webhook dropped", "event", event)
+		n.log.Warn("webhook dropped", "event", sanitizeLogField(event))
 		return
 	}
 	go func() {
 		defer func() { <-n.sem }()
 		req, err := http.NewRequest(http.MethodPost, n.url, bytes.NewReader(body))
 		if err != nil {
-			n.log.Warn("webhook failed", "event", event, "error", err)
+			n.log.Warn("webhook failed", "event", sanitizeLogField(event), "error", err)
 			return
 		}
 		req.Header.Set("Content-Type", "application/json")
@@ -146,13 +146,13 @@ func (n *notifier) send(event, user, ip, host, detail string) {
 		}
 		resp, err := n.c.Do(req)
 		if err != nil {
-			n.log.Warn("webhook failed", "event", event, "error", err)
+			n.log.Warn("webhook failed", "event", sanitizeLogField(event), "error", err)
 			return
 		}
 		_, _ = io.CopyN(io.Discard, resp.Body, 4096)
 		_ = resp.Body.Close()
 		if resp.StatusCode >= 300 {
-			n.log.Warn("webhook rejected", "event", event, "status", resp.StatusCode)
+			n.log.Warn("webhook rejected", "event", sanitizeLogField(event), "status", resp.StatusCode)
 		}
 	}()
 }

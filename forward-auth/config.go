@@ -292,6 +292,11 @@ func (c config) validate() error {
 			problems = append(problems, "SMTP_URL must be smtp:// or smtps:// with a host")
 		}
 	}
+	if c.ssoURL != "" {
+		if u, err := url.Parse(c.ssoURL); err != nil || u.Scheme != "https" || u.Hostname() == "" {
+			problems = append(problems, "SSO_URL must be https:// with a host")
+		}
+	}
 	if len(problems) == 0 {
 		return nil
 	}
