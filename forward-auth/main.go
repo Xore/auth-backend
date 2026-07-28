@@ -96,6 +96,7 @@ type config struct {
 	ssoURL          string
 	smtpURL         string
 	smtpFrom        string
+	redisURL        string
 	pasetoKey       pasetov4.LocalKey // XChaCha20 + BLAKE2b key for PASETO v4.local session tokens
 	pasetoKeySet    bool              // true when PASETO_KEY was set explicitly
 	oldPasetoKeys   []pasetov4.LocalKey
@@ -252,6 +253,7 @@ func loadConfig(logger *slog.Logger) config {
 		ssoURL:          getenv("SSO_URL", ""),
 		smtpURL:         getenv("SMTP_URL", ""),
 		smtpFrom:        getenv("SMTP_FROM", "forward-auth@"+authHost),
+		redisURL:        getenv("REDIS_URL", ""),
 		pasetoKey:       pasetoKey,
 		pasetoKeySet:    pasetoKeySet,
 		oldPasetoKeys:   oldPasetoKeys,
@@ -574,6 +576,16 @@ func (c config) totpURI(user, secret string) string {
 
 // --- brute-force throttle ---------------------------------------------------
 
+// ThrottleBackend is the brute-force throttle contract. The default is the
+// in-memory throttle below (with JSON file persistence); a Redis backend
+// (redis.go) takes over when REDIS_URL is set.
+type ThrottleBackend interface {
+	locked(ip string) (bool, time.Duration)
+	fail(ip string) (lockedNow bool)
+	reset(ip string)
+	snapshot() []lockedIP
+}
+
 type entry struct {
 	fails     int
 	lockUntil time.Time
@@ -748,10 +760,10 @@ func min(a, b int) int {
 type server struct {
 	cfg          config
 	log          *slog.Logger
-	tr           *throttle
+	tr           ThrottleBackend
 	aud          *auditor
 	users        *userStore
-	reg          *sessionRegistry
+	reg          SessionBackend
 	ntf          *notifier
 	wa           *webauthn.WebAuthn
 	ceremonies   *ceremonyStore
@@ -812,7 +824,7 @@ func normalizeHost(raw string) string {
 }
 
 func (c config) safeRedirect(raw string) string {
-	fallback := "https://" + c.authHost + "/_auth/ok"
+	fallback := "https://" + c.authHost + "/auth/app"
 	if raw == "" {
 		return fallback
 	}
@@ -1002,6 +1014,57 @@ func pendingRedirect(cl sessionClaims, authHost string) string {
 	return ""
 }
 
+// --- risk-based authentication (roadmap Step 24) ------------------------------
+//
+// riskScore measures how unusual a successful password authentication is for
+// this user, based on their persisted login history:
+//
+//	unseen /24 (IPv4) or /64 (IPv6) subnet → 40
+//	unseen user-agent                      → 30
+//	unseen hour-of-day (needs ≥5 samples)  → 20
+//
+// Above 50, device trust is overridden and TOTP is demanded anyway.
+
+func subnetMask(ip string) string {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return ""
+	}
+	if v4 := parsed.To4(); v4 != nil {
+		return v4.Mask(net.CIDRMask(24, 32)).String()
+	}
+	return parsed.Mask(net.CIDRMask(64, 128)).String()
+}
+
+func riskScore(u *User, ip, ua string, now time.Time) int {
+	if len(u.History) == 0 {
+		return 0 // no baseline yet — first logins can't be anomalous
+	}
+	sub := subnetMask(ip)
+	subnetSeen, uaSeen := false, false
+	hours := map[int]bool{}
+	for _, h := range u.History {
+		if subnetMask(h.IP) == sub {
+			subnetSeen = true
+		}
+		if h.UA == ua {
+			uaSeen = true
+		}
+		hours[h.Time.Hour()] = true
+	}
+	score := 0
+	if !subnetSeen {
+		score += 40
+	}
+	if !uaSeen {
+		score += 30
+	}
+	if len(u.History) >= 5 && !hours[now.Hour()] {
+		score += 20
+	}
+	return score
+}
+
 // --- handlers ---------------------------------------------------------------
 
 func (s *server) verify(w http.ResponseWriter, r *http.Request) {
@@ -1106,7 +1169,14 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, ip, rd, "disabled_user", n)
 		return
 	}
-	if u.TOTPSecret != "" && !s.trustedDevice(r, username) {
+	trusted := s.trustedDevice(r, username)
+	if trusted && u.TOTPSecret != "" && riskScore(u, ip, r.UserAgent(), time.Now()) > 50 {
+		// anomalous sign-in: device trust alone is not enough — demand the
+		// second factor anyway
+		s.audit("rba_totp_required", ip, username, r)
+		trusted = false
+	}
+	if u.TOTPSecret != "" && !trusted {
 		// password OK — the second factor happens on the verify page,
 		// gated by a short-lived pending cookie
 		s.setPendingCookie(w, username, r.PostForm.Get("remember") == "1")
@@ -1129,6 +1199,10 @@ func (s *server) finishLogin(w http.ResponseWriter, r *http.Request, u *User, ip
 	if err := s.users.mutate(u.Username, func(u *User) bool {
 		u.LastLogin = time.Now().UTC()
 		u.LastIP = ip
+		u.History = append(u.History, loginRecord{Time: time.Now().UTC(), IP: ip, UA: r.UserAgent()})
+		if len(u.History) > 25 {
+			u.History = u.History[len(u.History)-25:]
+		}
 		return true
 	}); err != nil {
 		s.log.Error("persist last login", "user", u.Username, "error", err)
@@ -1541,23 +1615,42 @@ func main() {
 		log.Warn("FIRST_RUN is deprecated and ignored — TOTP enrollment now happens per-user at /_auth/enroll after login")
 	}
 
+	// Backends: in-memory + JSON file persistence by default; Redis when
+	// REDIS_URL is set (roadmap Step 23).
+	throttlePath := filepath.Join(filepath.Dir(cfg.usersFile), "throttle.json")
+	var tb ThrottleBackend
+	var sb SessionBackend
+	if cfg.redisURL != "" {
+		rb, err := newRedisBackends(cfg.redisURL, cfg, log)
+		if err != nil {
+			// fail hard: silently dropping brute-force protection is worse
+			log.Error("cannot connect to Redis", "error", err)
+			os.Exit(1)
+		}
+		tb, sb = rb, rb
+		log.Info("using Redis throttle + session backends")
+	} else {
+		th := newThrottle(cfg)
+		if err := th.load(throttlePath); err != nil {
+			// losing lockout state on a corrupt file beats refusing to start
+			log.Error("cannot load throttle state — starting fresh", "path", throttlePath, "error", err)
+		}
+		sr := newSessionRegistry(cfg.ttl, filepath.Join(filepath.Dir(cfg.usersFile), "revoked-sessions.json"))
+		if err := sr.load(); err != nil {
+			log.Error("cannot load session revocations", "error", err)
+			os.Exit(1)
+		}
+		tb, sb = th, sr
+	}
+
 	s := &server{
-		cfg: cfg, log: log, tr: newThrottle(cfg), aud: aud,
+		cfg: cfg, log: log, tr: tb, aud: aud,
 		users: users,
-		reg:   newSessionRegistry(cfg.ttl, filepath.Join(filepath.Dir(cfg.usersFile), "revoked-sessions.json")),
+		reg:   sb,
 		ntf:   newNotifier(cfg.webhookURL, cfg.webhookProvider, log),
 
 		startedAt:    time.Now(),
 		recoverLimit: rateLimiter{max: 3, window: time.Hour},
-	}
-	if err := s.reg.load(); err != nil {
-		log.Error("cannot load session revocations", "error", err)
-		os.Exit(1)
-	}
-	throttlePath := filepath.Join(filepath.Dir(cfg.usersFile), "throttle.json")
-	if err := s.tr.load(throttlePath); err != nil {
-		// losing lockout state on a corrupt file beats refusing to start
-		log.Error("cannot load throttle state — starting fresh", "path", throttlePath, "error", err)
 	}
 	wa, err := webauthn.New(&webauthn.Config{
 		RPDisplayName: cfg.totpIssuer,
@@ -1661,8 +1754,10 @@ func main() {
 		if err := srv.Shutdown(ctx); err != nil {
 			log.Error("shutdown", "error", err)
 		}
-		if err := s.tr.persist(throttlePath); err != nil {
-			log.Error("persist throttle state", "error", err)
+		if th, ok := s.tr.(*throttle); ok {
+			if err := th.persist(throttlePath); err != nil {
+				log.Error("persist throttle state", "error", err)
+			}
 		}
 		if aud.file != nil {
 			if err := aud.file.Close(); err != nil {

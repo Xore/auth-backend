@@ -612,6 +612,7 @@ func TestIdleSessionExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", "raw", slog.Default())}
+	reg := s.reg.(*sessionRegistry)
 	u := st.get("admin")
 	mkReq := func(sid string) *http.Request {
 		cl := sessionClaims{user: u.Username, gen: u.Gen, sid: sid, exp: time.Now().Add(time.Hour).Unix()}
@@ -625,27 +626,27 @@ func TestIdleSessionExpiry(t *testing.T) {
 		t.Fatal("session without registry entry rejected")
 	}
 	// recently seen → allowed
-	s.reg.touch("sid-active", u.Username, "127.0.0.1", "test")
+	reg.touch("sid-active", u.Username, "127.0.0.1", "test")
 	if _, _, ok := s.session(httptest.NewRecorder(), mkReq("sid-active")); !ok {
 		t.Fatal("active session rejected")
 	}
 	// last seen beyond the idle timeout → rejected and revoked
-	s.reg.touch("sid-stale", u.Username, "127.0.0.1", "test")
-	s.reg.mu.Lock()
-	s.reg.m["sid-stale"].LastSeen = time.Now().Add(-2 * time.Hour)
-	s.reg.mu.Unlock()
+	reg.touch("sid-stale", u.Username, "127.0.0.1", "test")
+	reg.mu.Lock()
+	reg.m["sid-stale"].LastSeen = time.Now().Add(-2 * time.Hour)
+	reg.mu.Unlock()
 	if _, _, ok := s.session(httptest.NewRecorder(), mkReq("sid-stale")); ok {
 		t.Fatal("idle session accepted")
 	}
-	if !s.reg.isRevoked("sid-stale") {
+	if !reg.isRevoked("sid-stale") {
 		t.Fatal("idle session not revoked")
 	}
 	// idleTimeout == 0 disables the check entirely
 	s.cfg.idleTimeout = 0
-	s.reg.touch("sid-old", u.Username, "127.0.0.1", "test")
-	s.reg.mu.Lock()
-	s.reg.m["sid-old"].LastSeen = time.Now().Add(-720 * time.Hour)
-	s.reg.mu.Unlock()
+	reg.touch("sid-old", u.Username, "127.0.0.1", "test")
+	reg.mu.Lock()
+	reg.m["sid-old"].LastSeen = time.Now().Add(-720 * time.Hour)
+	reg.mu.Unlock()
 	if _, _, ok := s.session(httptest.NewRecorder(), mkReq("sid-old")); !ok {
 		t.Fatal("idle check not disabled by IDLE_TIMEOUT_MINUTES=0")
 	}
@@ -710,6 +711,84 @@ func TestBackupCodeRegeneration(t *testing.T) {
 	s.handleBackupCodes(w, r)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("bad form token: expected 403, got %d", w.Code)
+	}
+}
+
+func TestRiskScore(t *testing.T) {
+	ua := "Mozilla/5.0 (X11; Linux x86_64) Firefox/131"
+	u := &User{}
+	for i := 0; i < 6; i++ {
+		u.History = append(u.History, loginRecord{
+			Time: time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC),
+			IP:   fmt.Sprintf("10.0.0.%d", i+1), UA: ua,
+		})
+	}
+	now := time.Date(2026, 7, 27, 10, 30, 0, 0, time.UTC)
+	if s := riskScore(u, "10.0.0.99", ua, now); s != 0 {
+		t.Fatalf("familiar login scored %d, want 0", s)
+	}
+	if s := riskScore(u, "192.0.2.9", ua, now); s != 40 {
+		t.Fatalf("new subnet: got %d, want 40", s)
+	}
+	if s := riskScore(u, "10.0.0.99", "curl/8.5", now); s != 30 {
+		t.Fatalf("new UA: got %d, want 30", s)
+	}
+	if s := riskScore(u, "192.0.2.9", "curl/8.5", now); s != 70 {
+		t.Fatalf("new subnet+UA: got %d, want 70", s)
+	}
+	if s := riskScore(u, "10.0.0.99", ua, time.Date(2026, 7, 27, 3, 0, 0, 0, time.UTC)); s != 20 {
+		t.Fatalf("unusual hour: got %d, want 20", s)
+	}
+	if s := riskScore(&User{}, "192.0.2.9", "curl/8.5", now); s != 0 {
+		t.Fatalf("no history: got %d, want 0", s)
+	}
+}
+
+func TestRBAForcesTOTPDespiteTrustedDevice(t *testing.T) {
+	c := testConfig(t)
+	c.trustDevDays = 30
+	path := filepath.Join(t.TempDir(), "users.json")
+	st := newUserStore(path)
+	if _, err := st.bootstrap("admin", "a-long-test-password", "JBSWY3DPEHPK3PXP"); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", "raw", slog.Default())}
+	// baseline history: one subnet, one UA, including the current hour
+	if err := st.mutate("admin", func(u *User) bool {
+		for i := 0; i < 6; i++ {
+			u.History = append(u.History, loginRecord{
+				Time: time.Now().Add(-time.Duration(i) * time.Hour),
+				IP:   fmt.Sprintf("10.0.0.%d", i+1), UA: "old-ua",
+			})
+		}
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	login := func(ua string) *httptest.ResponseRecorder {
+		f := url.Values{}
+		f.Set("ft", c.issueForm())
+		f.Set("username", "admin")
+		f.Set("password", "a-long-test-password")
+		r := httptest.NewRequest("POST", "http://auth/_auth/login", strings.NewReader(f.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("User-Agent", ua)
+		r.AddCookie(&http.Cookie{Name: c.cookieName + "_dev", Value: c.issueDevice("admin", st.get("admin").DeviceGen)})
+		w := httptest.NewRecorder()
+		s.login(w, r)
+		return w
+	}
+
+	// test requests come from 192.0.2.1 — an unseen subnet (+40).
+	// anomalous login first: it never reaches finishLogin, so the history
+	// stays untouched for the familiar case below
+	w := login("brand-new-ua")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `action="/_auth/totp"`) {
+		t.Fatalf("anomalous login (new subnet + new UA = 70) should demand TOTP despite trusted device, got %d", w.Code)
+	}
+	if w := login("old-ua"); w.Code != http.StatusFound {
+		t.Fatalf("familiar UA on trusted device should skip TOTP (302), got %d", w.Code)
 	}
 }
 

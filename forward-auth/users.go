@@ -46,22 +46,31 @@ const (
 )
 
 type User struct {
-	Username      string    `json:"username"`
-	Hash          string    `json:"hash"`
-	Role          string    `json:"role"`
-	Disabled      bool      `json:"disabled,omitempty"`
-	MustChange    bool      `json:"must_change,omitempty"`
-	TOTPSecret    string    `json:"totp_secret,omitempty"`
-	PendingTOTP   string    `json:"pending_totp,omitempty"`
-	BackupCodes   []string  `json:"backup_codes,omitempty"` // sha256 hex, removed on use
-	Gen           int       `json:"gen"`                    // bump to kill all sessions
-	AllowedHosts  []string  `json:"allowed_hosts,omitempty"`
-	Created       time.Time `json:"created"`
-	LastLogin     time.Time `json:"last_login,omitempty"`
-	LastIP        string    `json:"last_ip,omitempty"`
-	PasskeyUserID []byte    `json:"webauthn_id,omitempty"`
-	Passkeys      []Passkey `json:"passkeys,omitempty"`
-	DeviceGen     int       `json:"device_gen,omitempty"`
+	Username      string        `json:"username"`
+	Hash          string        `json:"hash"`
+	Role          string        `json:"role"`
+	Disabled      bool          `json:"disabled,omitempty"`
+	MustChange    bool          `json:"must_change,omitempty"`
+	TOTPSecret    string        `json:"totp_secret,omitempty"`
+	PendingTOTP   string        `json:"pending_totp,omitempty"`
+	BackupCodes   []string      `json:"backup_codes,omitempty"` // sha256 hex, removed on use
+	Gen           int           `json:"gen"`                    // bump to kill all sessions
+	AllowedHosts  []string      `json:"allowed_hosts,omitempty"`
+	Created       time.Time     `json:"created"`
+	LastLogin     time.Time     `json:"last_login,omitempty"`
+	LastIP        string        `json:"last_ip,omitempty"`
+	PasskeyUserID []byte        `json:"webauthn_id,omitempty"`
+	Passkeys      []Passkey     `json:"passkeys,omitempty"`
+	DeviceGen     int           `json:"device_gen,omitempty"`
+	History       []loginRecord `json:"history,omitempty"` // recent successful logins, for risk scoring
+}
+
+// loginRecord is one successful sign-in, kept (capped) for risk-based
+// authentication scoring (roadmap Step 24).
+type loginRecord struct {
+	Time time.Time `json:"time"`
+	IP   string    `json:"ip"`
+	UA   string    `json:"ua"`
 }
 
 type Passkey struct {

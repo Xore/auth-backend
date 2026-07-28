@@ -18,6 +18,19 @@ import (
 	"time"
 )
 
+// SessionBackend is the session-registry contract (roadmap Step 23). The
+// default is the in-memory registry below (revocations persisted to JSON);
+// a Redis backend (redis.go) takes over when REDIS_URL is set.
+type SessionBackend interface {
+	touch(sid, user, ip, ua string)
+	revoke(sid string) error
+	isRevoked(sid string) bool
+	list() []sessionInfo
+	active() int
+	forUser(username string) []sessionInfo
+	lastActive(sid string) time.Time
+}
+
 type sessionInfo struct {
 	SID      string    `json:"sid"`
 	User     string    `json:"user"`

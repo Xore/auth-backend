@@ -74,6 +74,9 @@ Steps in the same phase can be parallelised if there are no `Blocked by` depende
 | Steps 18–20 — mTLS session binding | ⏭️ skipped (2026-07-28) | **Owner decision: mTLS client certs not wanted** — Phase 4 marked optional; criterion 7 void |
 | Deploy — VPS production | ✅ done (2026-07-28) | Live at auth.xore.rocks; PASETO cookies verified; fixed container OOM (Argon2id 64 MiB vs 32M limit → 256M + `GOMEMLIMIT`) in repo and on VPS |
 | Step 21 — Email self-service recovery | ✅ done (2026-07-28) | `/_auth/recover` (request + reset), HMAC token with password-hash fingerprint → single-use by construction, 15-min TTL, 3/hour per IP, `SMTP_URL` (`smtp://`+STARTTLS / `smtps://`), breach-list check on reset, generic anti-enumeration responses, "forgot password?" link when enabled |
+| Step 23 — Redis backends | ✅ done (2026-07-28) | `ThrottleBackend`/`SessionBackend` interfaces; memory+JSON default unchanged; `redisBackends` (go-redis/v9) for both when `REDIS_URL` set; fail-open on Redis errors except `revoke()`; startup fails if Redis unreachable; miniredis tests |
+| Step 24 — Risk-based authentication | ✅ done (2026-07-28) | Login history (25 records) in user store; score = unseen subnet /24-/64 (40) + unseen UA (30) + unseen hour w/ ≥5 samples (20); score > 50 overrides trusted device → TOTP page, `rba_totp_required` audit |
+| Fix — modal click-through + post-login landing | ✅ done (2026-07-28) | Closed `.modal-backdrop`/`.modal` swallowed all clicks (invisible overlay) → `pointer-events`/`display:none` when closed; post-login fallback redirect is now `/auth/app` (was old `/_auth/ok` page) |
 
 **Step 5b deviation notes (approved design):**
 - Login is a **two-step UI** (username → password/passkey, client-side) followed by a
