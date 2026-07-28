@@ -61,7 +61,7 @@ func (rl *rateLimiter) allow(key string) bool {
 // recoveryFP fingerprints the current password hash. After a successful
 // reset the hash changes and every outstanding token becomes invalid.
 func (c config) recoveryFP(u *User) string {
-	return c.mac("recfp|"+u.Username+"|"+u.Hash)[:16]
+	return c.mac("recfp|" + u.Username + "|" + u.Hash)[:16]
 }
 
 func (c config) issueRecoveryToken(u *User) string {
