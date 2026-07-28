@@ -766,6 +766,7 @@ func min(a, b int) int {
 
 type server struct {
 	cfg          config
+	settings     *settingsStore
 	log          *slog.Logger
 	tr           ThrottleBackend
 	aud          *auditor
@@ -1656,6 +1657,12 @@ func main() {
 	}
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	settings, err := loadSettingsStore(settingsPath())
+	if err != nil {
+		log.Error("cannot read admin settings", "error", err)
+		os.Exit(1)
+	}
+	applySavedOverrides(settings)
 	cfg := loadConfig(log)
 	if err := cfg.validate(); err != nil {
 		log.Error("invalid configuration", "error", err)
@@ -1712,7 +1719,7 @@ func main() {
 	}
 
 	s := &server{
-		cfg: cfg, log: log, tr: tb, aud: aud,
+		cfg: cfg, settings: settings, log: log, tr: tb, aud: aud,
 		users: users,
 		reg:   sb,
 		ntf:   newNotifier(cfg.webhookURL, cfg.webhookProvider, log),
@@ -1753,6 +1760,7 @@ func main() {
 	mux.HandleFunc("/_auth/backup-codes", s.handleBackupCodes)
 	mux.HandleFunc("/_auth/recover", s.recover)
 	mux.HandleFunc("/_auth/passkeys", s.passkeyPage)
+	mux.HandleFunc("/_auth/passkeys/list", s.passkeyList)
 	mux.HandleFunc("/_auth/passkeys/register/begin", s.passkeyRegisterBegin)
 	mux.HandleFunc("/_auth/passkeys/register/finish", s.passkeyRegisterFinish)
 	mux.HandleFunc("/_auth/passkeys/delete", s.passkeyDelete)
@@ -1773,6 +1781,7 @@ func main() {
 	mux.HandleFunc("/_auth/admin/api/user", s.adminCreateUser)
 	mux.HandleFunc("/_auth/admin/api/action", s.adminAction)
 	mux.HandleFunc("/_auth/admin/api/system", s.handleAdminSystem)
+	mux.HandleFunc("/_auth/admin/api/settings", s.handleAdminSettings)
 	mux.HandleFunc("POST /_auth/admin/api/sessions/{sid}/revoke", s.adminRevokeSession)
 	mux.HandleFunc("/_auth/sessions/mine", s.handleMySessions)
 	mux.HandleFunc("/_auth/sessions/trusted", s.handleTrustedDevices)

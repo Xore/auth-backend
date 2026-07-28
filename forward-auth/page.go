@@ -40,6 +40,9 @@ type LoginPageData struct {
 	TrustDays      int
 	SSOEnabled     bool
 	RecoverEnabled bool // show the "forgot password?" link
+	BrandTitle     string
+	BrandSubtitle  string
+	BrandFooter    string
 }
 
 // VerifyPageData is passed to ui/verify.html (the post-password 2FA step).
@@ -51,6 +54,7 @@ type VerifyPageData struct {
 
 func (s *server) renderLogin(w http.ResponseWriter, rd, errMsg, nonce string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	title, subtitle, footer := s.settings.branding()
 	if err := loginTmpl.Execute(w, LoginPageData{
 		Nonce:          nonce,
 		FT:             s.cfg.issueForm(),
@@ -60,6 +64,9 @@ func (s *server) renderLogin(w http.ResponseWriter, rd, errMsg, nonce string) {
 		TrustDays:      s.cfg.trustDevDays,
 		SSOEnabled:     s.cfg.ssoURL != "",
 		RecoverEnabled: s.recoverEnabled(),
+		BrandTitle:     title,
+		BrandSubtitle:  subtitle,
+		BrandFooter:    footer,
 	}); err != nil {
 		s.log.Error("render login page", "error", err)
 	}

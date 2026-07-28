@@ -201,6 +201,14 @@ The initial admin is bootstrapped from `AUTH_USERNAME`/`AUTH_PASSWORD`
 only while the user store is empty; afterwards manage users in the admin
 UI at `https://<AUTH_HOST>/auth/app`.
 
+Administrators can edit login-page branding and stage supported application
+settings from **Administration → Configuration**. Branding applies
+immediately. Runtime, infrastructure and signing-key changes are persisted in
+`admin-settings.json` beside `users.json` and apply after a restart. Sensitive
+values are never returned to the browser; Docker `_FILE` secrets remain
+externally managed and read-only. Cookie and PASETO rotation actions generate a
+new key and retain the active key as the previous key for the transition.
+
 ## Environment variables
 
 | Variable | Default | Purpose |

@@ -7,12 +7,18 @@ package main
 
 import (
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -391,6 +397,240 @@ func (s *server) handleAdminSystem(w http.ResponseWriter, r *http.Request) {
 		AdminCount:   s.users.adminCount(),
 		StartedAt:    s.startedAt,
 	})
+}
+
+type adminConfigField struct {
+	Key               string `json:"key"`
+	Label             string `json:"label"`
+	Kind              string `json:"kind"`
+	Description       string `json:"description"`
+	Value             string `json:"value,omitempty"`
+	Sensitive         bool   `json:"sensitive"`
+	Configured        bool   `json:"configured"`
+	ExternallyManaged bool   `json:"externally_managed"`
+	Pending           bool   `json:"pending"`
+}
+
+type adminSettingsResponse struct {
+	BrandTitle    string             `json:"brand_title"`
+	BrandSubtitle string             `json:"brand_subtitle"`
+	BrandFooter   string             `json:"brand_footer"`
+	Fields        []adminConfigField `json:"fields"`
+	RestartNeeded bool               `json:"restart_needed"`
+}
+
+func (s *server) settingsResponse() adminSettingsResponse {
+	saved := s.settings.snapshot()
+	fields := make([]adminConfigField, 0, len(editableConfigFields))
+	restartNeeded := false
+	for _, spec := range sortedFieldSpecs() {
+		current := currentConfigValue(s.cfg, spec.Key)
+		staged, pending := saved.Overrides[spec.Key]
+		external := os.Getenv(spec.Key+"_FILE") != ""
+		if pending && staged == current {
+			pending = false
+		}
+		restartNeeded = restartNeeded || pending
+		value := current
+		if pending {
+			value = staged
+		}
+		if spec.Sensitive {
+			value = ""
+		}
+		fields = append(fields, adminConfigField{
+			Key: spec.Key, Label: spec.Label, Kind: spec.Kind,
+			Description: spec.Description, Value: value, Sensitive: spec.Sensitive,
+			Configured: current != "", ExternallyManaged: external, Pending: pending,
+		})
+	}
+	return adminSettingsResponse{
+		BrandTitle: saved.BrandTitle, BrandSubtitle: saved.BrandSubtitle,
+		BrandFooter: saved.BrandFooter, Fields: fields, RestartNeeded: restartNeeded,
+	}
+}
+
+// handleAdminSettings exposes redacted configuration metadata and persists
+// environment-compatible overrides. Branding applies immediately; service and
+// cryptographic settings are activated by a process restart.
+func (s *server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
+	_, actor, ok := s.adminGate(w, r, r.Method != http.MethodGet)
+	if !ok {
+		return
+	}
+	secHeaders(w, nonce())
+	if r.Method == http.MethodGet {
+		jsonOut(w, http.StatusOK, s.settingsResponse())
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		BrandTitle    *string           `json:"brand_title"`
+		BrandSubtitle *string           `json:"brand_subtitle"`
+		BrandFooter   *string           `json:"brand_footer"`
+		Updates       map[string]string `json:"updates"`
+		Rotate        string            `json:"rotate"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.maxBodyBytes)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		jsonErr(w, "invalid JSON")
+		return
+	}
+	next := s.settings.snapshot()
+	if req.BrandTitle != nil {
+		next.BrandTitle = strings.TrimSpace(*req.BrandTitle)
+		if next.BrandTitle == "" || len(next.BrandTitle) > 80 {
+			jsonErr(w, "title must contain 1 to 80 characters")
+			return
+		}
+	}
+	if req.BrandSubtitle != nil {
+		next.BrandSubtitle = strings.TrimSpace(*req.BrandSubtitle)
+		if len(next.BrandSubtitle) > 200 {
+			jsonErr(w, "subtitle must not exceed 200 characters")
+			return
+		}
+	}
+	if req.BrandFooter != nil {
+		next.BrandFooter = strings.TrimSpace(*req.BrandFooter)
+		if len(next.BrandFooter) > 200 {
+			jsonErr(w, "footer must not exceed 200 characters")
+			return
+		}
+	}
+	for key, value := range req.Updates {
+		spec, exists := editableConfigKeys[key]
+		if !exists {
+			jsonErr(w, "setting is not editable: "+key)
+			return
+		}
+		if os.Getenv(key+"_FILE") != "" {
+			jsonErr(w, key+" is managed by a secret file")
+			return
+		}
+		value = strings.TrimSpace(value)
+		if spec.Sensitive && value == "" {
+			continue
+		}
+		if spec.Kind == "bool" && value != "true" && value != "false" {
+			jsonErr(w, key+" must be true or false")
+			return
+		}
+		if spec.Kind == "number" {
+			n, err := strconv.Atoi(value)
+			if err != nil || n < 0 {
+				jsonErr(w, key+" must be a non-negative integer")
+				return
+			}
+			switch key {
+			case "SESSION_TTL_HOURS", "MAX_ATTEMPTS", "LOCKOUT_MINUTES", "FORM_TTL_MINUTES":
+				if n == 0 {
+					jsonErr(w, key+" must be positive")
+					return
+				}
+			case "AUDIT_RING":
+				if n < 1 || n > 100000 {
+					jsonErr(w, "AUDIT_RING must be between 1 and 100000")
+					return
+				}
+			case "MAX_BODY_KB":
+				if n < 1 || n > 10240 {
+					jsonErr(w, "MAX_BODY_KB must be between 1 and 10240")
+					return
+				}
+			}
+		}
+		if key == "AUTH_HOST" && (value == "" || normalizeHost(value) != strings.ToLower(value)) {
+			jsonErr(w, "AUTH_HOST must be a lowercase hostname without a scheme or port")
+			return
+		}
+		if key == "COOKIE_SECRET" && len(value) < 32 {
+			jsonErr(w, "COOKIE_SECRET must contain at least 32 characters")
+			return
+		}
+		if key == "PASETO_KEY" {
+			decoded, err := hex.DecodeString(value)
+			if err != nil || len(decoded) != 32 {
+				jsonErr(w, "PASETO_KEY must be exactly 64 hexadecimal characters")
+				return
+			}
+		}
+		if key == "TRUSTED_PROXIES" {
+			valid := 0
+			for _, part := range strings.Split(value, ",") {
+				if _, _, err := net.ParseCIDR(strings.TrimSpace(part)); err == nil {
+					valid++
+				}
+			}
+			if valid == 0 {
+				jsonErr(w, "TRUSTED_PROXIES must contain at least one valid CIDR")
+				return
+			}
+		}
+		if key == "SMTP_URL" && value != "" {
+			u, err := url.Parse(value)
+			if err != nil || (u.Scheme != "smtp" && u.Scheme != "smtps") || u.Hostname() == "" {
+				jsonErr(w, "SMTP_URL must be smtp:// or smtps:// with a host")
+				return
+			}
+		}
+		if key == "WEBHOOK_PROVIDER" {
+			switch value {
+			case "", "raw", "slack", "ntfy", "gotify":
+			default:
+				jsonErr(w, "WEBHOOK_PROVIDER must be raw, slack, ntfy or gotify")
+				return
+			}
+		}
+		next.Overrides[key] = value
+	}
+	effectiveInt := func(key string, current int) int {
+		if value, exists := next.Overrides[key]; exists {
+			return atoi(value, current)
+		}
+		return current
+	}
+	formTTLSeconds := effectiveInt("FORM_TTL_MINUTES", int(s.cfg.formTTL.Minutes())) * 60
+	minDwellSeconds := effectiveInt("MIN_DWELL_SECONDS", int(s.cfg.minDwell.Seconds()))
+	if formTTLSeconds <= minDwellSeconds {
+		jsonErr(w, "form token lifetime must exceed minimum login dwell")
+		return
+	}
+	if req.Rotate != "" {
+		key := strings.ToUpper(strings.TrimSpace(req.Rotate))
+		if key != "COOKIE_SECRET" && key != "PASETO_KEY" {
+			jsonErr(w, "only COOKIE_SECRET and PASETO_KEY support rotation")
+			return
+		}
+		if os.Getenv(key+"_FILE") != "" {
+			jsonErr(w, key+" is managed by a secret file")
+			return
+		}
+		generated, err := randomHex(32)
+		if err != nil {
+			http.Error(w, "could not generate key", http.StatusInternalServerError)
+			return
+		}
+		next.Overrides[key] = generated
+		if key == "COOKIE_SECRET" {
+			next.Overrides["COOKIE_SECRET_PREVIOUS"] = currentConfigValue(s.cfg, key)
+		} else {
+			next.Overrides["PASETO_KEY_PREVIOUS"] = currentConfigValue(s.cfg, key)
+		}
+	}
+	if err := s.settings.save(next); err != nil {
+		s.log.Error("persist admin settings", "error", err)
+		http.Error(w, "could not persist settings", http.StatusInternalServerError)
+		return
+	}
+	ip := s.clientIP(r)
+	s.audit("admin_settings_updated", ip, actor.Username, r)
+	jsonOut(w, http.StatusOK, s.settingsResponse())
 }
 
 func formatUptime(d time.Duration) string {

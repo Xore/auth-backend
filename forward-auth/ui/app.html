@@ -7,12 +7,10 @@
 <title>xore//auth — app</title>
 <link rel="stylesheet" href="/static/claude-theme.css">
 <style nonce="{{.Nonce}}">
-  .shell{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px}
-  .shell__who{font-size:12px;color:var(--text-secondary);letter-spacing:.06em;text-transform:uppercase}
-  .shell__who b{color:var(--text-primary);font-weight:600}
-  .shell__links{display:flex;gap:16px;font-size:12px}
-  .shell__links a{color:var(--text-muted);text-decoration:none}
-  .shell__links a:hover{color:var(--text-primary)}
+  body{overflow:hidden}
+  .modal.modal--permanent{display:flex;opacity:1;visibility:visible;inset:0;width:100vw;height:100dvh;
+    max-width:none;max-height:none;transform:none;border:0;border-radius:0}
+  .modal.modal--permanent.open{transform:none}
   a.btn{text-decoration:none}
   .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
   .stat-grid .card{padding:16px;margin-bottom:0}
@@ -25,6 +23,30 @@
   .filter-row select.form-input{flex:0 0 auto}
   .newuser{display:grid;grid-template-columns:1fr 110px 1fr auto;gap:10px;align-items:end}
   .row-actions{display:flex;gap:6px;flex-wrap:wrap}
+  .action-menu{position:relative;display:inline-block}
+  .action-menu>summary{list-style:none;width:32px;height:32px;display:flex;align-items:center;justify-content:center;
+    border:1px solid var(--border-subtle);border-radius:var(--radius-md);cursor:pointer;color:var(--text-secondary);
+    font-size:20px;line-height:1;background:transparent}
+  .action-menu>summary::-webkit-details-marker{display:none}
+  .action-menu>summary:hover,.action-menu[open]>summary{background:var(--surface-2);color:var(--text-primary)}
+  .action-menu__popover{position:absolute;right:0;top:calc(100% + 6px);z-index:20;width:190px;padding:6px;
+    background:var(--surface-2);border:1px solid var(--border-strong);border-radius:var(--radius-md);
+    box-shadow:var(--shadow-modal)}
+  .action-menu__item{display:block;width:100%;padding:8px 10px;border:0;border-radius:6px;background:transparent;
+    color:var(--text-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer;white-space:nowrap}
+  .action-menu__item:hover{background:var(--surface-3)}
+  .action-menu__item--danger{color:var(--red);border-top:1px solid var(--border-subtle);border-radius:0;margin-top:4px;padding-top:10px}
+  .edit-dialog-backdrop{position:fixed;inset:0;z-index:300;display:none;align-items:center;justify-content:center;
+    padding:20px;background:rgba(0,0,0,.7);backdrop-filter:blur(3px)}
+  .edit-dialog-backdrop.open{display:flex}
+  .edit-dialog{width:min(520px,100%);background:var(--surface-1);border:1px solid var(--border-strong);
+    border-radius:var(--radius-lg);box-shadow:var(--shadow-modal);padding:24px}
+  .edit-dialog__title{font-size:18px;font-weight:600;margin:0 0 6px}
+  .edit-dialog__desc{font-size:12px;color:var(--text-secondary);line-height:1.5;margin:0 0 18px}
+  .edit-dialog__actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+  .danger-dialog__warning{padding:12px 14px;border:1px solid rgba(248,113,113,.35);border-radius:var(--radius-md);
+    background:var(--red-subtle);color:var(--text-primary);font-size:12px;line-height:1.55}
+  .danger-dialog__warning ul{margin:8px 0 0;padding-left:18px}
   #flash{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:200;display:none;
     background:var(--surface-0);border:1px solid var(--green);border-radius:var(--radius-md);
     padding:14px 20px;font-size:13px;color:var(--text-primary);box-shadow:var(--shadow-modal);
@@ -34,32 +56,37 @@
   .cell-mono{font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:11px}
   .cell-agent{font-size:11px;color:var(--text-muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .empty-row{color:var(--text-muted);font-size:12px}
+  .settings-grid{display:grid;grid-template-columns:minmax(220px,1fr) minmax(260px,1.4fr);gap:14px 18px;align-items:end}
+  .settings-field{min-width:0}
+  .settings-field .form-label{display:flex;justify-content:space-between;gap:8px}
+  .settings-field__meta{font-size:10px;color:var(--text-muted);font-family:'SF Mono',monospace}
+  .settings-field__desc{font-size:11px;color:var(--text-muted);line-height:1.4;margin-top:5px}
+  .settings-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:16px}
+  .restart-note{font-size:12px;color:var(--orange)}
+  .table-scroll{width:100%;overflow-x:auto}
+  .audit-table{table-layout:fixed;min-width:900px}
+  .audit-table th,.audit-table td{box-sizing:border-box}
+  .audit-table th:nth-child(1),.audit-table td:nth-child(1){width:150px}
+  .audit-table th:nth-child(2),.audit-table td:nth-child(2){width:160px}
+  .audit-table th:nth-child(3),.audit-table td:nth-child(3){width:130px}
+  .audit-table th:nth-child(4),.audit-table td:nth-child(4){width:120px}
+  .audit-table th:nth-child(5),.audit-table td:nth-child(5){width:170px}
+  .audit-table th:nth-child(6),.audit-table td:nth-child(6){width:auto}
+  .audit-table td:nth-child(2) .badge{white-space:normal;overflow-wrap:anywhere;line-height:1.35}
+  .audit-table .cell-agent{max-width:none;white-space:normal;overflow-wrap:anywhere}
+  .passkey-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 0;
+    border-bottom:1px solid var(--border-subtle)}
+  .passkey-row:last-child{border-bottom:0}
+  .passkey-row__name{font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:13px;
+    color:var(--text-primary);font-weight:600}
+  .passkey-row__meta{font-size:11px;color:var(--text-muted);margin-top:5px}
   @media(max-width:600px){.stat-grid{grid-template-columns:repeat(2,1fr)}.hide-sm{display:none}.newuser{grid-template-columns:1fr}}
+  @media(max-width:800px){.settings-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
   <div id="flash"></div>
-  <div class="shell">
-    <div class="shell__who">signed in as <b>{{.User}}</b></div>
-    <button class="btn btn-secondary" id="open-settings" aria-label="Settings">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="3"/>
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-      </svg>
-      Settings
-    </button>
-    <div class="shell__links">
-      <a href="/_auth/password">change password</a>
-      <a href="/_auth/logout">log out</a>
-    </div>
-  </div>
-
-  <!-- Backdrop -->
-  <div class="modal-backdrop" id="settings-backdrop" aria-hidden="true"></div>
-
-  <!-- Modal -->
-  <dialog class="modal" id="settings-modal"
+  <dialog class="modal modal--permanent" id="settings-modal"
           aria-modal="true" aria-labelledby="settings-title">
 
     <!-- Sidebar -->
@@ -77,15 +104,46 @@
 
     <!-- Content -->
     <div class="modal__content" id="settings-content">
-      <button class="modal__close" aria-label="Close settings">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-             stroke="currentColor" stroke-width="2.5" aria-hidden="true">
-          <path d="M18 6 6 18M6 6l12 12"/>
-        </svg>
-      </button>
       <!-- Panes rendered here by showPane() -->
     </div>
   </dialog>
+
+  <div class="edit-dialog-backdrop" id="edit-dialog-backdrop" aria-hidden="true" inert>
+    <section class="edit-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-dialog-title">
+      <h2 class="edit-dialog__title" id="edit-dialog-title">Edit user</h2>
+      <p class="edit-dialog__desc" id="edit-dialog-desc"></p>
+      <label class="form-label" id="edit-dialog-label" for="edit-dialog-input"></label>
+      <input class="form-input" id="edit-dialog-input" autocomplete="off">
+      <div class="edit-dialog__actions">
+        <button class="btn btn-secondary" id="edit-dialog-cancel" type="button">Cancel</button>
+        <button class="btn btn-primary" id="edit-dialog-save" type="button">Save</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="edit-dialog-backdrop" id="rotate-dialog-backdrop" aria-hidden="true" inert>
+    <section class="edit-dialog" role="alertdialog" aria-modal="true" aria-labelledby="rotate-dialog-title">
+      <h2 class="edit-dialog__title" id="rotate-dialog-title">Rotate signing key</h2>
+      <p class="edit-dialog__desc" id="rotate-dialog-desc"></p>
+      <div class="danger-dialog__warning" id="rotate-dialog-warning"></div>
+      <div class="edit-dialog__actions">
+        <button class="btn btn-secondary" id="rotate-dialog-cancel" type="button">Cancel</button>
+        <button class="btn btn-danger" id="rotate-dialog-confirm" type="button">Stage rotation</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="edit-dialog-backdrop" id="danger-dialog-backdrop" aria-hidden="true" inert>
+    <section class="edit-dialog" role="alertdialog" aria-modal="true" aria-labelledby="danger-dialog-title">
+      <h2 class="edit-dialog__title" id="danger-dialog-title">Confirm sensitive action</h2>
+      <p class="edit-dialog__desc" id="danger-dialog-desc"></p>
+      <div class="danger-dialog__warning" id="danger-dialog-warning"></div>
+      <div class="edit-dialog__actions">
+        <button class="btn btn-secondary" id="danger-dialog-cancel" type="button">Cancel</button>
+        <button class="btn btn-danger" id="danger-dialog-confirm" type="button">Confirm</button>
+      </div>
+    </section>
+  </div>
 
 <script nonce="{{.Nonce}}">
 var IS_ADMIN = {{.IsAdmin}};
@@ -95,8 +153,6 @@ var FORM_TOKEN = "{{.FT}}";
 
 var activePane = 'account';
 var state = {users: [], audit: {Recent: [], Total: 0, Success: 0, Failed: 0}, locked: [], sessions: []};
-
-var CLOSE_BTN_HTML = document.querySelector('.modal__close').outerHTML;
 
 // ── helpers ──────────────────────────────────────────────────────────────
 function esc(s) {
@@ -161,18 +217,73 @@ function act(action, extra) {
   return api('action', b).then(function (j) { fetchState(); return j; });
 }
 
-function confirmAct(msg, action, extra) {
-  if (confirm(msg)) act(action, extra).then(function (j) {
-    if (j.temp_password) flash('temp password for ' + esc(extra.username) + ': <b>' + esc(j.temp_password) + '</b><br>shown once — send it over a secure channel');
-  }).catch(function () { /* error already flashed by api() */ });
+var pendingDangerAction = null;
+
+function openDangerDialog(title, desc, warningHTML, confirmLabel, callback) {
+  pendingDangerAction = callback;
+  document.getElementById('danger-dialog-title').textContent = title;
+  document.getElementById('danger-dialog-desc').textContent = desc;
+  document.getElementById('danger-dialog-warning').innerHTML = warningHTML;
+  document.getElementById('danger-dialog-confirm').textContent = confirmLabel || 'Confirm';
+  var backdrop = document.getElementById('danger-dialog-backdrop');
+  backdrop.removeAttribute('inert');
+  backdrop.classList.add('open');
+  backdrop.setAttribute('aria-hidden', 'false');
+  document.getElementById('danger-dialog-confirm').focus();
 }
 
-function createUser() {
+function closeDangerDialog() {
+  document.getElementById('danger-dialog-backdrop').classList.remove('open');
+  document.getElementById('danger-dialog-backdrop').setAttribute('aria-hidden', 'true');
+  document.getElementById('danger-dialog-backdrop').setAttribute('inert', '');
+  pendingDangerAction = null;
+}
+
+function runDangerAction() {
+  var callback = pendingDangerAction;
+  if (!callback) return;
+  pendingDangerAction = null;
+  closeDangerDialog();
+  callback();
+}
+
+function confirmAct(msg, action, extra) {
+  var target = extra.username || extra.ip || 'this target';
+  var details = {
+    enable: ['Enable ' + target + '?', 'This restores the account’s ability to sign in immediately. Existing credentials become usable again.', 'Enable user'],
+    disable: ['Disable ' + target + '?', 'This blocks future sign-ins and immediately invalidates the user’s sessions and trusted devices.', 'Disable user'],
+    delete: ['Delete ' + target + '?', 'This permanently removes the account, password, two-factor enrollment, backup codes and passkeys. This cannot be undone.', 'Delete user'],
+    reset_password: ['Reset password for ' + target + '?', 'A new temporary password replaces the current password. All sessions and trusted devices are invalidated, and the user must change it at next sign-in.', 'Reset password'],
+    reset_totp: ['Reset two-factor authentication for ' + target + '?', 'The TOTP secret and every backup code are deleted. All sessions and trusted devices are invalidated. The user must enroll again when two-factor is required.', 'Reset two-factor'],
+    reset_passkeys: ['Remove all passkeys for ' + target + '?', 'Every registered passkey is deleted and all sessions and trusted devices are invalidated. Password sign-in remains available.', 'Reset passkeys'],
+    logout_user: ['Log ' + target + ' out everywhere?', 'Every current session and trusted-device token for this user becomes invalid immediately. The user must authenticate again on every device.', 'Log out everywhere'],
+    set_role: [(extra.role === 'admin' ? 'Promote ' : 'Demote ') + target + '?',
+      extra.role === 'admin' ? 'This grants full administrator access to users, audit logs, sessions and system configuration.' : 'This removes administrator access immediately. Existing authentication sessions remain signed in as a regular user.',
+      extra.role === 'admin' ? 'Promote to admin' : 'Demote to user'],
+    unlock: ['Unlock ' + target + '?', 'This clears accumulated login failures and the lockout immediately, allowing new authentication attempts from this IP address.', 'Unlock IP']
+  };
+  var copy = details[action] || [msg || 'Confirm action?', msg || 'This changes authentication state.', 'Confirm'];
+  openDangerDialog(copy[0], 'Review the consequences before continuing.',
+    '<b>This action takes effect immediately:</b><p style="margin:8px 0 0">' + esc(copy[1]) + '</p>',
+    copy[2], function () {
+      act(action, extra).then(function (j) {
+        if (j.temp_password) flash('temp password for ' + esc(extra.username) + ': <b>' + esc(j.temp_password) + '</b><br>shown once — send it over a secure channel');
+      }).catch(function () { /* error already flashed by api() */ });
+    });
+}
+
+function createUser(confirmed) {
   var name = document.getElementById('nu-name').value.trim();
   var role = document.getElementById('nu-role').value;
   var email = document.getElementById('nu-email').value.trim();
   var hosts = document.getElementById('nu-hosts').value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
   if (!name) { flash('username required', true); return; }
+  if (role === 'admin' && !confirmed) {
+    openDangerDialog('Create a new administrator?', 'The new account will receive full administrative access after completing its first sign-in.',
+      '<b>This grants sensitive access:</b><p style="margin:8px 0 0">The account can manage users, inspect audit and session data, alter system configuration, and rotate authentication keys.</p>',
+      'Create administrator', function () { createUser(true); });
+    return;
+  }
   api('user', {username: name, role: role, email: email, allowed_hosts: hosts}).then(function (j) {
     document.getElementById('nu-name').value = '';
     document.getElementById('nu-email').value = '';
@@ -183,21 +294,73 @@ function createUser() {
 }
 
 function editHosts(name, cur) {
-  var v = prompt('Allowed hosts for ' + name + ' (comma-separated, blank = all, *.dom ok):', cur);
-  if (v === null) return;
-  var hosts = v.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
-  act('set_hosts', {username: name, hosts: hosts});
+  openEditDialog('hosts', name, cur);
 }
 
 function editEmail(name, cur) {
-  var v = prompt('Recovery email for ' + name + ' (blank = none — disables email recovery):', cur);
-  if (v === null) return;
-  act('set_email', {username: name, email: v.trim()});
+  openEditDialog('email', name, cur);
+}
+
+var editDialogState = null;
+
+function openEditDialog(kind, name, current) {
+  editDialogState = {kind: kind, username: name};
+  var title = document.getElementById('edit-dialog-title');
+  var desc = document.getElementById('edit-dialog-desc');
+  var label = document.getElementById('edit-dialog-label');
+  var input = document.getElementById('edit-dialog-input');
+  if (kind === 'hosts') {
+    title.textContent = 'Edit allowed hosts';
+    desc.textContent = 'Update access for ' + name + '. Separate hosts with commas; wildcards such as *.example.com are supported. Leave blank to allow all hosts.';
+    label.textContent = 'Allowed hosts';
+    input.type = 'text';
+    input.placeholder = 'grafana.example.com, *.media.example.com';
+  } else {
+    title.textContent = 'Edit recovery email';
+    desc.textContent = 'Set the address used for password recovery for ' + name + '. Leave blank to disable email recovery.';
+    label.textContent = 'Recovery email';
+    input.type = 'email';
+    input.placeholder = 'user@example.com';
+  }
+  input.value = current || '';
+  var backdrop = document.getElementById('edit-dialog-backdrop');
+  backdrop.removeAttribute('inert');
+  backdrop.classList.add('open');
+  backdrop.setAttribute('aria-hidden', 'false');
+  setTimeout(function () { input.focus(); input.select(); }, 0);
+}
+
+function closeEditDialog() {
+  var backdrop = document.getElementById('edit-dialog-backdrop');
+  backdrop.classList.remove('open');
+  backdrop.setAttribute('aria-hidden', 'true');
+  backdrop.setAttribute('inert', '');
+  editDialogState = null;
+}
+
+function saveEditDialog() {
+  if (!editDialogState) return;
+  var input = document.getElementById('edit-dialog-input');
+  var value = input.value.trim();
+  if (editDialogState.kind === 'email' && value && !input.checkValidity()) {
+    input.reportValidity();
+    return;
+  }
+  var request = editDialogState.kind === 'hosts'
+    ? {username: editDialogState.username, hosts: value.split(',').map(function (s) { return s.trim(); }).filter(Boolean)}
+    : {username: editDialogState.username, email: value};
+  var action = editDialogState.kind === 'hosts' ? 'set_hosts' : 'set_email';
+  var user = editDialogState.username;
+  act(action, request).then(function () {
+    closeEditDialog();
+    flash((action === 'set_hosts' ? 'Allowed hosts' : 'Recovery email') + ' updated for <b>' + esc(user) + '</b>.');
+  });
 }
 
 // ── sidebar nav ──────────────────────────────────────────────────────────
 var SETTINGS_NAV = [
   {id: 'account',  label: 'Account',  icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></svg>'},
+  {id: 'passkeys', label: 'Passkeys', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M11 12l8-8M16 7l2 2M14 9l2 2"/></svg>'},
   {id: 'privacy',  label: 'Privacy',  icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v5c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-3z"/></svg>'},
   {id: 'sessions', label: 'Sessions', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>'}
 ];
@@ -205,6 +368,7 @@ var ADMIN_NAV = [
   {id: 'admin-users',    label: 'Users',           icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.3 2.9-5.5 6.5-5.5s6.5 2.2 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M17.8 15.3c2.3.7 3.7 2.2 3.7 4.7"/></svg>'},
   {id: 'admin-logs',     label: 'Audit Log',       icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>'},
   {id: 'admin-sessions', label: 'Active Sessions', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>'},
+  {id: 'admin-settings', label: 'Configuration', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h7M15 18h5"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="13" cy="18" r="2"/></svg>'},
   {id: 'admin-system',   label: 'System',          icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>'}
 ];
 
@@ -263,9 +427,9 @@ var PANE_TEMPLATES = {
       '<div class="card__row">' +
         '<div><div class="card__label">Regenerate backup codes</div>' +
         '<div class="card__value">Issues 8 new recovery codes — invalidates the old ones and all trusted devices.</div></div>' +
-        '<form method="post" action="/_auth/backup-codes">' +
+        '<form method="post" action="/_auth/backup-codes" id="backup-codes-form">' +
         '<input type="hidden" name="ft" value="' + FORM_TOKEN + '">' +
-        '<button type="submit" class="btn btn-secondary btn-sm">Regenerate</button></form>' +
+        '<button type="button" class="btn btn-secondary btn-sm" id="regenerate-backup-codes">Regenerate</button></form>' +
       '</div>' +
     '</div>' +
     '<h3 class="pane__h3">Trusted devices</h3>' +
@@ -274,6 +438,23 @@ var PANE_TEMPLATES = {
       '<thead><tr><th>Device</th><th>Added</th><th></th></tr></thead>' +
       '<tbody id="trusted-devices-body"></tbody>' +
     '</table>',
+
+  'passkeys':
+    '<h2 id="settings-title">Passkeys</h2>' +
+    '<p class="pane__desc">Use your phone, computer, password manager, or hardware security key for phishing-resistant sign-in.</p>' +
+    '<div class="card">' +
+      '<div class="card__title">Your passkeys</div>' +
+      '<div id="passkey-list"><div class="empty-row">Loading passkeys…</div></div>' +
+    '</div>' +
+    '<div class="card">' +
+      '<div class="card__title">Add a passkey</div>' +
+      '<p class="pane__desc">Choose a name that helps you recognize this device later.</p>' +
+      '<label class="form-label" for="passkey-name">Passkey name</label>' +
+      '<input class="form-input" id="passkey-name" maxlength="64" placeholder="MacBook Touch ID" autocomplete="off">' +
+      '<div class="settings-actions">' +
+        '<button class="btn btn-primary" id="add-passkey" type="button">Add passkey</button>' +
+      '</div>' +
+    '</div>',
 
   'privacy':
     '<h2 id="settings-title">Privacy</h2>' +
@@ -351,11 +532,11 @@ var PANE_TEMPLATES = {
           '<option value="enroll">enrollment</option>' +
         '</select>' +
       '</div>' +
-      '<table class="data-table">' +
+      '<div class="table-scroll"><table class="data-table audit-table">' +
         '<thead><tr><th>Time</th><th>Event</th><th>IP</th><th>User</th>' +
         '<th class="hide-sm">Host</th><th class="hide-sm">Agent</th></tr></thead>' +
         '<tbody id="admin-logs-body"></tbody>' +
-      '</table>' +
+      '</table></div>' +
     '</div>',
 
   'admin-sessions':
@@ -368,6 +549,23 @@ var PANE_TEMPLATES = {
         '<tbody id="admin-sessions-body"></tbody>' +
       '</table>' +
     '</div>',
+
+  'admin-settings':
+    '<h2 id="settings-title">Configuration</h2>' +
+    '<p class="pane__desc">Branding changes apply immediately. Runtime and infrastructure settings are staged for the next restart. Secret values are never displayed.</p>' +
+    '<div class="card"><div class="card__title">Login page branding</div>' +
+      '<div class="settings-grid" style="margin-top:14px">' +
+        '<div class="settings-field"><label class="form-label" for="brand-title">Title</label><input class="form-input" id="brand-title" maxlength="80"></div>' +
+        '<div class="settings-field"><label class="form-label" for="brand-subtitle">Subtitle</label><input class="form-input" id="brand-subtitle" maxlength="200"></div>' +
+        '<div class="settings-field"><label class="form-label" for="brand-footer">Footer</label><input class="form-input" id="brand-footer" maxlength="200"></div>' +
+      '</div></div>' +
+    '<div class="card"><div class="card__title">Application settings</div>' +
+      '<div class="card__desc">Values managed through Docker secret files are read-only here.</div>' +
+      '<div class="settings-grid" id="config-fields"></div>' +
+      '<div class="settings-actions"><button class="btn btn-primary" id="save-settings">Save settings</button>' +
+      '<button class="btn btn-danger" data-rotate-key="COOKIE_SECRET">Rotate cookie key</button>' +
+      '<button class="btn btn-danger" data-rotate-key="PASETO_KEY">Rotate session key</button>' +
+      '<span class="restart-note" id="restart-note"></span></div></div>',
 
   'admin-system':
     '<h2 id="settings-title">System</h2>' +
@@ -467,9 +665,129 @@ function loadSystem() {
     .catch(function (e) { /* keep placeholders */ });
 }
 
+var configSettings = null;
+
+function renderConfigSettings(info) {
+  configSettings = info;
+  var el;
+  if ((el = document.getElementById('brand-title'))) el.value = info.brand_title || '';
+  if ((el = document.getElementById('brand-subtitle'))) el.value = info.brand_subtitle || '';
+  if ((el = document.getElementById('brand-footer'))) el.value = info.brand_footer || '';
+  var fields = document.getElementById('config-fields');
+  if (!fields) return;
+  fields.innerHTML = (info.fields || []).map(function (f) {
+    var disabled = f.externally_managed ? ' disabled' : '';
+    var pending = f.pending ? ' <span class="badge badge--orange">pending</span>' : '';
+    var managed = f.externally_managed ? ' <span class="badge badge--muted">secret file</span>' : '';
+    var status = pending + managed;
+    var control;
+    if (f.kind === 'bool') {
+      control = '<select class="form-input" data-config-key="' + esc(f.key) + '"' + disabled + '>' +
+        '<option value="true"' + (f.value === 'true' ? ' selected' : '') + '>true</option>' +
+        '<option value="false"' + (f.value === 'false' ? ' selected' : '') + '>false</option></select>';
+    } else {
+      var type = f.kind === 'number' ? 'number' : (f.sensitive ? 'password' : 'text');
+      var value = f.sensitive ? '' : ' value="' + esc(f.value || '') + '"';
+      var placeholder = f.sensitive && f.configured ? ' placeholder="configured — enter to replace"' : '';
+      control = '<input class="form-input" type="' + type + '" data-config-key="' + esc(f.key) + '"' +
+        value + placeholder + disabled + '>';
+    }
+    return '<div class="settings-field"><label class="form-label"><span>' + esc(f.label) + status +
+      '</span><span class="settings-field__meta">' + esc(f.key) + '</span></label>' + control +
+      '<div class="settings-field__desc">' + esc(f.description) + '</div></div>';
+  }).join('');
+  if ((el = document.getElementById('restart-note'))) {
+    el.textContent = info.restart_needed ? 'Restart required to activate staged settings.' : '';
+  }
+}
+
+function loadConfigSettings() {
+  fetch('/_auth/admin/api/settings')
+    .then(function (r) { if (!r.ok) throw 'http ' + r.status; return r.json(); })
+    .then(renderConfigSettings)
+    .catch(function () { flash('Could not load configuration.', true); });
+}
+
+function confirmSettingsSave() {
+  openDangerDialog('Save system configuration?',
+    'Branding updates apply immediately. Application and infrastructure changes are staged for the next service restart.',
+    '<b>Before continuing:</b><ul>' +
+      '<li>Invalid host, storage, proxy, mail or backend values can prevent the service from starting or accepting sign-ins.</li>' +
+      '<li>Restart every replica with the same persisted settings to avoid inconsistent authentication.</li>' +
+      '<li>Secret fields left blank are unchanged; entered secret values replace the staged value.</li>' +
+      '<li>Keep environment and Docker secret configuration documented so the change can be rolled back.</li></ul>',
+    'Save configuration', saveConfigSettings);
+}
+
+function saveConfigSettings() {
+  var updates = {};
+  document.querySelectorAll('[data-config-key]').forEach(function (input) {
+    if (!input.disabled) updates[input.getAttribute('data-config-key')] = input.value;
+  });
+  api('settings', {
+    brand_title: document.getElementById('brand-title').value,
+    brand_subtitle: document.getElementById('brand-subtitle').value,
+    brand_footer: document.getElementById('brand-footer').value,
+    updates: updates
+  }).then(function (info) {
+    renderConfigSettings(info);
+    flash('Settings saved. Branding is live; staged configuration activates after restart.');
+  });
+}
+
+var pendingRotationKey = '';
+
+function rotateConfigKey(key) {
+  pendingRotationKey = key;
+  var isCookie = key === 'COOKIE_SECRET';
+  document.getElementById('rotate-dialog-title').textContent =
+    isCookie ? 'Rotate cookie and form signing key?' : 'Rotate session encryption key?';
+  document.getElementById('rotate-dialog-desc').textContent =
+    'This stages a cryptographically random replacement. Nothing changes until the service restarts.';
+  document.getElementById('rotate-dialog-warning').innerHTML = isCookie
+    ? '<b>After confirmation:</b><ul>' +
+      '<li>The active COOKIE_SECRET is retained as COOKIE_SECRET_PREVIOUS.</li>' +
+      '<li>Existing encrypted sessions remain valid, but trusted-device, form and recovery tokens transition to the new signing key.</li>' +
+      '<li>Every replica must restart with the same staged settings or users may see inconsistent authentication.</li>' +
+      '<li>Removing the previous key before the transition finishes invalidates outstanding signed tokens.</li></ul>'
+    : '<b>After confirmation:</b><ul>' +
+      '<li>The active PASETO key is retained as PASETO_KEY_PREVIOUS.</li>' +
+      '<li>Existing sessions can be read with the previous key and are re-issued under the new key when used.</li>' +
+      '<li>Every replica must restart with the same staged keys. A mismatched replica can reject valid sessions.</li>' +
+      '<li>Removing the previous key before the longest session lifetime expires forces affected users to sign in again.</li></ul>';
+  var backdrop = document.getElementById('rotate-dialog-backdrop');
+  backdrop.removeAttribute('inert');
+  backdrop.classList.add('open');
+  backdrop.setAttribute('aria-hidden', 'false');
+  document.getElementById('rotate-dialog-confirm').focus();
+}
+
+function closeRotateDialog() {
+  document.getElementById('rotate-dialog-backdrop').classList.remove('open');
+  document.getElementById('rotate-dialog-backdrop').setAttribute('aria-hidden', 'true');
+  document.getElementById('rotate-dialog-backdrop').setAttribute('inert', '');
+  pendingRotationKey = '';
+}
+
+function confirmConfigRotation() {
+  var key = pendingRotationKey;
+  if (!key) return;
+  document.getElementById('rotate-dialog-confirm').disabled = true;
+  api('settings', {rotate: key}).then(function (info) {
+    document.getElementById('rotate-dialog-confirm').disabled = false;
+    closeRotateDialog();
+    renderConfigSettings(info);
+    flash(esc(key) + ' rotation staged. Restart the service to activate it.');
+  }).catch(function () {
+    document.getElementById('rotate-dialog-confirm').disabled = false;
+  });
+}
+
 function loadAdminUsers() {
   var tb = document.getElementById('admin-users-body');
   if (!tb) return;
+  // Keep an open action menu stable while the background state poll runs.
+  if (tb.querySelector('.action-menu[open]')) return;
   var users = state.users || [];
   if (!users.length) {
     tb.innerHTML = '<tr><td colspan="7" class="empty-row">no users</td></tr>';
@@ -490,19 +808,20 @@ function loadAdminUsers() {
       '<td>' + totp + '</td>' +
       '<td class="cell-mono hide-sm">' + esc((u.allowed_hosts || []).join(', ') || 'all') + '</td>' +
       '<td class="cell-mono hide-sm">' + (u.last_ip ? ts(u.last_login) + ' (' + esc(u.last_ip) + ')' : '–') + '</td>' +
-      '<td><div class="row-actions">' +
+      '<td><details class="action-menu"><summary aria-label="Actions for ' + esc(u.username) + '" title="Actions">&#8942;</summary>' +
+      '<div class="action-menu__popover" role="menu">' +
       (u.disabled
-        ? '<button class="btn btn-secondary btn-sm" data-act="enable" data-user="' + esc(u.username) + '">enable</button>'
-        : '<button class="btn btn-secondary btn-sm" data-act="disable" data-msg="Disable ' + esc(u.username) + '?" data-user="' + esc(u.username) + '">disable</button>') +
-      '<button class="btn btn-secondary btn-sm" data-act="reset_password" data-msg="Reset password for ' + esc(u.username) + '?" data-user="' + esc(u.username) + '">reset pw</button>' +
-      '<button class="btn btn-secondary btn-sm" data-act="reset_totp" data-msg="Reset 2FA for ' + esc(u.username) + '? They will re-enroll on next login." data-user="' + esc(u.username) + '">reset 2fa</button>' +
-      (u.passkeys ? '<button class="btn btn-secondary btn-sm" data-act="reset_passkeys" data-msg="Remove all passkeys for ' + esc(u.username) + '?" data-user="' + esc(u.username) + '">reset keys</button>' : '') +
-      '<button class="btn btn-secondary btn-sm" data-act="logout_user" data-msg="Log ' + esc(u.username) + ' out everywhere?" data-user="' + esc(u.username) + '">logout</button>' +
-      '<button class="btn btn-secondary btn-sm" data-act="edit_hosts" data-user="' + esc(u.username) + '" data-hosts="' + esc((u.allowed_hosts || []).join(', ')) + '">hosts</button>' +
-      '<button class="btn btn-secondary btn-sm" data-act="edit_email" data-user="' + esc(u.username) + '" data-email="' + esc(u.email || '') + '">email</button>' +
-      '<button class="btn btn-secondary btn-sm" data-act="set_role" data-user="' + esc(u.username) + '" data-role="' + (u.role === 'admin' ? 'user' : 'admin') + '">' + (u.role === 'admin' ? 'demote' : 'promote') + '</button>' +
-      '<button class="btn btn-danger btn-sm" data-act="delete" data-msg="DELETE ' + esc(u.username) + '? This cannot be undone." data-user="' + esc(u.username) + '">delete</button>' +
-      '</div></td>' +
+        ? '<button class="action-menu__item" role="menuitem" data-act="enable" data-user="' + esc(u.username) + '">Enable user</button>'
+        : '<button class="action-menu__item" role="menuitem" data-act="disable" data-msg="Disable ' + esc(u.username) + '?" data-user="' + esc(u.username) + '">Disable user</button>') +
+      '<button class="action-menu__item" role="menuitem" data-act="reset_password" data-msg="Reset password for ' + esc(u.username) + '?" data-user="' + esc(u.username) + '">Reset password</button>' +
+      '<button class="action-menu__item" role="menuitem" data-act="reset_totp" data-msg="Reset 2FA for ' + esc(u.username) + '? They will re-enroll on next login." data-user="' + esc(u.username) + '">Reset two-factor</button>' +
+      (u.passkeys ? '<button class="action-menu__item" role="menuitem" data-act="reset_passkeys" data-msg="Remove all passkeys for ' + esc(u.username) + '?" data-user="' + esc(u.username) + '">Reset passkeys</button>' : '') +
+      '<button class="action-menu__item" role="menuitem" data-act="logout_user" data-msg="Log ' + esc(u.username) + ' out everywhere?" data-user="' + esc(u.username) + '">Log out everywhere</button>' +
+      '<button class="action-menu__item" role="menuitem" data-act="edit_hosts" data-user="' + esc(u.username) + '" data-hosts="' + esc((u.allowed_hosts || []).join(', ')) + '">Edit allowed hosts</button>' +
+      '<button class="action-menu__item" role="menuitem" data-act="edit_email" data-user="' + esc(u.username) + '" data-email="' + esc(u.email || '') + '">Edit recovery email</button>' +
+      '<button class="action-menu__item" role="menuitem" data-act="set_role" data-user="' + esc(u.username) + '" data-role="' + (u.role === 'admin' ? 'user' : 'admin') + '">' + (u.role === 'admin' ? 'Demote to user' : 'Promote to admin') + '</button>' +
+      '<button class="action-menu__item action-menu__item--danger" role="menuitem" data-act="delete" data-msg="DELETE ' + esc(u.username) + '? This cannot be undone." data-user="' + esc(u.username) + '">Delete user</button>' +
+      '</div></details></td>' +
       '</tr>';
   }).join('');
 }
@@ -551,7 +870,7 @@ function loadAdminLogs() {
       : 'badge--orange';
     return '<tr>' +
       '<td class="cell-mono">' + ts(e.time) + '</td>' +
-      '<td><span class="badge ' + cls + '">' + esc(e.event) + '</span></td>' +
+      '<td><span class="badge ' + cls + '" title="' + esc(e.event) + '">' + esc(e.event) + '</span></td>' +
       '<td class="cell-mono">' + esc(e.ip) + '</td>' +
       '<td class="cell-mono">' + esc(e.user || '–') + '</td>' +
       '<td class="cell-mono hide-sm">' + esc(e.host || '–') + '</td>' +
@@ -580,12 +899,153 @@ function loadAdminSessions() {
   }).join('');
 }
 
+function base64urlToBytes(value) {
+  var encoded = value.replace(/-/g, '+').replace(/_/g, '/');
+  encoded += '='.repeat((4 - encoded.length % 4) % 4);
+  return Uint8Array.from(atob(encoded), function (character) { return character.charCodeAt(0); });
+}
+
+function bytesToBase64url(buffer) {
+  var binary = '';
+  new Uint8Array(buffer).forEach(function (value) { binary += String.fromCharCode(value); });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function passkeyCredentialJSON(credential) {
+  return {
+    id: credential.id,
+    type: credential.type,
+    rawId: bytesToBase64url(credential.rawId),
+    response: {
+      clientDataJSON: bytesToBase64url(credential.response.clientDataJSON),
+      attestationObject: bytesToBase64url(credential.response.attestationObject),
+      transports: credential.response.getTransports ? credential.response.getTransports() : []
+    }
+  };
+}
+
+function passkeyTimestamp(value, fallback) {
+  if (!value || value.indexOf('0001-01-01') === 0) return fallback;
+  var date = new Date(value);
+  return isNaN(date.getTime()) ? fallback : date.toLocaleString();
+}
+
+function loadPasskeys() {
+  var list = document.getElementById('passkey-list');
+  if (!list) return;
+  fetch('/_auth/passkeys/list')
+    .then(function (response) {
+      if (!response.ok) throw new Error('http ' + response.status);
+      return response.json();
+    })
+    .then(function (keys) {
+      if (!document.getElementById('passkey-list')) return;
+      if (!keys.length) {
+        list.innerHTML = '<div class="empty-row">No passkeys enrolled yet.</div>';
+        return;
+      }
+      list.innerHTML = keys.map(function (key) {
+        return '<div class="passkey-row">' +
+          '<div><div class="passkey-row__name">' + esc(key.name || 'passkey') + '</div>' +
+          '<div class="passkey-row__meta">Created ' + esc(passkeyTimestamp(key.created, 'unknown')) +
+          ' · last used ' + esc(passkeyTimestamp(key.last_used, 'never')) + '</div></div>' +
+          '<button class="btn btn-danger btn-sm" type="button" data-passkey-id="' + esc(key.id) +
+          '" data-passkey-name="' + esc(key.name || 'passkey') + '">Remove</button></div>';
+      }).join('');
+    })
+    .catch(function () {
+      if (document.getElementById('passkey-list')) {
+        list.innerHTML = '<div class="empty-row">Could not load passkeys.</div>';
+      }
+    });
+}
+
+function addPasskey() {
+  var button = document.getElementById('add-passkey');
+  var nameInput = document.getElementById('passkey-name');
+  if (!button || !nameInput) return;
+  if (!window.PublicKeyCredential || !navigator.credentials) {
+    flash('Passkeys are not supported by this browser.', true);
+    return;
+  }
+  button.disabled = true;
+  fetch('/_auth/passkeys/register/begin', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-Csrf': CSRF_TOKEN},
+    body: JSON.stringify({name: nameInput.value})
+  })
+    .then(function (response) {
+      return response.json().then(function (data) {
+        if (!response.ok) throw new Error(data.error || 'Could not start passkey registration.');
+        return data;
+      });
+    })
+    .then(function (data) {
+      var options = data.options.publicKey;
+      options.challenge = base64urlToBytes(options.challenge);
+      options.user.id = base64urlToBytes(options.user.id);
+      (options.excludeCredentials || []).forEach(function (credential) {
+        credential.id = base64urlToBytes(credential.id);
+      });
+      return navigator.credentials.create({publicKey: options}).then(function (credential) {
+        return {transaction: data.transaction, credential: credential};
+      });
+    })
+    .then(function (registration) {
+      return fetch('/_auth/passkeys/register/finish', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Csrf': CSRF_TOKEN,
+          'X-WebAuthn-Transaction': registration.transaction
+        },
+        body: JSON.stringify(passkeyCredentialJSON(registration.credential))
+      });
+    })
+    .then(function (response) {
+      return response.json().then(function (data) {
+        if (!response.ok) throw new Error(data.error || 'Passkey registration failed.');
+        nameInput.value = '';
+        loadPasskeys();
+        flash('Passkey added.');
+      });
+    })
+    .catch(function (error) {
+      if (error && error.name === 'NotAllowedError') {
+        flash('Passkey registration was cancelled or timed out.', true);
+      } else {
+        flash(error.message || 'Passkey registration failed.', true);
+      }
+    })
+    .then(function () {
+      if (document.getElementById('add-passkey')) button.disabled = false;
+    });
+}
+
+function removePasskey(id, name) {
+  openDangerDialog('Remove this passkey?', 'The passkey “' + name + '” will no longer sign in to this account.',
+    '<b>This action takes effect immediately:</b><p style="margin:8px 0 0">This credential cannot be restored. Make sure you retain another sign-in method before removing it.</p>',
+    'Remove passkey', function () {
+      fetch('/_auth/passkeys/delete', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-Csrf': CSRF_TOKEN},
+        body: JSON.stringify({id: id})
+      }).then(function (response) {
+        if (!response.ok) throw new Error('http ' + response.status);
+        loadPasskeys();
+        flash('Passkey removed.');
+      }).catch(function () { flash('Could not remove passkey.', true); });
+    });
+}
+
 var PANE_LOADERS = {
   'account':        loadAccount,
+  'passkeys':       loadPasskeys,
   'sessions':       loadMySessions,
   'admin-users':    loadAdminUsers,
   'admin-logs':     loadAdminLogs,
   'admin-sessions': loadAdminSessions,
+  'admin-settings': loadConfigSettings,
   'admin-system':   loadSystem
 };
 
@@ -596,9 +1056,6 @@ function showPane(id) {
   var content = document.getElementById('settings-content');
   content.innerHTML = PANE_TEMPLATES[id] || PANE_TEMPLATES['account'];
   content.scrollTop = 0;
-
-  // Re-insert close button after innerHTML replacement
-  content.insertAdjacentHTML('afterbegin', CLOSE_BTN_HTML);
 
   if (PANE_LOADERS[id]) PANE_LOADERS[id]();
 }
@@ -617,43 +1074,82 @@ function fetchState() {
 
 // ── modal open/close ─────────────────────────────────────────────────────
 function openSettings(pane) {
-  document.getElementById('settings-backdrop').classList.add('open');
   var modal = document.getElementById('settings-modal');
   modal.classList.add('open');
   if (modal.showModal) modal.showModal();
-  document.body.style.overflow = 'hidden';
   renderNav();
   showPane(pane || 'account');
   fetchState();
 }
 
-function closeSettings() {
-  document.getElementById('settings-backdrop').classList.remove('open');
-  var modal = document.getElementById('settings-modal');
-  modal.classList.remove('open');
-  if (modal.close) modal.close();
-  document.body.style.overflow = '';
-}
-
 // Keyboard: Esc closes
 document.addEventListener('keydown', function (e) {
-  if (e.key === 'Escape') closeSettings();
+  if (e.key === 'Escape') {
+    if (pendingDangerAction) { closeDangerDialog(); return; }
+    if (pendingRotationKey) { closeRotateDialog(); return; }
+    if (editDialogState) { closeEditDialog(); return; }
+    var openMenu = document.querySelector('.action-menu[open]');
+    if (openMenu) { openMenu.removeAttribute('open'); return; }
+  }
 });
 
+document.addEventListener('toggle', function (e) {
+  if (!e.target.matches || !e.target.matches('.action-menu[open]')) return;
+  document.querySelectorAll('.action-menu[open]').forEach(function (menu) {
+    if (menu !== e.target) menu.removeAttribute('open');
+  });
+}, true);
+
 // Event wiring (no inline handlers — CSP script-src is nonce-only)
-document.getElementById('open-settings').addEventListener('click', function () { openSettings('account'); });
-document.getElementById('settings-backdrop').addEventListener('click', closeSettings);
+document.getElementById('settings-modal').addEventListener('cancel', function (e) { e.preventDefault(); });
 document.getElementById('sidebar-search').addEventListener('input', function () { filterSidebar(this.value); });
+document.getElementById('edit-dialog-cancel').addEventListener('click', closeEditDialog);
+document.getElementById('edit-dialog-save').addEventListener('click', saveEditDialog);
+document.getElementById('edit-dialog-input').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter') { e.preventDefault(); saveEditDialog(); }
+});
+document.getElementById('edit-dialog-backdrop').addEventListener('click', function (e) {
+  if (e.target === this) closeEditDialog();
+});
+document.getElementById('rotate-dialog-cancel').addEventListener('click', closeRotateDialog);
+document.getElementById('rotate-dialog-confirm').addEventListener('click', confirmConfigRotation);
+document.getElementById('rotate-dialog-backdrop').addEventListener('click', function (e) {
+  if (e.target === this) closeRotateDialog();
+});
+document.getElementById('danger-dialog-cancel').addEventListener('click', closeDangerDialog);
+document.getElementById('danger-dialog-confirm').addEventListener('click', runDangerAction);
+document.getElementById('danger-dialog-backdrop').addEventListener('click', function (e) {
+  if (e.target === this) closeDangerDialog();
+});
 
 // Delegated: modal close button (re-inserted on every pane switch) and
 // sidebar nav items (re-rendered by renderNav)
 document.addEventListener('click', function (e) {
-  if (e.target.closest('.modal__close')) { closeSettings(); return; }
+  if (!e.target.closest('.action-menu')) {
+    document.querySelectorAll('.action-menu[open]').forEach(function (menu) { menu.removeAttribute('open'); });
+  }
+  var menuAction = e.target.closest('.action-menu__item');
+  if (menuAction) menuAction.closest('.action-menu').removeAttribute('open');
   var item = e.target.closest('#settings-nav .sidebar__item');
   if (item && item.dataset.pane) { showPane(item.dataset.pane); return; }
+  if (e.target.closest('#add-passkey')) { addPasskey(); return; }
+  var passkey = e.target.closest('button[data-passkey-id]');
+  if (passkey) {
+    removePasskey(passkey.getAttribute('data-passkey-id'), passkey.getAttribute('data-passkey-name'));
+    return;
+  }
   var rev = e.target.closest('button[data-revoke-sid]');
   if (rev) { revokeSession(rev.getAttribute('data-revoke-sid')); return; }
   if (e.target.closest('#nu-create')) { createUser(); return; }
+  if (e.target.closest('#regenerate-backup-codes')) {
+    openDangerDialog('Regenerate backup codes?', 'The current recovery codes will stop working.',
+      '<b>This action takes effect immediately:</b><p style="margin:8px 0 0">All existing backup codes and trusted-device tokens are invalidated. Store the newly generated codes before leaving the next screen.</p>',
+      'Regenerate codes', function () { document.getElementById('backup-codes-form').submit(); });
+    return;
+  }
+  if (e.target.closest('#save-settings')) { confirmSettingsSave(); return; }
+  var rotate = e.target.closest('button[data-rotate-key]');
+  if (rotate) { rotateConfigKey(rotate.getAttribute('data-rotate-key')); return; }
   var b = e.target.closest('button[data-act]');
   if (!b) return;
   var d = b.dataset;
@@ -664,11 +1160,17 @@ document.addEventListener('click', function (e) {
   if (d.ip) extra.ip = d.ip;
   if (d.sid) extra.sid = d.sid;
   if (d.role) extra.role = d.role;
-  if (d.msg) { confirmAct(d.msg, d.act, extra); } else { act(d.act, extra); }
+  var sensitiveActions = ['enable', 'disable', 'delete', 'reset_password', 'reset_totp', 'reset_passkeys', 'logout_user', 'set_role', 'unlock'];
+  if (d.msg || sensitiveActions.indexOf(d.act) >= 0) { confirmAct(d.msg, d.act, extra); } else { act(d.act, extra); }
 });
 
 function revokeSession(sid) {
-  if (!confirm('Revoke this session?')) return;
+  openDangerDialog('Revoke this session?', 'The selected browser session will be invalidated immediately.',
+    '<b>This action takes effect immediately:</b><p style="margin:8px 0 0">The session cannot be restored. The user must authenticate again on that device.</p>',
+    'Revoke session', function () { performRevokeSession(sid); });
+}
+
+function performRevokeSession(sid) {
   fetch('/_auth/admin/api/sessions/' + encodeURIComponent(sid) + '/revoke', {
     method: 'POST',
     headers: {'X-Csrf': CSRF_TOKEN}

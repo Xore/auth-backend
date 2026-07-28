@@ -315,6 +315,33 @@ func (s *server) passkeyDelete(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, http.StatusOK, map[string]string{"ok": "1"})
 }
 
+func (s *server) passkeyList(w http.ResponseWriter, r *http.Request) {
+	secHeaders(w, nonce())
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	cl, u, ok := s.session(w, r)
+	if !ok || cl.flags != "" {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	type passkeyView struct {
+		ID       string    `json:"id"`
+		Name     string    `json:"name"`
+		Created  time.Time `json:"created"`
+		LastUsed time.Time `json:"last_used"`
+	}
+	views := make([]passkeyView, 0, len(u.Passkeys))
+	for _, key := range u.Passkeys {
+		views = append(views, passkeyView{
+			ID: hex.EncodeToString(key.Credential.ID), Name: key.Name,
+			Created: key.Created, LastUsed: key.LastUsed,
+		})
+	}
+	jsonOut(w, http.StatusOK, views)
+}
+
 func (s *server) passkeyGate(w http.ResponseWriter, r *http.Request) (sessionClaims, *User, bool) {
 	cl, u, ok := s.session(w, r)
 	if !ok || cl.flags != "" {
