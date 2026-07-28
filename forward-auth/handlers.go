@@ -123,7 +123,6 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 			}
 			// rd comes from safeRedirect(): HTTPS-only, restricted to the
 			// cookie domain, constant fallback — never attacker-controlled.
-			// codeql[go/unvalidated-url-redirection]
 			http.Redirect(w, r, rd, http.StatusFound)
 			return
 		}
