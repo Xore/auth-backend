@@ -32,7 +32,7 @@ existing Go `forward-auth` service.
 
 The reusable design contract is maintained in
 [`Xore/theme`](https://github.com/Xore/theme). Read its
-[`auth-backend migration guide`](https://github.com/Xore/theme/blob/main/docs/MIGRATE-AUTH-BACKEND.md)
+[`adoption guide`](https://github.com/Xore/theme/blob/main/docs/ADOPTION.md)
 before editing these templates. Keep product branding, authentication methods,
 legal copy, form fields, and backend routes specific to this service.
 

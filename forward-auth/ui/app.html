@@ -37,14 +37,14 @@
   .action-menu__item:hover{background:var(--surface-3)}
   .action-menu__item--danger{color:var(--red);border-top:1px solid var(--border-subtle);border-radius:0;margin-top:4px;padding-top:10px}
   .edit-dialog-backdrop{position:fixed;inset:0;z-index:300;display:none;align-items:center;justify-content:center;
-    padding:20px;background:rgba(0,0,0,.7);backdrop-filter:blur(3px)}
+    padding:20px;background:color-mix(in srgb,var(--app-bg) 70%,transparent);backdrop-filter:blur(3px)}
   .edit-dialog-backdrop.open{display:flex}
   .edit-dialog{width:min(520px,100%);background:var(--surface-1);border:1px solid var(--border-strong);
     border-radius:var(--radius-lg);box-shadow:var(--shadow-modal);padding:24px}
   .edit-dialog__title{font-size:18px;font-weight:600;margin:0 0 6px}
   .edit-dialog__desc{font-size:12px;color:var(--text-secondary);line-height:1.5;margin:0 0 18px}
   .edit-dialog__actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
-  .danger-dialog__warning{padding:12px 14px;border:1px solid rgba(248,113,113,.35);border-radius:var(--radius-md);
+  .danger-dialog__warning{padding:12px 14px;border:1px solid color-mix(in srgb,var(--danger) 35%,transparent);border-radius:var(--radius-md);
     background:var(--red-subtle);color:var(--text-primary);font-size:12px;line-height:1.55}
   .danger-dialog__warning ul{margin:8px 0 0;padding-left:18px}
   #flash{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:200;display:none;

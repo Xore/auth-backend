@@ -24,7 +24,7 @@ The current integration baseline is theme commit `4e22d52`.
 ## Rules for AI coding agents
 
 1. Read the upstream [`README`](https://github.com/Xore/theme) and
-   [`auth-backend migration guide`](https://github.com/Xore/theme/blob/main/docs/MIGRATE-AUTH-BACKEND.md)
+   [`adoption contract`](https://github.com/Xore/theme/blob/main/docs/ADOPTION.md)
    before changing shared styling.
 2. Treat upstream tokens and component selectors as the contract. Put
    application-only layout rules next to the page that uses them.

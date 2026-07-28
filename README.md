@@ -346,6 +346,6 @@ CodeQL, secret scanning and workflow linting (actionlint + zizmor).
 ## Related
 
 - [Xore/theme](https://github.com/Xore/theme) — reusable design tokens,
-  components, examples, and AI-oriented migration guides
+  components, examples, and adoption guidance
 - [Xore/cgnat](https://github.com/Xore/cgnat) — WireGuard/CGNAT tunnel and Traefik reverse-proxy setup this typically runs behind
 - [Xore/www](https://github.com/Xore/www) — personal homepage (does not use this)

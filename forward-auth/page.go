@@ -242,7 +242,7 @@ const brandHTML = `
       <svg class="brand__mark" viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
         <path d="M6 6l20 20M26 6L6 26" stroke="url(#bg)" stroke-width="3.4" stroke-linecap="round"/>
         <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stop-color="#d4764e"/><stop offset="1" stop-color="#c4673f"/>
+          <stop offset="0" stop-color="var(--accent)"/><stop offset="1" stop-color="var(--accent-hover)"/>
         </linearGradient></defs>
       </svg>
       <span class="brand__text">XORE<span class="brand__slash">//</span>AUTH</span>
