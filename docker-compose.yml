@@ -54,8 +54,11 @@ services:
       - SSO_URL=${SSO_URL:-}
       - SMTP_URL=${SMTP_URL:-}
       - SMTP_FROM=${SMTP_FROM:-}
-      - REDIS_URL=${REDIS_URL:-}
+      - REDIS_URL=${REDIS_URL:-redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@auth-redis:6379/0}
       - ORG_ID=${ORG_ID:-}
+    depends_on:
+      auth-redis:
+        condition: service_healthy
     volumes:
       - auth-data:/data
     read_only: true
@@ -73,11 +76,48 @@ services:
       start_period: 5s
     networks:
       - proxy
+      - auth-internal
     deploy:
       resources:
         limits:
           cpus: "0.5"
           memory: 256M
+
+  auth-redis:
+    image: redis:8.8.1-alpine
+    container_name: auth-redis
+    restart: unless-stopped
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        exec redis-server \
+          --appendonly yes \
+          --appendfsync everysec \
+          --save 60 1 \
+          --loglevel warning \
+          --requirepass "$$REDIS_PASSWORD"
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - redis-cli --no-auth-warning -a "$$REDIS_PASSWORD" ping | grep -q PONG
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - auth-internal
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
 
   # One-shot Tailwind CSS builder. Excluded from normal startup by its
   # profile; regenerates forward-auth/ui/tailwind.min.css (used by the
@@ -138,6 +178,9 @@ networks:
   # Compose project own it if it's the only thing on the network.
   proxy:
     external: true
+  auth-internal:
+    internal: true
 
 volumes:
   auth-data:
+  redis-data:

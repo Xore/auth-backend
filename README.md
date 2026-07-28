@@ -247,7 +247,8 @@ new key and retain the active key as the previous key for the transition.
 | `SMTP_URL` | *(empty)* | `smtps://user:pass@host:465` or `smtp://[user:pass@]host:587` — enables email recovery |
 | `SMTP_FROM` | `forward-auth@<AUTH_HOST>` | Sender address for recovery mail |
 | `SMTP_ALLOW_INSECURE` | `false` | **Dev only**: permit `smtp://` without STARTTLS |
-| `REDIS_URL` | *(empty)* | `redis://[:password@]host:6379/0` — Redis throttle + session backends |
+| `REDIS_PASSWORD` | *(required by Compose)* | Password for the bundled private Redis service; generate 64 safe hex characters with `openssl rand -hex 32` |
+| `REDIS_URL` | bundled Redis | `redis://[:password@]host:6379/0` — override to use an external Redis throttle + session backend |
 | `ORG_ID` | *(empty)* | Organization label on the admin System pane |
 | `AUTH_RESET_CONFIRM` | *(empty)* | Confirmation flag for the `auth-credentials-reset` maintenance profile |
 
@@ -256,7 +257,7 @@ All variables also support a `_FILE` suffix for Docker secrets
 
 ## Backends: memory vs Redis
 
-Without `REDIS_URL`, throttle and session state live in memory and persist
+Outside the bundled Compose stack, without `REDIS_URL`, throttle and session state live in memory and persist
 to JSON files (`throttle.json`, `revoked-sessions.json`) next to
 `USERS_FILE`. With `REDIS_URL` set, both move to Redis (atomic Lua
 transitions, startup connectivity check) so multiple replicas share
