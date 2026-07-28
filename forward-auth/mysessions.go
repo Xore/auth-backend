@@ -13,7 +13,7 @@ import (
 
 // handleMySessions returns only the sessions belonging to the current user.
 func (s *server) handleMySessions(w http.ResponseWriter, r *http.Request) {
-	cl, _, ok := s.session(r)
+	cl, _, ok := s.session(w, r)
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -43,7 +43,7 @@ func (s *server) handleMySessions(w http.ResponseWriter, r *http.Request) {
 // handleTrustedDevices returns the user's device trust cookies as a list.
 // Device trust is cookie-based, not registry-stored — empty for now.
 func (s *server) handleTrustedDevices(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := s.session(r); !ok {
+	if _, _, ok := s.session(w, r); !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}

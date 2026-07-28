@@ -66,6 +66,11 @@ Steps in the same phase can be parallelised if there are no `Blocked by` depende
 | Step 10 — Backup code regeneration | ✅ done (2026-07-27) | `POST /_auth/backup-codes` (session + form token), 8 new codes rendered, `DeviceGen++`; link in app-shell account pane. Codes are SHA-256-hashed in this repo (roadmap text says bcrypt) |
 | Step 11 — CSP nonce | ✅ done (2026-07-27) | `script-src` was already nonce-only; **33 inline event-handler attributes were CSP-blocked and dead** — all converted to `addEventListener`/event delegation across 5 files; `style-src 'self' 'unsafe-inline'` per spec; passkeys page also restyled to the Claude theme (Step-2 leftover) |
 | Step 12 — Webhook enrichment + providers | ✅ done (2026-07-27) | `webhookPayload` + request_id/severity/timestamp; `WEBHOOK_PROVIDER=raw|slack|ntfy|gotify` with per-provider shapes; severity mapping; `TestWebhook*` tests |
+| Step 13 — PASETO dep + key management | ✅ done (2026-07-27) | `zntr.io/paseto/v4` v1.4.0; `PASETO_KEY` (64 hex) or HKDF-derive from `COOKIE_SECRET`; bad length is fatal at load |
+| Step 14 — PASETO payload + issue/parse | ✅ done (2026-07-27) | `sessionPayload` (iss/sub/iat/exp/jti/gen/flags), fail-closed claim checks, `forward-auth session v1` assertion; **fixed library panic on truncated tokens** (zntr v1.4.0 slices nonce unchecked) with a pre-decode shape guard |
+| Step 15 — Switch issuance, dual parser | ✅ done (2026-07-27) | `setCookie` issues PASETO; legacy accepted via `parseSessionToken` with `legacy_token_verified` log; cookies now start `v4.local.` |
+| Step 16 — PASETO key rotation | ✅ done (2026-07-27) | `PASETO_KEY_PREVIOUS` (comma-sep hex); old-key tokens verified then transparently re-issued under the current key (`session(w, r)` signature change) |
+| Step 17 — Remove legacy HMAC path | ✅ done (2026-07-27) | `issueSession`/`parseSession`/`parseSessionToken` deleted; `mac`/`validMAC`/`macWith` kept (device/form/CSRF/pending still HMAC); explicit `PASETO_KEY` now **required** (note: guide §7.7 recommends derive-only — roadmap wins; recorded here) |
 
 **Step 5b deviation notes (approved design):**
 - Login is a **two-step UI** (username → password/passkey, client-side) followed by a

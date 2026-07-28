@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/base32"
 	"encoding/json"
 	"fmt"
@@ -17,12 +18,17 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+	pasetov4 "zntr.io/paseto/v4"
 )
 
 func testConfig(t *testing.T) config {
 	t.Helper()
 	_, n, _ := netParseCIDR("127.0.0.0/8")
-	return config{authHost: "auth.example.com", cookieDom: ".example.com", cookieName: "auth", secret: []byte("01234567890123456789012345678901"), secure: true, ttl: time.Hour, maxAttempts: 3, lockout: time.Minute, minDwell: 0, formTTL: time.Minute, ringCap: 10, trustedNets: []*net.IPNet{n}, maxBodyBytes: 65536}
+	k, err := deriveKey([]byte("01234567890123456789012345678901"), "paseto-v4-local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return config{authHost: "auth.example.com", cookieDom: ".example.com", cookieName: "auth", secret: []byte("01234567890123456789012345678901"), pasetoKey: pasetov4.LocalKey(k), secure: true, ttl: time.Hour, maxAttempts: 3, lockout: time.Minute, minDwell: 0, formTTL: time.Minute, ringCap: 10, trustedNets: []*net.IPNet{n}, maxBodyBytes: 65536}
 }
 
 // Alias keeps the test setup readable without hiding production behavior.
@@ -68,14 +74,36 @@ func TestHostAllowedFailsClosedAndSupportsIPv6(t *testing.T) {
 	}
 }
 
+func mustIssuePASETO(t *testing.T, c config, cl sessionClaims) string {
+	t.Helper()
+	tok, err := c.issueSessionPASETO(cl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tok
+}
+
+// TestLegacyTokenRejected: the legacy pipe-delimited HMAC format is no
+// longer accepted (roadmap Step 17).
+func TestLegacyTokenRejected(t *testing.T) {
+	c := testConfig(t)
+	legacyTok := "v2|9999999999|alice|1|sid|" + c.mac("v2|9999999999|alice|1|sid|")
+	if _, ok, _ := c.parseSessionPASETO(legacyTok); ok {
+		t.Fatal("legacy HMAC token accepted")
+	}
+	if _, ok, _ := c.parseSessionPASETO("v4.local.garbage"); ok {
+		t.Fatal("garbage PASETO token accepted")
+	}
+}
+
 func TestSessionAndDeviceTokens(t *testing.T) {
 	c := testConfig(t)
 	cl := sessionClaims{user: "alice", gen: 2, sid: "sid", exp: time.Now().Add(time.Minute).Unix()}
-	tok := c.issueSession(cl)
-	if got, ok := c.parseSession(tok); !ok || got.user != "alice" {
+	tok := mustIssuePASETO(t, c, cl)
+	if got, ok, _ := c.parseSessionPASETO(tok); !ok || got.user != "alice" {
 		t.Fatal("valid session rejected")
 	}
-	if _, ok := c.parseSession(tok + "x"); ok {
+	if _, ok, _ := c.parseSessionPASETO(tok + "x"); ok {
 		t.Fatal("tampered session accepted")
 	}
 	c.trustDevDays = 7
@@ -151,7 +179,7 @@ func TestVerifyReturnsConfiguredIdentityHeaders(t *testing.T) {
 	cl := sessionClaims{user: u.Username, gen: u.Gen, sid: "sid", exp: time.Now().Add(time.Minute).Unix()}
 	r := httptest.NewRequest("GET", "http://auth/_auth/verify", nil)
 	r.Header.Set("X-Forwarded-Host", "app.example.com")
-	r.AddCookie(&http.Cookie{Name: c.cookieName, Value: c.issueSession(cl)})
+	r.AddCookie(&http.Cookie{Name: c.cookieName, Value: mustIssuePASETO(t, c, cl)})
 	w := httptest.NewRecorder()
 	s.verify(w, r)
 	if w.Code != 200 || w.Header().Get("X-Auth-User") != "admin" || w.Header().Get("X-Auth-Role") != "admin" {
@@ -231,6 +259,152 @@ func TestConfigRejectsPlaceholders(t *testing.T) {
 	c.secret = []byte("CHANGE_ME_openssl_rand_hex_32")
 	if err := c.validate(); err == nil {
 		t.Fatal("placeholder configuration accepted")
+	}
+}
+
+func TestPASETORoundTrip(t *testing.T) {
+	c := testConfig(t)
+	original := sessionClaims{user: "alice", gen: 3, sid: "abcdef123456", flags: "c", exp: time.Now().Add(time.Hour).Unix()}
+	tok, err := c.issueSessionPASETO(original)
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	if !strings.HasPrefix(tok, "v4.local.") {
+		t.Fatalf("expected v4.local. prefix, got %.20s", tok)
+	}
+	parsed, ok, _ := c.parseSessionPASETO(tok)
+	if !ok {
+		t.Fatal("parseSessionPASETO returned false")
+	}
+	if parsed != original {
+		t.Fatalf("claims mismatch: got %+v, want %+v", parsed, original)
+	}
+}
+
+func TestPASETOTamperedRejected(t *testing.T) {
+	c := testConfig(t)
+	cl := sessionClaims{user: "bob", gen: 1, sid: "xyz", exp: time.Now().Add(time.Hour).Unix()}
+	tok, err := c.issueSessionPASETO(cl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := []byte(tok)
+	b[len(b)-5] ^= 0xFF
+	if _, ok, _ := c.parseSessionPASETO(string(b)); ok {
+		t.Fatal("tampered token accepted")
+	}
+}
+
+func TestPASETOExpiredRejected(t *testing.T) {
+	c := testConfig(t)
+	cl := sessionClaims{user: "carol", gen: 1, sid: "abc", exp: time.Now().Add(-time.Second).Unix()}
+	tok, err := c.issueSessionPASETO(cl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := c.parseSessionPASETO(tok); ok {
+		t.Fatal("expired token accepted")
+	}
+}
+
+func TestPASETOClaimValidation(t *testing.T) {
+	c := testConfig(t)
+	issue := func(mut func(*sessionPayload)) string {
+		pl := sessionPayload{
+			Issuer: c.authHost, Subject: "alice", IssuedAt: time.Now().Unix(),
+			Expiry: time.Now().Add(time.Hour).Unix(), TokenID: "sid", Gen: 1,
+		}
+		mut(&pl)
+		raw, _ := json.Marshal(pl)
+		key := c.pasetoKey
+		tok, err := pasetov4.Encrypt(rand.Reader, &key, raw, nil, pasetoAssertion())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tok
+	}
+	if _, ok, _ := c.parseSessionPASETO(issue(func(p *sessionPayload) { p.Issuer = "other.host" })); ok {
+		t.Fatal("wrong issuer accepted")
+	}
+	if _, ok, _ := c.parseSessionPASETO(issue(func(p *sessionPayload) { p.Subject = "" })); ok {
+		t.Fatal("empty subject accepted")
+	}
+	if _, ok, _ := c.parseSessionPASETO(issue(func(p *sessionPayload) { p.TokenID = "" })); ok {
+		t.Fatal("empty token id accepted")
+	}
+	if _, ok, _ := c.parseSessionPASETO(issue(func(p *sessionPayload) { p.IssuedAt = time.Now().Add(time.Hour).Unix() })); ok {
+		t.Fatal("future-issued token accepted")
+	}
+}
+
+func TestPASETOKeyRotation(t *testing.T) {
+	keyA, _ := deriveKey([]byte("key-material-AAAAAAAAAAAAAAAAAAAAAA"), "paseto-v4-local")
+	keyB, _ := deriveKey([]byte("key-material-BBBBBBBBBBBBBBBBBBBBBB"), "paseto-v4-local")
+
+	c := testConfig(t)
+	c.pasetoKey = pasetov4.LocalKey(keyA)
+	cl := sessionClaims{user: "alice", gen: 1, sid: "sid-rot", exp: time.Now().Add(time.Hour).Unix()}
+	tokA, err := c.issueSessionPASETO(cl)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// B becomes primary, A moves to PASETO_KEY_PREVIOUS
+	c.pasetoKey = pasetov4.LocalKey(keyB)
+	c.oldPasetoKeys = []pasetov4.LocalKey{pasetov4.LocalKey(keyA)}
+	if _, ok, usedOld := c.parseSessionPASETO(tokA); !ok || !usedOld {
+		t.Fatal("old-key token not accepted via PASETO_KEY_PREVIOUS")
+	}
+
+	// server.session re-issues the token under the new key
+	path := filepath.Join(t.TempDir(), "users.json")
+	st := newUserStore(path)
+	if _, err := st.bootstrap("alice", "a-long-test-password", ""); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", "raw", slog.Default())}
+	r := httptest.NewRequest("GET", "http://auth/_auth/verify", nil)
+	r.AddCookie(&http.Cookie{Name: c.cookieName, Value: tokA})
+	w := httptest.NewRecorder()
+	if _, _, ok := s.session(w, r); !ok {
+		t.Fatal("session rejected for old-key token")
+	}
+	var newTok string
+	for _, ck := range w.Result().Cookies() {
+		if ck.Name == c.cookieName {
+			newTok = ck.Value
+		}
+	}
+	if newTok == "" {
+		t.Fatal("no rotated cookie issued")
+	}
+	if _, ok, usedOld := c.parseSessionPASETO(newTok); !ok || usedOld {
+		t.Fatal("rotated token does not verify under the new primary key")
+	}
+	// unknown key: rejected
+	c.oldPasetoKeys = nil
+	if _, ok, _ := c.parseSessionPASETO(tokA); ok {
+		t.Fatal("token accepted after its key left the rotation list")
+	}
+}
+
+func TestPASETOKeyDerivation(t *testing.T) {
+	secret := []byte("01234567890123456789012345678901")
+	k1, err := deriveKey(secret, "paseto-v4-local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	k2, _ := deriveKey(secret, "paseto-v4-local")
+	if k1 != k2 {
+		t.Fatal("deriveKey is not deterministic")
+	}
+	k3, _ := deriveKey(secret, "other-label")
+	if k1 == k3 {
+		t.Fatal("deriveKey ignores the purpose label")
+	}
+	k4, _ := deriveKey([]byte("different-secret-key-material-32b"), "paseto-v4-local")
+	if k1 == k4 {
+		t.Fatal("deriveKey ignores the secret")
 	}
 }
 
@@ -331,7 +505,7 @@ func TestTwoStepLoginFlow(t *testing.T) {
 	// The issued session is accepted
 	r = httptest.NewRequest("GET", "http://auth/_auth/verify", nil)
 	r.AddCookie(sess)
-	if _, _, ok := s.session(r); !ok {
+	if _, _, ok := s.session(httptest.NewRecorder(), r); !ok {
 		t.Fatal("session issued after 2FA rejected")
 	}
 
@@ -355,7 +529,7 @@ func newPasswordTestServer(t *testing.T) (*server, *userStore, *http.Cookie) {
 	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", "raw", slog.Default())}
 	u := st.get("admin")
 	cl := sessionClaims{user: u.Username, gen: u.Gen, sid: "sid", exp: time.Now().Add(time.Minute).Unix()}
-	return s, st, &http.Cookie{Name: c.cookieName, Value: c.issueSession(cl)}
+	return s, st, &http.Cookie{Name: c.cookieName, Value: mustIssuePASETO(t, c, cl)}
 }
 
 func postPasswordChange(s *server, sess *http.Cookie, new1, new2 string) *httptest.ResponseRecorder {
@@ -442,17 +616,17 @@ func TestIdleSessionExpiry(t *testing.T) {
 	mkReq := func(sid string) *http.Request {
 		cl := sessionClaims{user: u.Username, gen: u.Gen, sid: sid, exp: time.Now().Add(time.Hour).Unix()}
 		r := httptest.NewRequest("GET", "http://auth/_auth/verify", nil)
-		r.AddCookie(&http.Cookie{Name: c.cookieName, Value: c.issueSession(cl)})
+		r.AddCookie(&http.Cookie{Name: c.cookieName, Value: mustIssuePASETO(t, c, cl)})
 		return r
 	}
 
 	// unknown to the registry (zero LastSeen) → no idle data, allowed
-	if _, _, ok := s.session(mkReq("sid-fresh")); !ok {
+	if _, _, ok := s.session(httptest.NewRecorder(), mkReq("sid-fresh")); !ok {
 		t.Fatal("session without registry entry rejected")
 	}
 	// recently seen → allowed
 	s.reg.touch("sid-active", u.Username, "127.0.0.1", "test")
-	if _, _, ok := s.session(mkReq("sid-active")); !ok {
+	if _, _, ok := s.session(httptest.NewRecorder(), mkReq("sid-active")); !ok {
 		t.Fatal("active session rejected")
 	}
 	// last seen beyond the idle timeout → rejected and revoked
@@ -460,7 +634,7 @@ func TestIdleSessionExpiry(t *testing.T) {
 	s.reg.mu.Lock()
 	s.reg.m["sid-stale"].LastSeen = time.Now().Add(-2 * time.Hour)
 	s.reg.mu.Unlock()
-	if _, _, ok := s.session(mkReq("sid-stale")); ok {
+	if _, _, ok := s.session(httptest.NewRecorder(), mkReq("sid-stale")); ok {
 		t.Fatal("idle session accepted")
 	}
 	if !s.reg.isRevoked("sid-stale") {
@@ -472,7 +646,7 @@ func TestIdleSessionExpiry(t *testing.T) {
 	s.reg.mu.Lock()
 	s.reg.m["sid-old"].LastSeen = time.Now().Add(-720 * time.Hour)
 	s.reg.mu.Unlock()
-	if _, _, ok := s.session(mkReq("sid-old")); !ok {
+	if _, _, ok := s.session(httptest.NewRecorder(), mkReq("sid-old")); !ok {
 		t.Fatal("idle check not disabled by IDLE_TIMEOUT_MINUTES=0")
 	}
 }
@@ -506,7 +680,7 @@ func TestBackupCodeRegeneration(t *testing.T) {
 	f.Set("ft", c.issueForm())
 	r := httptest.NewRequest("POST", "http://auth/_auth/backup-codes", strings.NewReader(f.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	r.AddCookie(&http.Cookie{Name: c.cookieName, Value: c.issueSession(cl)})
+	r.AddCookie(&http.Cookie{Name: c.cookieName, Value: mustIssuePASETO(t, c, cl)})
 	w := httptest.NewRecorder()
 	s.handleBackupCodes(w, r)
 
@@ -531,7 +705,7 @@ func TestBackupCodeRegeneration(t *testing.T) {
 	// a bad form token is refused
 	r = httptest.NewRequest("POST", "http://auth/_auth/backup-codes", strings.NewReader("ft=garbage"))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	r.AddCookie(&http.Cookie{Name: c.cookieName, Value: c.issueSession(cl)})
+	r.AddCookie(&http.Cookie{Name: c.cookieName, Value: mustIssuePASETO(t, c, cl)})
 	w = httptest.NewRecorder()
 	s.handleBackupCodes(w, r)
 	if w.Code != http.StatusForbidden {

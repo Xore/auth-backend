@@ -60,6 +60,8 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
+	"golang.org/x/crypto/hkdf"
+	pasetov4 "zntr.io/paseto/v4"
 )
 
 type config struct {
@@ -92,6 +94,9 @@ type config struct {
 	maxBodyBytes    int64
 	orgID           string
 	ssoURL          string
+	pasetoKey       pasetov4.LocalKey // XChaCha20 + BLAKE2b key for PASETO v4.local session tokens
+	pasetoKeySet    bool              // true when PASETO_KEY was set explicitly
+	oldPasetoKeys   []pasetov4.LocalKey
 }
 
 func getenv(k, def string) string {
@@ -174,6 +179,45 @@ func loadConfig(logger *slog.Logger) config {
 			oldSecrets = append(oldSecrets, []byte(old))
 		}
 	}
+	if len(oldSecrets) > 0 {
+		// Session cookies are PASETO now — old cookie secrets only cover the
+		// remaining HMAC tokens (device trust, form, pending). Session-key
+		// rotation goes through PASETO_KEY_PREVIOUS.
+		logger.Info("COOKIE_SECRET_PREVIOUS is set — covers only legacy HMAC device/form tokens, not sessions")
+	}
+	// PASETO_KEY must be exactly 64 hex chars (32 bytes) and is required.
+	// When unset, a key is still derived from COOKIE_SECRET so the config
+	// object is usable, but validate() rejects the deployment — silent
+	// derivation was only allowed during the migration window.
+	var pasetoKey pasetov4.LocalKey
+	pasetoKeySet := false
+	if hex64 := getenvFile("PASETO_KEY", ""); hex64 != "" {
+		decoded, err := hex.DecodeString(hex64)
+		if err != nil || len(decoded) != 32 {
+			log.Fatal("PASETO_KEY must be exactly 64 hex chars (32 bytes)")
+		}
+		copy(pasetoKey[:], decoded)
+		pasetoKeySet = true
+	} else {
+		k, err := deriveKey(secret, "paseto-v4-local")
+		if err != nil {
+			log.Fatalf("derive PASETO key: %v", err)
+		}
+		pasetoKey = pasetov4.LocalKey(k)
+		logger.Warn("PASETO_KEY not set — derived from COOKIE_SECRET for now; set it explicitly, derived keys are rejected at startup")
+	}
+	var oldPasetoKeys []pasetov4.LocalKey
+	for _, old := range strings.Split(getenvFile("PASETO_KEY_PREVIOUS", ""), ",") {
+		if old = strings.TrimSpace(old); old != "" {
+			decoded, err := hex.DecodeString(old)
+			if err != nil || len(decoded) != 32 {
+				log.Fatal("each PASETO_KEY_PREVIOUS value must be exactly 64 hex chars (32 bytes)")
+			}
+			var k pasetov4.LocalKey
+			copy(k[:], decoded)
+			oldPasetoKeys = append(oldPasetoKeys, k)
+		}
+	}
 	return config{
 		listen:          getenv("LISTEN_ADDR", ":4181"),
 		authHost:        authHost,
@@ -204,7 +248,21 @@ func loadConfig(logger *slog.Logger) config {
 		maxBodyBytes:    int64(atoi(os.Getenv("MAX_BODY_KB"), 64)) * 1024,
 		orgID:           getenv("ORG_ID", ""),
 		ssoURL:          getenv("SSO_URL", ""),
+		pasetoKey:       pasetoKey,
+		pasetoKeySet:    pasetoKeySet,
+		oldPasetoKeys:   oldPasetoKeys,
 	}
+}
+
+// deriveKey stretches secret into a purpose-labelled 32-byte key with
+// HKDF-SHA-256 (RFC 5869; salt nil, info = label).
+func deriveKey(secret []byte, label string) ([32]byte, error) {
+	var key [32]byte
+	r := hkdf.New(sha256.New, secret, nil, []byte(label))
+	if _, err := io.ReadFull(r, key[:]); err != nil {
+		return [32]byte{}, err
+	}
+	return key, nil
 }
 
 func (c config) validate() error {
@@ -252,6 +310,9 @@ func (c config) validate() error {
 	default:
 		problems = append(problems, "WEBHOOK_PROVIDER must be raw, slack, ntfy or gotify")
 	}
+	if !c.pasetoKeySet {
+		problems = append(problems, "PASETO_KEY must be set explicitly (64 hex chars) — silent derivation is no longer supported")
+	}
 	if len(problems) == 0 {
 		return nil
 	}
@@ -282,7 +343,9 @@ func (c config) validMAC(msg, got string) bool {
 
 // --- session tokens ---------------------------------------------------------
 //
-// v2 token layout: v2|exp|user|gen|sid|flags|mac
+// Session cookies are PASETO v4.local (XChaCha20 + BLAKE2b AEAD) — see the
+// PASETO section below. The legacy pipe-delimited HMAC format was removed
+// after the migration window (roadmap Step 17).
 //   gen   — user's session generation; bumping it invalidates all tokens
 //   sid   — random per-session id, for the registry and single-session revoke
 //   flags — "c" must change password, "p" must enroll TOTP (may combine)
@@ -305,41 +368,103 @@ func newSID() string {
 	return hex.EncodeToString(b)
 }
 
-func (c config) issueSession(cl sessionClaims) string {
-	body := strings.Join([]string{
-		"v2",
-		strconv.FormatInt(cl.exp, 10),
-		cl.user,
-		strconv.Itoa(cl.gen),
-		cl.sid,
-		cl.flags,
-	}, "|")
-	return body + "|" + c.mac(body)
-}
-
-func (c config) parseSession(tok string) (sessionClaims, bool) {
-	parts := strings.Split(tok, "|")
-	if len(parts) != 7 || parts[0] != "v2" {
-		return sessionClaims{}, false
-	}
-	body := strings.Join(parts[:6], "|")
-	if !c.validMAC(body, parts[6]) {
-		return sessionClaims{}, false
-	}
-	exp, err := strconv.ParseInt(parts[1], 10, 64)
-	if err != nil || time.Now().Unix() >= exp {
-		return sessionClaims{}, false
-	}
-	gen, err := strconv.Atoi(parts[3])
-	if err != nil {
-		return sessionClaims{}, false
-	}
-	return sessionClaims{user: parts[2], gen: gen, sid: parts[4], flags: parts[5], exp: exp}, true
-}
-
 // csrfToken derives a per-session CSRF token for the admin API — no expiry
 // of its own, it dies with the session.
 func (c config) csrfToken(sid string) string { return c.mac("csrf|" + sid) }
+
+// --- PASETO v4.local session tokens -------------------------------------------
+//
+// The only session format: claims are JSON, encrypted and authenticated with
+// XChaCha20 + BLAKE2b. Key rotation happens via PASETO_KEY_PREVIOUS; tokens
+// verified with an old key are transparently re-issued under the current one.
+
+// pasetoAssertion is the implicit assertion for session tokens — MAC'd but
+// not stored in the token. Step 19 will additionally bind it to the client
+// certificate thumbprint.
+func pasetoAssertion() []byte { return []byte("forward-auth session v1") }
+
+// sessionPayload is the JSON claims set inside the encrypted token.
+type sessionPayload struct {
+	Issuer    string `json:"iss"`
+	Subject   string `json:"sub"`
+	IssuedAt  int64  `json:"iat"`
+	NotBefore int64  `json:"nbf,omitempty"`
+	Expiry    int64  `json:"exp"`
+	TokenID   string `json:"jti"`
+	Gen       int    `json:"gen"`
+	Flags     string `json:"flags,omitempty"`
+}
+
+func (c config) issueSessionPASETO(cl sessionClaims) (string, error) {
+	pl, err := json.Marshal(sessionPayload{
+		Issuer:   c.authHost,
+		Subject:  cl.user,
+		IssuedAt: time.Now().Unix(),
+		Expiry:   cl.exp,
+		TokenID:  cl.sid,
+		Gen:      cl.gen,
+		Flags:    cl.flags,
+	})
+	if err != nil {
+		return "", err
+	}
+	key := c.pasetoKey
+	return pasetov4.Encrypt(rand.Reader, &key, pl, nil, pasetoAssertion())
+}
+
+// parseSessionPASETO decrypts and validates fail-closed: issuer, expiry,
+// future-issued guard (30 s clock skew), non-empty subject and token ID.
+// The current key is tried first, then each PASETO_KEY_PREVIOUS key in
+// order; usedOldKey reports which path succeeded.
+func (c config) parseSessionPASETO(tok string) (sessionClaims, bool, bool) {
+	// The library panics on truncated payloads (zntr.io/paseto v1.4.0
+	// local.go slices the nonce without a length check) — pre-validate the
+	// shape so a malformed cookie is a clean reject, not a panic.
+	payload := strings.TrimPrefix(tok, "v4.local.")
+	if i := strings.Index(payload, "."); i >= 0 { // strip optional footer
+		payload = payload[:i]
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(payload)
+	if err != nil || len(raw) < 64 { // 32-byte nonce + 32-byte MAC minimum
+		return sessionClaims{}, false, false
+	}
+	key := c.pasetoKey
+	plain, err := pasetov4.Decrypt(&key, tok, nil, pasetoAssertion())
+	usedOldKey := false
+	if err != nil {
+		for i := range c.oldPasetoKeys {
+			key = c.oldPasetoKeys[i]
+			if plain, err = pasetov4.Decrypt(&key, tok, nil, pasetoAssertion()); err == nil {
+				usedOldKey = true
+				break
+			}
+		}
+		if err != nil {
+			return sessionClaims{}, false, false
+		}
+	}
+	var pl sessionPayload
+	if err := json.Unmarshal(plain, &pl); err != nil {
+		return sessionClaims{}, false, false
+	}
+	now := time.Now().Unix()
+	if pl.Issuer != c.authHost || pl.Subject == "" || pl.TokenID == "" {
+		return sessionClaims{}, false, false
+	}
+	if now >= pl.Expiry {
+		return sessionClaims{}, false, false
+	}
+	if pl.IssuedAt > now+30 {
+		return sessionClaims{}, false, false
+	}
+	return sessionClaims{
+		user:  pl.Subject,
+		gen:   pl.Gen,
+		sid:   pl.TokenID,
+		flags: pl.Flags,
+		exp:   pl.Expiry,
+	}, true, usedOldKey
+}
 
 // --- device trust ("remember this device" skips TOTP) -----------------------
 
@@ -746,9 +871,13 @@ func secHeaders(w http.ResponseWriter, n string) {
 }
 
 func (s *server) setCookie(w http.ResponseWriter, cl sessionClaims) {
+	tok, err := s.cfg.issueSessionPASETO(cl)
+	if err != nil {
+		panic("paseto encrypt: " + err.Error())
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     s.cfg.cookieName,
-		Value:    s.cfg.issueSession(cl),
+		Value:    tok,
 		Path:     "/",
 		Domain:   s.cfg.cookieDom,
 		HttpOnly: true,
@@ -809,15 +938,21 @@ func (s *server) trustedDevice(r *http.Request, user string) bool {
 
 // session returns the validated claims and user for a request, checking
 // signature, expiry, single-session revocation, user existence, disabled
-// flag and generation.
-func (s *server) session(r *http.Request) (sessionClaims, *User, bool) {
+// flag and generation. Tokens verified with a previous PASETO key are
+// transparently re-issued under the current key.
+func (s *server) session(w http.ResponseWriter, r *http.Request) (sessionClaims, *User, bool) {
 	c, err := r.Cookie(s.cfg.cookieName)
 	if err != nil {
 		return sessionClaims{}, nil, false
 	}
-	cl, ok := s.cfg.parseSession(c.Value)
+	cl, ok, usedOldKey := s.cfg.parseSessionPASETO(c.Value)
 	if !ok || s.reg.isRevoked(cl.sid) {
 		return sessionClaims{}, nil, false
+	}
+	if usedOldKey {
+		// transparent key rotation: re-issue under the current key
+		s.setCookie(w, cl)
+		s.log.Info("paseto_token_rotated", "user", cl.user)
 	}
 	u := s.users.get(cl.user)
 	if u == nil || u.Disabled || u.Gen != cl.gen {
@@ -867,7 +1002,7 @@ func (s *server) verify(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	cl, u, ok := s.session(r)
+	cl, u, ok := s.session(w, r)
 	if ok {
 		if rd := pendingRedirect(cl, s.cfg.authHost); rd != "" {
 			http.Redirect(w, r, rd, http.StatusFound)
@@ -908,7 +1043,7 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	ip := s.clientIP(r)
 
 	if r.Method == http.MethodGet {
-		if cl, _, ok := s.session(r); ok {
+		if cl, _, ok := s.session(w, r); ok {
 			if p := pendingRedirect(cl, s.cfg.authHost); p != "" {
 				http.Redirect(w, r, p, http.StatusFound)
 				return
@@ -1105,7 +1240,7 @@ func (s *server) totpFail(w http.ResponseWriter, r *http.Request, ip, user, rd, 
 func (s *server) logout(w http.ResponseWriter, r *http.Request) {
 	secHeaders(w, nonce())
 	if c, err := r.Cookie(s.cfg.cookieName); err == nil {
-		if cl, ok := s.cfg.parseSession(c.Value); ok {
+		if cl, ok, _ := s.cfg.parseSessionPASETO(c.Value); ok {
 			if err := s.reg.revoke(cl.sid); err != nil {
 				s.log.Error("persist logout revocation", "error", err)
 			}
@@ -1122,7 +1257,7 @@ func (s *server) logout(w http.ResponseWriter, r *http.Request) {
 func (s *server) enroll(w http.ResponseWriter, r *http.Request) {
 	n := nonce()
 	secHeaders(w, n)
-	cl, u, ok := s.session(r)
+	cl, u, ok := s.session(w, r)
 	if !ok {
 		http.Redirect(w, r, "https://"+s.cfg.authHost+"/_auth/login", http.StatusFound)
 		return
@@ -1196,7 +1331,7 @@ func (s *server) enroll(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleBackupCodes(w http.ResponseWriter, r *http.Request) {
 	n := nonce()
 	secHeaders(w, n)
-	cl, u, ok := s.session(r)
+	cl, u, ok := s.session(w, r)
 	if !ok {
 		http.Redirect(w, r, "https://"+s.cfg.authHost+"/_auth/login", http.StatusFound)
 		return
@@ -1235,7 +1370,7 @@ func (s *server) handleBackupCodes(w http.ResponseWriter, r *http.Request) {
 func (s *server) password(w http.ResponseWriter, r *http.Request) {
 	n := nonce()
 	secHeaders(w, n)
-	cl, u, ok := s.session(r)
+	cl, u, ok := s.session(w, r)
 	if !ok {
 		http.Redirect(w, r, "https://"+s.cfg.authHost+"/_auth/login", http.StatusFound)
 		return

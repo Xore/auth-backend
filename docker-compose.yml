@@ -24,6 +24,8 @@ services:
       - COOKIE_NAME=${COOKIE_NAME:-xore_sso}
       - COOKIE_SECRET=${COOKIE_SECRET:?set COOKIE_SECRET in .env}
       - COOKIE_SECRET_PREVIOUS=${COOKIE_SECRET_PREVIOUS:-}
+      - PASETO_KEY=${PASETO_KEY:-}
+      - PASETO_KEY_PREVIOUS=${PASETO_KEY_PREVIOUS:-}
       # bootstrap only — used once to create the initial admin in users.json
       - AUTH_USERNAME=${AUTH_USERNAME:-admin}
       - AUTH_PASSWORD=${AUTH_PASSWORD:?set AUTH_PASSWORD in .env}

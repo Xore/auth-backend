@@ -68,7 +68,7 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, maxBytes int64, dst any)
 }
 
 func (s *server) passkeyPage(w http.ResponseWriter, r *http.Request) {
-	cl, u, ok := s.session(r)
+	cl, u, ok := s.session(w, r)
 	if !ok {
 		http.Redirect(w, r, "https://"+s.cfg.authHost+"/_auth/login", http.StatusFound)
 		return
@@ -296,7 +296,7 @@ func (s *server) passkeyDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) passkeyGate(w http.ResponseWriter, r *http.Request) (sessionClaims, *User, bool) {
-	cl, u, ok := s.session(r)
+	cl, u, ok := s.session(w, r)
 	if !ok || cl.flags != "" {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return cl, nil, false

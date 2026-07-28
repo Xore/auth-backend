@@ -31,7 +31,7 @@ type AppPageData struct {
 }
 
 func (s *server) renderApp(w http.ResponseWriter, r *http.Request) {
-	cl, u, ok := s.session(r)
+	cl, u, ok := s.session(w, r)
 	if !ok {
 		http.Redirect(w, r, "https://"+s.cfg.authHost+"/_auth/login", http.StatusFound)
 		return

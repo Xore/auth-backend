@@ -36,3 +36,5 @@ golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
 golang.org/x/sys v0.47.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
 gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
 gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+zntr.io/paseto v1.4.0 h1:bwk6orLmyrgCD9OKjtny3e0PSIaoTZiihdVHa6DidkY=
+zntr.io/paseto v1.4.0/go.mod h1:puEzjHDCzQ99c+j0mLs1+CVpD1somX9jmAmCdOwG9qY=
