@@ -268,11 +268,24 @@ function confirmAct(msg, action, extra) {
     unlock: ['Unlock ' + target + '?', 'This clears accumulated login failures and the lockout immediately, allowing new authentication attempts from this IP address.', 'Unlock IP']
   };
   var copy = details[action] || [msg || 'Confirm action?', msg || 'This changes authentication state.', 'Confirm'];
+  var doneMsgs = {
+    enable: 'Enabled <b>' + esc(target) + '</b> — the account can sign in again immediately.',
+    disable: 'Disabled <b>' + esc(target) + '</b> — sessions and trusted devices invalidated.',
+    delete: 'Deleted <b>' + esc(target) + '</b> — the account is permanently removed.',
+    reset_totp: 'Two-factor reset for <b>' + esc(target) + '</b> — they re-enroll at their next sign-in.',
+    reset_passkeys: 'Removed every passkey for <b>' + esc(target) + '</b> — sessions and trusted devices invalidated.',
+    logout_user: 'Logged <b>' + esc(target) + '</b> out on every device.',
+    set_role: extra.role === 'admin'
+      ? 'Promoted <b>' + esc(target) + '</b> to administrator.'
+      : 'Demoted <b>' + esc(target) + '</b> to regular user.',
+    unlock: 'Unlocked <b>' + esc(target) + '</b> — lockout and failure count cleared.'
+  };
   openDangerDialog(copy[0], 'Review the consequences before continuing.',
     '<b>This action takes effect immediately:</b><p class="u-mt8">' + esc(copy[1]) + '</p>',
     copy[2], function () {
       act(action, extra).then(function (j) {
         if (j.temp_password) flash('temp password for ' + esc(extra.username) + ': <b>' + esc(j.temp_password) + '</b><br>shown once — send it over a secure channel');
+        else if (doneMsgs[action]) flash(doneMsgs[action]);
       }).catch(function () { /* error already flashed by api() */ });
     });
 }
@@ -1191,7 +1204,7 @@ function performRevokeSession(sid) {
     method: 'POST',
     headers: {'X-Csrf': CSRF_TOKEN}
   }).then(function (r) {
-    if (r.ok) { fetchState(); } else { flash('revoke failed (http ' + r.status + ')', true); }
+    if (r.ok) { flash('Session revoked — the user must sign in again on that device.'); fetchState(); } else { flash('revoke failed (http ' + r.status + ')', true); }
   }).catch(function () { flash('revoke failed', true); });
 }
 
