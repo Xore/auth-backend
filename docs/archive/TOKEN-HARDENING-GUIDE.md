@@ -1,5 +1,8 @@
 # Token & HMAC Hardening Guide
 
+> **Archived:** The PASETO migration and token-hardening implementation are
+> complete. This document remains as historical design and migration context.
+
 This document audits the current `forward-auth` token machinery in detail,
 maps every weakness to concrete academic or standards references, and provides
 a step-by-step implementation roadmap to a hardened token stack.

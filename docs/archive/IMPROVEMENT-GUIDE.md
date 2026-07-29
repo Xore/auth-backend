@@ -1,5 +1,9 @@
 # Auth-Backend — Improvement Guide
 
+> **Archived:** The accepted items from this assessment have been implemented
+> or deliberately closed. See [`../BACKLOG.md`](../BACKLOG.md) for active
+> deferred work.
+
 This document analyses the current `forward-auth` implementation against 2025–2026 security research
 and best practices, lists concrete gaps, and provides implementation guidance for every item.
 
@@ -209,7 +213,8 @@ if time.Since(reg.lastActive(cl.sid)) > s.cfg.idleTimeout {
 
 ### 3.1 Email-based account recovery
 
-**Current state.** Recovery is purely admin-mediated (see `docs/CREDENTIAL-RECOVERY.md`). There is
+**Current state.** Recovery is purely admin-mediated (see
+[`../CREDENTIAL-RECOVERY.md`](../CREDENTIAL-RECOVERY.md)). There is
 no self-service flow for lost TOTP or password.
 
 **Implementation.**

@@ -1,5 +1,9 @@
 # AI Implementation Roadmap — auth-backend
 
+> **Archived:** This implementation roadmap is complete except for features
+> explicitly deferred by the owner. Active deferred work is tracked in
+> [`../BACKLOG.md`](../BACKLOG.md).
+
 > **Audience:** This document is written for modern AI coding assistants.
 > Each step is self-contained and ends with a concrete verification test so the model can confirm
 > correct completion before proceeding. Steps are ordered by dependency — never skip ahead.
@@ -15,12 +19,12 @@
 
 | Guide | What it covers |
 |---|---|
-| [`THEME-GUIDE.md`](./THEME-GUIDE.md) | CSS design system (variables, components, dark mode) |
+| [`THEME-GUIDE.md`](../THEME-GUIDE.md) | CSS design system (variables, components, dark mode) |
 | [`UI-REDESIGN-GUIDE.md`](./UI-REDESIGN-GUIDE.md) | Login / enroll / password pages restyle |
 | [`ADMIN-UI-GUIDE.md`](./ADMIN-UI-GUIDE.md) | Settings modal, admin panel, new Go routes |
 | [`IMPROVEMENT-GUIDE.md`](./IMPROVEMENT-GUIDE.md) | Security gaps, missing features, priority matrix |
 | [`TOKEN-HARDENING-GUIDE.md`](./TOKEN-HARDENING-GUIDE.md) | PASETO v4.local migration, key rotation |
-| [`CREDENTIAL-RECOVERY.md`](./CREDENTIAL-RECOVERY.md) | Admin-mediated recovery runbook (already complete) |
+| [`CREDENTIAL-RECOVERY.md`](../CREDENTIAL-RECOVERY.md) | Admin-mediated recovery runbook (already complete) |
 
 ---
 

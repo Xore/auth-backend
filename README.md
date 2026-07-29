@@ -348,10 +348,10 @@ CodeQL, secret scanning and workflow linting (actionlint + zizmor).
 
 ## Documentation
 
-- [docs/CREDENTIAL-RECOVERY.md](docs/CREDENTIAL-RECOVERY.md) — break-glass recovery
-- [docs/ADMIN-UI-GUIDE.md](docs/ADMIN-UI-GUIDE.md) — admin panel
-- [docs/TOKEN-HARDENING-GUIDE.md](docs/TOKEN-HARDENING-GUIDE.md) — session token design
-- [docs/UI-REDESIGN-GUIDE.md](docs/UI-REDESIGN-GUIDE.md) / [docs/THEME-GUIDE.md](docs/THEME-GUIDE.md) — UI and shared-theme integration
+- [docs/README.md](docs/README.md) — documentation index
+- [docs/CREDENTIAL-RECOVERY.md](docs/CREDENTIAL-RECOVERY.md) — break-glass recovery runbook
+- [docs/THEME-GUIDE.md](docs/THEME-GUIDE.md) — shared-theme integration
+- [docs/BACKLOG.md](docs/BACKLOG.md) — deliberately deferred work
 
 ## Related
 

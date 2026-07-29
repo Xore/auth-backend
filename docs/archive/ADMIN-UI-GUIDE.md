@@ -1,5 +1,9 @@
 # Admin UI — Shared Settings Surface
 
+> **Archived:** The admin settings surface described here has been implemented.
+> Keep this document for historical design context; use the application and
+> current README for operating instructions.
+
 This guide covers how to build the **settings / admin panel modal** shown in
 the screenshot: a split-pane surface with a left sidebar and right content area.
 It uses the shared theme while preserving the existing `adminpage.go` and

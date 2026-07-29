@@ -1,5 +1,8 @@
 # Login UI Redesign Guide — Shared Theme
 
+> **Archived:** The shared-theme UI redesign has been implemented. Use
+> [`../THEME-GUIDE.md`](../THEME-GUIDE.md) for current integration guidance.
+
 This guide covers every step to wire the two new HTML templates
 (`forward-auth/ui/login.html`, `forward-auth/ui/verify.html`) into the
 existing Go `forward-auth` service.

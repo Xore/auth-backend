@@ -359,7 +359,7 @@ func (s *server) adminAudit(w http.ResponseWriter, r *http.Request) {
 // at build time with -ldflags "-X main.version=<tag>".
 var version = "dev"
 
-// SystemInfo backs GET /_auth/admin/api/system (ADMIN-UI-GUIDE.md §11).
+// SystemInfo backs GET /_auth/admin/api/system.
 type SystemInfo struct {
 	Version      string    `json:"version"`
 	Uptime       string    `json:"uptime"`
