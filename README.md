@@ -184,15 +184,6 @@ openssl rand -hex 32   # -> COOKIE_SECRET and PASETO_KEY in .env
 docker compose up -d --build auth-portal
 ```
 
-Production updates can also be deployed manually from GitHub Actions with the
-`Deploy` workflow. The existing `honeypot-home` self-hosted runner synchronizes
-the repository over WireGuard to `root@10.8.0.1:/opt/auth-backend`, preserves
-`.env`, validates Compose, rebuilds the authentication services, and fails
-unless `auth-portal` becomes healthy. Its `production-vps` environment holds a
-dedicated `VPS_SSH_KEY`, pinned `VPS_KNOWN_HOSTS`, and
-`AUTH_INTROSPECTION_TOKEN`; none are stored in Git. Optional environment
-variables `AUTH_VPS_HOST` and `AUTH_VPS_USER` override the destination.
-
 Then wire it into your reverse proxy (Traefik shown; adapt for others):
 
 - **router** `auth-portal` → ``Host(`<AUTH_HOST>`)`` → service
