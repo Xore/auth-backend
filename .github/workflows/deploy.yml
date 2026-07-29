@@ -27,27 +27,26 @@ jobs:
           vps_host=${AUTH_VPS_HOST:-10.8.0.1}
           vps_user=${AUTH_VPS_USER:-root}
           ssh_options=(-o BatchMode=yes -o StrictHostKeyChecking=yes)
-          destination=/opt/auth-backend
           ssh "${ssh_options[@]}" "$vps_user@$vps_host" \
-            "install -d -m 750 '$destination'"
+            'install -d -m 750 /opt/auth-backend'
           rsync -az --delete-delay \
             --exclude '.git/' --exclude '.github/' --exclude '.env' \
             --exclude 'auth-backups/' \
             -e "ssh ${ssh_options[*]}" \
-            ./ "$vps_user@$vps_host:$destination/"
-          ssh "${ssh_options[@]}" "$vps_user@$vps_host" "
+            ./ "$vps_user@$vps_host:/opt/auth-backend/"
+          ssh "${ssh_options[@]}" "$vps_user@$vps_host" 'bash -se' <<'REMOTE'
             set -eu
-            cd '$destination'
+            cd /opt/auth-backend
             test -f .env
             chmod 600 .env
             docker compose config --quiet
             docker compose up -d --build auth-redis auth-portal
-            for attempt in \$(seq 1 12); do
-              status=\$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' auth-portal 2>/dev/null || true)
-              [ \"\$status\" = healthy ] && exit 0
+            for attempt in $(seq 1 12); do
+              status=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' auth-portal 2>/dev/null || true)
+              [ "$status" = healthy ] && exit 0
               sleep 5
             done
             docker compose ps
             docker compose logs --tail=100 auth-portal
             exit 1
-          "
+          REMOTE
