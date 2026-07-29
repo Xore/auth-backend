@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -88,6 +89,7 @@ func (u *User) recoveryEmail() string {
 }
 
 type User struct {
+	Subject       string        `json:"subject"`
 	Username      string        `json:"username"`
 	Hash          string        `json:"hash"`
 	Role          string        `json:"role"`
@@ -201,10 +203,23 @@ func (st *userStore) load() error {
 		return fmt.Errorf("parse %s: %w", st.path, err)
 	}
 	m := map[string]*User{}
+	subjects := map[string]string{}
+	migrated := false
 	for _, u := range f.Users {
 		if u.Username != "" {
+			if u.Subject == "" {
+				u.Subject = uuid.NewString()
+				migrated = true
+			} else if _, err := uuid.Parse(u.Subject); err != nil {
+				return fmt.Errorf("user %q has invalid subject", u.Username)
+			}
+			if existing := subjects[u.Subject]; existing != "" {
+				return fmt.Errorf("users %q and %q share a subject", existing, u.Username)
+			}
+			subjects[u.Subject] = u.Username
 			if len(u.PasskeyUserID) == 0 {
 				u.PasskeyUserID = randomBytes(32)
+				migrated = true
 			}
 			m[u.Username] = u
 		}
@@ -212,6 +227,9 @@ func (st *userStore) load() error {
 	st.users = m
 	if f.LastStep != nil {
 		st.lastStep = f.LastStep
+	}
+	if migrated {
+		return st.saveLocked()
 	}
 	return nil
 }
@@ -292,6 +310,7 @@ func (st *userStore) bootstrap(username, password, totpSecret string) (created b
 		hash = h
 	}
 	st.users[username] = &User{
+		Subject:       uuid.NewString(),
 		Username:      username,
 		Hash:          hash,
 		Role:          roleAdmin,
@@ -383,6 +402,16 @@ func (st *userStore) create(u *User) error {
 	defer st.mu.Unlock()
 	if _, ok := st.users[u.Username]; ok {
 		return errors.New("user already exists")
+	}
+	if u.Subject == "" {
+		u.Subject = uuid.NewString()
+	} else if _, err := uuid.Parse(u.Subject); err != nil {
+		return errors.New("invalid user subject")
+	}
+	for _, existing := range st.users {
+		if existing.Subject == u.Subject {
+			return errors.New("user subject already exists")
+		}
 	}
 	st.users[u.Username] = u
 	if err := st.saveLocked(); err != nil {

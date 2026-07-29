@@ -28,7 +28,15 @@ flowchart LR
 ```
 
 - `/_auth/verify` returns **200** (with `X-Auth-User`/`X-Auth-Role`
-  headers) for a valid session, **302** to the login page otherwise.
+  identity hints) for a valid session, **302** to the login page otherwise.
+  These headers are useful for display and legacy upstreams but are not an
+  authorization credential unless the upstream is provably reachable only
+  through the trusted proxy path.
+- Protected applications that make authorization decisions should use
+  `POST /_auth/introspect` instead of trusting request headers. Introspection
+  requires a separate service bearer token and the browser session cookie,
+  then returns the current immutable subject, username, role and generation
+  after rechecking revocation, account status and allowed hosts.
 - Sessions are stateless PASETO tokens (user, generation, session id,
   flags, expiry). A per-user **generation counter** invalidates every
   session and trusted-device cookie on password change, admin reset or
@@ -247,6 +255,7 @@ new key and retain the active key as the previous key for the transition.
 | `WEBHOOK_URL` | *(empty)* | Optional alert webhook — must be `https://` |
 | `WEBHOOK_PROVIDER` | `raw` | Webhook payload format: `raw`, `slack`, `ntfy` or `gotify` |
 | `METRICS_TOKEN` | *(empty)* | Bearer token gating `/_auth/metrics`; blank disables |
+| `AUTH_INTROSPECTION_TOKEN` | *(empty)* | Service bearer token gating `POST /_auth/introspect`; at least 32 bytes, blank disables |
 | `SSO_URL` | *(empty)* | External IdP URL — adds a "Continue with SSO" button |
 | `SMTP_URL` | *(empty)* | `smtps://user:pass@host:465` or `smtp://[user:pass@]host:587` — enables email recovery |
 | `SMTP_FROM` | `forward-auth@<AUTH_HOST>` | Sender address for recovery mail |
@@ -285,6 +294,7 @@ show nothing.
 | Path | Purpose |
 |---|---|
 | `/_auth/verify` | forwardAuth check (Traefik only) — 200 or 302 |
+| `POST /_auth/introspect` | Live session/identity lookup for protected backends; requires `AUTH_INTROSPECTION_TOKEN` |
 | `/_auth/login` | login page + POST handler |
 | `/_auth/totp` | second-factor step (TOTP / backup code) |
 | `/_auth/logout` | revoke + clear the session |

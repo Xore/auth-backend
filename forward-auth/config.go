@@ -50,6 +50,7 @@ type config struct {
 	webhookURL        string
 	webhookProvider   string
 	metricsToken      string
+	introspectToken   string
 	trustedNets       []*net.IPNet
 	maxBodyBytes      int64
 	orgID             string
@@ -209,6 +210,7 @@ func loadConfig(logger *slog.Logger) config {
 		webhookURL:        getenv("WEBHOOK_URL", ""),
 		webhookProvider:   getenv("WEBHOOK_PROVIDER", "raw"),
 		metricsToken:      getenvFile("METRICS_TOKEN", ""),
+		introspectToken:   getenvFile("AUTH_INTROSPECTION_TOKEN", ""),
 		trustedNets:       parseCIDRs(getenv("TRUSTED_PROXIES", defaultTrustedProxies), logger),
 		maxBodyBytes:      int64(atoi(os.Getenv("MAX_BODY_KB"), 64)) * 1024,
 		orgID:             getenv("ORG_ID", ""),
@@ -270,6 +272,9 @@ func (c config) validate() error {
 	}
 	if c.maxBodyBytes < 1024 || c.maxBodyBytes > 10<<20 {
 		problems = append(problems, "MAX_BODY_KB must be between 1 and 10240")
+	}
+	if c.introspectToken != "" && len(c.introspectToken) < 32 {
+		problems = append(problems, "AUTH_INTROSPECTION_TOKEN must be at least 32 bytes when configured")
 	}
 	if len(c.trustedNets) == 0 {
 		problems = append(problems, "TRUSTED_PROXIES must contain at least one valid CIDR")
