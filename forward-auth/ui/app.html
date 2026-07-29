@@ -49,7 +49,7 @@
   .danger-dialog__warning{padding:12px 14px;border:1px solid color-mix(in srgb,var(--danger) 35%,transparent);border-radius:var(--radius-md);
     background:var(--red-subtle);color:var(--text-primary);font-size:12px;line-height:1.55}
   .danger-dialog__warning ul{margin:8px 0 0;padding-left:18px}
-  #flash{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:200;display:none;
+  #flash{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:400;display:none;
     background:var(--surface-0);border:1px solid var(--green);border-radius:var(--radius-md);
     padding:14px 20px;font-size:13px;color:var(--text-primary);box-shadow:var(--shadow-modal);
     max-width:90vw;word-break:break-all;text-align:center}
@@ -87,9 +87,12 @@
 </style>
 </head>
 <body>
-  <div id="flash"></div>
   <dialog class="modal modal--permanent" id="settings-modal"
           aria-modal="true" aria-labelledby="settings-title">
+    <!-- Flash messages (incl. one-time temp passwords) must live INSIDE the
+         permanent dialog: a modal dialog paints in the browser top layer
+         above any z-index, so a body-level flash is invisible here. -->
+    <div id="flash"></div>
 
     <!-- Sidebar -->
     <aside class="modal__sidebar">

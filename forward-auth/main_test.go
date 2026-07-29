@@ -71,6 +71,7 @@ func TestActionDialogsStayInsidePermanentSettingsDialog(t *testing.T) {
 	}
 	settingsEnd += settingsStart
 	for _, id := range []string{
+		`id="flash"`,
 		`id="edit-dialog-backdrop"`,
 		`id="rotate-dialog-backdrop"`,
 		`id="danger-dialog-backdrop"`,
