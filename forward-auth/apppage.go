@@ -7,6 +7,7 @@ package main
 import (
 	"html/template"
 	"net/http"
+	"strings"
 )
 
 // mustReadUI reads an embedded file from the ui/ directory or panics —
@@ -30,6 +31,24 @@ type AppPageData struct {
 	Nonce   string
 }
 
+// allowAppFraming relaxes clickjacking protection for /auth/app only, and
+// only towards operator-configured origins (APP_FRAME_ANCESTORS) such as the
+// honeypot dashboard's settings popup. The login, verify, and recovery pages
+// always keep framing denied; with no configured ancestors the default
+// headers from secHeaders are untouched.
+func allowAppFraming(h http.Header, ancestors []string) {
+	if len(ancestors) == 0 {
+		return
+	}
+	h.Del("X-Frame-Options")
+	h.Set("Content-Security-Policy", strings.Replace(
+		h.Get("Content-Security-Policy"),
+		"frame-ancestors 'none'",
+		"frame-ancestors 'self' "+strings.Join(ancestors, " "),
+		1,
+	))
+}
+
 func (s *server) renderApp(w http.ResponseWriter, r *http.Request) {
 	cl, u, ok := s.session(w, r)
 	if !ok {
@@ -38,6 +57,7 @@ func (s *server) renderApp(w http.ResponseWriter, r *http.Request) {
 	}
 	n := nonce()
 	secHeaders(w, n)
+	allowAppFraming(w.Header(), s.cfg.frameAncestors)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := appTmpl.Execute(w, AppPageData{
 		User:    u.Username,

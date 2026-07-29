@@ -42,6 +42,9 @@ services:
       # Service-to-service session introspection for protected applications.
       # Generate with: openssl rand -hex 32
       - AUTH_INTROSPECTION_TOKEN=${AUTH_INTROSPECTION_TOKEN:-}
+      # Optional: comma-separated https origins allowed to embed /auth/app in
+      # an iframe (e.g. the honeypot dashboard settings popup). Empty = deny.
+      - APP_FRAME_ANCESTORS=${APP_FRAME_ANCESTORS:-}
       - TOTP_ISSUER=${TOTP_ISSUER:-}
       - SESSION_TTL_HOURS=${SESSION_TTL_HOURS:-12}
       - IDLE_TIMEOUT_MINUTES=${IDLE_TIMEOUT_MINUTES:-60}

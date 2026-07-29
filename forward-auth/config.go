@@ -55,6 +55,7 @@ type config struct {
 	maxBodyBytes      int64
 	orgID             string
 	ssoURL            string
+	frameAncestors    []string // APP_FRAME_ANCESTORS: https origins allowed to frame /auth/app
 	smtpURL           string
 	smtpFrom          string
 	smtpAllowInsecure bool // dev-only: permit smtp:// without STARTTLS
@@ -123,6 +124,42 @@ func parseCIDRs(s string, logger *slog.Logger) []*net.IPNet {
 		}
 	}
 	return nets
+}
+
+// parseFrameAncestors validates APP_FRAME_ANCESTORS entries: each must be an
+// https origin (scheme + host, optional port) with no path, query, userinfo,
+// or fragment. Invalid entries are dropped with a warning — the default
+// posture remains "framing denied".
+func parseFrameAncestors(raw string, logger *slog.Logger) []string {
+	var origins []string
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		u, err := url.Parse(part)
+		if err != nil || u.Scheme != "https" || u.User != nil || u.Hostname() == "" ||
+			(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+			logger.Warn("ignoring invalid APP_FRAME_ANCESTORS entry", "entry", part)
+			continue
+		}
+		origin := "https://" + u.Host
+		duplicate := false
+		for _, existing := range origins {
+			if existing == origin {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			origins = append(origins, origin)
+		}
+	}
+	if len(origins) > 8 {
+		logger.Warn("APP_FRAME_ANCESTORS capped at 8 origins", "count", len(origins))
+		origins = origins[:8]
+	}
+	return origins
 }
 
 func loadConfig(logger *slog.Logger) config {
@@ -215,6 +252,7 @@ func loadConfig(logger *slog.Logger) config {
 		maxBodyBytes:      int64(atoi(os.Getenv("MAX_BODY_KB"), 64)) * 1024,
 		orgID:             getenv("ORG_ID", ""),
 		ssoURL:            getenv("SSO_URL", ""),
+		frameAncestors:    parseFrameAncestors(getenv("APP_FRAME_ANCESTORS", ""), logger),
 		smtpURL:           getenv("SMTP_URL", ""),
 		smtpFrom:          getenv("SMTP_FROM", "forward-auth@"+authHost),
 		smtpAllowInsecure: getenv("SMTP_ALLOW_INSECURE", "false") == "true",
