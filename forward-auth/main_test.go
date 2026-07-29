@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -173,6 +174,9 @@ func TestStoreCopiesAndPersistsPasskeyID(t *testing.T) {
 	if len(u.PasskeyUserID) != 32 {
 		t.Fatalf("unexpected WebAuthn ID length %d", len(u.PasskeyUserID))
 	}
+	if u.Subject == "" {
+		t.Fatal("bootstrap user is missing immutable subject")
+	}
 	u.Role = roleUser
 	if st.get("admin").Role != roleAdmin {
 		t.Fatal("get returned mutable store pointer")
@@ -183,6 +187,60 @@ func TestStoreCopiesAndPersistsPasskeyID(t *testing.T) {
 	}
 	if string(loaded.get("admin").PasskeyUserID) != string(st.get("admin").PasskeyUserID) {
 		t.Fatal("WebAuthn ID was not stable")
+	}
+	if loaded.get("admin").Subject != st.get("admin").Subject {
+		t.Fatal("immutable subject was not stable")
+	}
+}
+
+func TestStoreMigratesLegacyUserToStableSubject(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "users.json")
+	if err := os.WriteFile(path, []byte(`{"users":[{"username":"legacy","hash":"x","role":"user","gen":1,"created":"2026-07-29T00:00:00Z"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := newUserStore(path)
+	if err := store.load(); err != nil {
+		t.Fatal(err)
+	}
+	subject := store.get("legacy").Subject
+	if subject == "" {
+		t.Fatal("legacy user was not assigned an immutable subject")
+	}
+	reloaded := newUserStore(path)
+	if err := reloaded.load(); err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.get("legacy").Subject != subject {
+		t.Fatal("migrated subject did not persist across reload")
+	}
+}
+
+func TestStoreRejectsInvalidOrDuplicateSubjects(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{
+			name: "invalid",
+			body: `{"users":[{"subject":"not-a-uuid","username":"first","hash":"x","role":"user","gen":1}]}`,
+		},
+		{
+			name: "duplicate",
+			body: `{"users":[
+				{"subject":"b65ab0dc-cc07-4b3d-9af0-b482dbb4b096","username":"first","hash":"x","role":"user","gen":1},
+				{"subject":"b65ab0dc-cc07-4b3d-9af0-b482dbb4b096","username":"second","hash":"x","role":"user","gen":1}
+			]}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "users.json")
+			if err := os.WriteFile(path, []byte(test.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := newUserStore(path).load(); err == nil {
+				t.Fatal("invalid subject store was accepted")
+			}
+		})
 	}
 }
 
@@ -231,6 +289,122 @@ func TestVerifyReturnsConfiguredIdentityHeaders(t *testing.T) {
 	s.verify(w, r)
 	if w.Code != 200 || w.Header().Get("X-Auth-User") != "admin" || w.Header().Get("X-Auth-Role") != "admin" {
 		t.Fatalf("unexpected verify response: %d %v", w.Code, w.Header())
+	}
+}
+
+func TestIntrospectionReturnsCurrentAuthoritativeIdentity(t *testing.T) {
+	c := testConfig(t)
+	c.introspectToken = strings.Repeat("i", 32)
+	path := filepath.Join(t.TempDir(), "users.json")
+	st := newUserStore(path)
+	if _, err := st.bootstrap("admin", "a-long-test-password", ""); err != nil {
+		t.Fatal(err)
+	}
+	u := st.get("admin")
+	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", "raw", slog.Default())}
+	claims := sessionClaims{user: u.Username, gen: u.Gen, sid: "introspection-session", exp: time.Now().Add(time.Minute).Unix()}
+	cookie := &http.Cookie{Name: c.cookieName, Value: mustIssuePASETO(t, c, claims)}
+
+	request := httptest.NewRequest(http.MethodPost, "http://auth/_auth/introspect", strings.NewReader(`{"target_host":"app.example.com"}`))
+	request.Header.Set("Authorization", "Bearer "+c.introspectToken)
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(cookie)
+	response := httptest.NewRecorder()
+	s.introspect(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("introspection status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var identity introspectionResponse
+	if err := json.NewDecoder(response.Body).Decode(&identity); err != nil {
+		t.Fatal(err)
+	}
+	if identity.Subject != u.Subject || identity.Username != u.Username || identity.Role != roleAdmin || identity.Generation != u.Gen {
+		t.Fatalf("unexpected identity: %#v", identity)
+	}
+
+	if err := st.mutate("admin", func(current *User) bool {
+		current.AllowedHosts = []string{"app.example.com"}
+		current.Role = roleUser
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodPost, "http://auth/_auth/introspect", strings.NewReader(`{"target_host":"app.example.com"}`))
+	request.Header.Set("Authorization", "Bearer "+c.introspectToken)
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(cookie)
+	response = httptest.NewRecorder()
+	s.introspect(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("role-change introspection status = %d", response.Code)
+	}
+	if err := json.NewDecoder(response.Body).Decode(&identity); err != nil {
+		t.Fatal(err)
+	}
+	if identity.Role != roleUser {
+		t.Fatalf("stale role returned after mutation: %#v", identity)
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "http://auth/_auth/introspect", strings.NewReader(`{"target_host":"other.example.com"}`))
+	request.Header.Set("Authorization", "Bearer "+c.introspectToken)
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(cookie)
+	response = httptest.NewRecorder()
+	s.introspect(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("disallowed target host status = %d, want %d", response.Code, http.StatusForbidden)
+	}
+
+	if err := st.mutate("admin", func(current *User) bool {
+		current.Disabled = true
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodPost, "http://auth/_auth/introspect", strings.NewReader(`{"target_host":"app.example.com"}`))
+	request.Header.Set("Authorization", "Bearer "+c.introspectToken)
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(cookie)
+	response = httptest.NewRecorder()
+	s.introspect(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("disabled-account status = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestIntrospectionRejectsForgedServiceAuthorizationAndInvalidSession(t *testing.T) {
+	c := testConfig(t)
+	c.introspectToken = strings.Repeat("i", 32)
+	st := newUserStore(filepath.Join(t.TempDir(), "users.json"))
+	if _, err := st.bootstrap("admin", "a-long-test-password", ""); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", "raw", slog.Default())}
+	for _, test := range []struct {
+		name   string
+		token  string
+		cookie string
+		status int
+	}{
+		{name: "missing service token", status: http.StatusUnauthorized},
+		{name: "wrong service token", token: strings.Repeat("x", 32), status: http.StatusUnauthorized},
+		{name: "invalid session", token: c.introspectToken, cookie: "forged", status: http.StatusUnauthorized},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "http://auth/_auth/introspect", strings.NewReader(`{"target_host":"app.example.com"}`))
+			request.Header.Set("Content-Type", "application/json")
+			if test.token != "" {
+				request.Header.Set("Authorization", "Bearer "+test.token)
+			}
+			if test.cookie != "" {
+				request.AddCookie(&http.Cookie{Name: c.cookieName, Value: test.cookie})
+			}
+			response := httptest.NewRecorder()
+			s.introspect(response, request)
+			if response.Code != test.status {
+				t.Fatalf("status = %d, want %d", response.Code, test.status)
+			}
+		})
 	}
 }
 
@@ -306,6 +480,14 @@ func TestConfigRejectsPlaceholders(t *testing.T) {
 	c.secret = []byte("CHANGE_ME_openssl_rand_hex_32")
 	if err := c.validate(); err == nil {
 		t.Fatal("placeholder configuration accepted")
+	}
+}
+
+func TestConfigRejectsShortIntrospectionToken(t *testing.T) {
+	c := testConfig(t)
+	c.introspectToken = "too-short"
+	if err := c.validate(); err == nil || !strings.Contains(err.Error(), "AUTH_INTROSPECTION_TOKEN") {
+		t.Fatalf("short introspection token was not rejected: %v", err)
 	}
 }
 
