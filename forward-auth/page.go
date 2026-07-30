@@ -160,6 +160,31 @@ func (s *server) renderRecoverRequest(w http.ResponseWriter, errMsg string, sent
 	_, _ = w.Write([]byte(page))
 }
 
+// renderMagicRequest shows the "email me a sign-in link" form. sent renders
+// the generic success notice, which must be identical whether or not the
+// account exists, is disabled, or has a recovery address on file.
+func (s *server) renderMagicRequest(w http.ResponseWriter, errMsg string, sent bool, rd, nonce string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	errHTML := ""
+	if errMsg != "" {
+		errHTML = `<p class="form-error">` + htmlEscape(errMsg) + `</p>`
+	}
+	sentHTML := ""
+	if sent {
+		sentHTML = `<p class="status-ok">If that account exists, a sign-in link is on its way — check your inbox.</p>`
+	}
+	page := magicRequestPage
+	page = strings.ReplaceAll(page, "{{FT}}", s.cfg.issueForm())
+	page = strings.ReplaceAll(page, "{{ERROR}}", errHTML)
+	page = strings.ReplaceAll(page, "{{SENT}}", sentHTML)
+	page = strings.ReplaceAll(page, "{{NONCE}}", nonce)
+	// rd last: safeRedirect preserves the query string, and html.EscapeString
+	// leaves braces alone, so substituting it earlier would let a crafted
+	// ?rd= smuggle a later placeholder into the output.
+	page = strings.ReplaceAll(page, "{{RD}}", htmlEscape(rd))
+	_, _ = w.Write([]byte(page))
+}
+
 func (s *server) renderRecoverReset(w http.ResponseWriter, token, errMsg, nonce string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	errHTML := ""
@@ -328,7 +353,7 @@ const passwordPage = pageHead + `
       <input class="form-input" id="cur" name="current" type="password" autocomplete="current-password" autofocus>
     </div>
     <div class="form-group">
-      <label class="form-label" for="n1">new password <span class="label-hint">— min 10 chars</span></label>
+      <label class="form-label" for="n1">new password <span class="label-hint">— min 15 chars</span></label>
       <input class="form-input" id="n1" name="new1" type="password" autocomplete="new-password">
     </div>
     <div class="form-group">
@@ -373,13 +398,34 @@ const recoverRequestPage = pageHead + `
 </body>
 </html>`
 
+const magicRequestPage = pageHead + `
+  <form class="card auth-card" method="post" action="/_auth/magic" autocomplete="off">` + brandHTML + `
+    <div class="sub">sign in with an email link</div>
+    <input type="hidden" name="ft" value="{{FT}}">
+    <input type="hidden" name="rd" value="{{RD}}">
+    <div class="trap" aria-hidden="true">
+      <label>Leave this field empty</label>
+      <input type="text" name="website" tabindex="-1" autocomplete="off">
+    </div>
+    {{SENT}}
+    {{ERROR}}
+    <div class="form-group">
+      <label class="form-label" for="u">username / email</label>
+      <input class="form-input" id="u" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" autofocus>
+    </div>
+    <button type="submit" class="btn btn-primary auth-btn">email me a sign-in link</button>
+    <div class="foot"><a href="/_auth/login">back to sign in</a></div>
+  </form>
+</body>
+</html>`
+
 const recoverResetPage = pageHead + `
   <form class="card auth-card" method="post" action="/_auth/recover" autocomplete="off">` + brandHTML + `
     <div class="sub">choose a new password</div>
     <input type="hidden" name="token" value="{{TOKEN}}">
     {{ERROR}}
     <div class="form-group">
-      <label class="form-label" for="n1">new password <span class="label-hint">— min 10 chars</span></label>
+      <label class="form-label" for="n1">new password <span class="label-hint">— min 15 chars</span></label>
       <input class="form-input" id="n1" name="new1" type="password" autocomplete="new-password" autofocus>
     </div>
     <div class="form-group">

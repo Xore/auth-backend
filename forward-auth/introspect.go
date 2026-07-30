@@ -13,6 +13,18 @@ type introspectionRequest struct {
 	TargetHost string `json:"target_host"`
 }
 
+// cookieSink absorbs the Set-Cookie that session() emits when it transparently
+// re-issues a token signed with a previous PASETO key. On the introspection
+// path the response goes to the calling service, not the browser, so that
+// cookie could never reach its owner — forwarding it would only risk the
+// service replaying another user's session cookie. Rotation is not lost: the
+// next browser-facing request re-issues it against the real writer.
+type cookieSink struct{ h http.Header }
+
+func (c cookieSink) Header() http.Header         { return c.h }
+func (c cookieSink) Write(b []byte) (int, error) { return len(b), nil }
+func (c cookieSink) WriteHeader(int)             {}
+
 type introspectionResponse struct {
 	Subject     string `json:"subject"`
 	Username    string `json:"username"`
@@ -63,7 +75,7 @@ func (s *server) introspect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid target host", http.StatusBadRequest)
 		return
 	}
-	claims, user, ok := s.session(w, r)
+	claims, user, ok := s.session(cookieSink{h: http.Header{}}, r)
 	if !ok || claims.flags != "" {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return

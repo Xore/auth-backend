@@ -24,6 +24,8 @@ func (s *server) registerRoutes(mux *http.ServeMux) {
 	})
 	mux.HandleFunc("/_auth/verify", s.verify)
 	mux.HandleFunc("POST /_auth/introspect", s.introspect)
+	mux.HandleFunc("/_auth/magic", s.magic)
+	mux.HandleFunc("/_auth/resend", s.resend)
 	mux.HandleFunc("/_auth/login", s.login)
 	mux.HandleFunc("/_auth/totp", s.totp)
 	mux.HandleFunc("/_auth/logout", s.logout)

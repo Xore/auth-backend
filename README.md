@@ -140,6 +140,21 @@ sequenceDiagram
 - A successful reset bumps both generations — every session and trusted
   device dies
 
+**Magic-link sign-in** (`/_auth/magic`, enabled by `MAGIC_LINK=true` + `SMTP_URL`)
+- 15-minute, single-use HMAC sign-in tokens. The fingerprint covers a
+  per-user counter (single use), the session generation, and the password
+  hash — so a password change, an admin disable or "log out everywhere", or
+  a passkey/TOTP reset invalidates every outstanding link without those code
+  paths needing to know magic links exist
+- Validation and consumption are atomic under the store lock: exactly one
+  concurrent redemption succeeds
+- Replaces the **password factor only** — users with TOTP enrolled still
+  complete the second factor, and `REQUIRE_TOTP=true` still forces
+  enrollment before the session is usable
+- Same anti-enumeration contract as recovery: the response is byte-identical
+  whether the account exists, is disabled, or has no recovery address
+- Bounded per-IP rate limiter (3/hour), shared design with recovery
+
 ## Deployment architecture
 
 ```mermaid
@@ -238,6 +253,7 @@ new key and retain the active key as the previous key for the transition.
 | `TOTP_ISSUER` | `AUTH_HOST` | Issuer name shown in authenticator apps |
 | `REQUIRE_TOTP` | `true` | Force accounts without TOTP through enrollment |
 | `PASSWORDLESS` | `false` | Passkey-only mode: password login and email recovery are disabled |
+| `MAGIC_LINK` | `false` | Email magic-link sign-in at `/_auth/magic`; requires `SMTP_URL` (startup fails without it) |
 | `TRUST_DEVICE_DAYS` | `0` | Days a device skips re-challenging TOTP (0 = always challenge) |
 | `TRUSTED_PROXIES` | loopback + RFC1918 | Comma-separated proxy CIDRs trusted to set client-IP headers |
 | `SESSION_TTL_HOURS` | `12` | Absolute session lifetime |
@@ -303,6 +319,8 @@ show nothing.
 | `/_auth/password` | self-service password change |
 | `/_auth/passkeys` | register and remove WebAuthn/passkeys |
 | `/_auth/recover` | email-based self-service password reset (needs `SMTP_URL`) |
+| `/_auth/magic` | email magic-link sign-in (needs `MAGIC_LINK=true` + `SMTP_URL`) |
+| `/_auth/resend` | request another magic link (same handler as `POST /_auth/magic`) |
 | `/_auth/sessions/mine` | the user's own active sessions |
 | `/_auth/sessions/trusted` | the user's trusted devices |
 | `/auth/app` | settings + admin app shell |

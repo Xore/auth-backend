@@ -53,6 +53,38 @@ The portal deliberately prevents deleting, disabling, or demoting your own
 session and prevents removal of the last enabled administrator. Create and test
 a second administrator first if you need to delete the original administrator.
 
+### What these actions invalidate
+
+Every action above also kills outstanding **email tokens** — both password-reset
+links (`/_auth/recover`) and, when `MAGIC_LINK=true`, sign-in links
+(`/_auth/magic`). This matters when responding to a mailbox compromise: an
+attacker who harvested an unclicked link from the user's inbox cannot redeem it
+after you act.
+
+All six revocation actions below invalidate all three, with no exceptions:
+
+| Action | Sessions | Trusted devices | Outstanding email links |
+|---|---|---|---|
+| reset pw | invalidated | invalidated | invalidated |
+| reset 2fa | invalidated | invalidated | invalidated |
+| reset passkeys | invalidated | invalidated | invalidated |
+| logout | invalidated | invalidated | invalidated |
+| disable | invalidated | invalidated | invalidated |
+| user changes own password | invalidated | invalidated | invalidated |
+
+Each of these bumps the account's session and device generations. Email links
+are bound to a fingerprint covering the password hash, the session generation,
+and a per-user single-use counter, so any generation bump breaks the
+fingerprint. Links also expire on their own after 15 minutes and work exactly
+once.
+
+**enable** and **unlock** are not revocation actions — they do not bump the
+generations and do not invalidate anything.
+
+If you are responding to a suspected mailbox compromise and want certainty
+without waiting for the 15-minute expiry, use **logout** on the account — it is
+the cheapest action that invalidates every outstanding link.
+
 ## Change your own password
 
 1. Sign in normally.

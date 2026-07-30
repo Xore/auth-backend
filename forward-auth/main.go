@@ -98,6 +98,7 @@ func main() {
 
 		startedAt:    time.Now(),
 		recoverLimit: rateLimiter{max: 3, window: time.Hour, maxKeys: rateLimiterMaxKeys},
+		magicLimit:   rateLimiter{max: 3, window: time.Hour, maxKeys: rateLimiterMaxKeys},
 	}
 	wa, err := webauthn.New(&webauthn.Config{
 		RPDisplayName: cfg.totpIssuer,

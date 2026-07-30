@@ -37,6 +37,7 @@ type config struct {
 	usersFile         string
 	requireTOTP       bool
 	passwordless      bool // PASSWORDLESS=true: passkey-only sign-in
+	magicLink         bool // MAGIC_LINK=true: email magic-link sign-in (needs SMTP_URL)
 	trustDevDays      int
 	ttl               time.Duration
 	idleTimeout       time.Duration
@@ -234,6 +235,7 @@ func loadConfig(logger *slog.Logger) config {
 		usersFile:         getenv("USERS_FILE", "/data/users.json"),
 		requireTOTP:       getenv("REQUIRE_TOTP", "true") != "false",
 		passwordless:      getenv("PASSWORDLESS", "false") == "true",
+		magicLink:         getenv("MAGIC_LINK", "false") == "true",
 		trustDevDays:      atoi(os.Getenv("TRUST_DEVICE_DAYS"), 0),
 		ttl:               time.Duration(atoi(os.Getenv("SESSION_TTL_HOURS"), 12)) * time.Hour,
 		idleTimeout:       time.Duration(atoi(os.Getenv("IDLE_TIMEOUT_MINUTES"), 60)) * time.Minute,
@@ -339,6 +341,9 @@ func (c config) validate() error {
 		if u, err := url.Parse(c.ssoURL); err != nil || u.Scheme != "https" || u.Hostname() == "" {
 			problems = append(problems, "SSO_URL must be https:// with a host")
 		}
+	}
+	if c.magicLink && c.smtpURL == "" {
+		problems = append(problems, "MAGIC_LINK=true requires SMTP_URL so sign-in links can be mailed")
 	}
 	if len(problems) == 0 {
 		return nil

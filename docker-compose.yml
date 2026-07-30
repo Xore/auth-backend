@@ -60,6 +60,8 @@ services:
       - SSO_URL=${SSO_URL:-}
       - SMTP_URL=${SMTP_URL:-}
       - SMTP_FROM=${SMTP_FROM:-}
+      # Email magic-link sign-in at /_auth/magic; requires SMTP_URL.
+      - MAGIC_LINK=${MAGIC_LINK:-false}
       - REDIS_URL=${REDIS_URL:-redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@auth-redis:6379/0}
       - ORG_ID=${ORG_ID:-}
     depends_on:

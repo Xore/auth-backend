@@ -107,7 +107,8 @@ type User struct {
 	PasskeyUserID []byte        `json:"webauthn_id,omitempty"`
 	Passkeys      []Passkey     `json:"passkeys,omitempty"`
 	DeviceGen     int           `json:"device_gen,omitempty"`
-	History       []loginRecord `json:"history,omitempty"` // recent successful logins, for risk scoring
+	MagicSeq      int           `json:"magic_seq,omitempty"` // magic-link single-use counter
+	History       []loginRecord `json:"history,omitempty"`   // recent successful logins, for risk scoring
 }
 
 // loginRecord is one successful sign-in, kept (capped) for risk-based

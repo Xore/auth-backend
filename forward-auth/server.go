@@ -32,6 +32,7 @@ type server struct {
 	ceremonies   *ceremonyStore
 	startedAt    time.Time
 	recoverLimit rateLimiter
+	magicLimit   rateLimiter
 }
 
 // clientIP returns the real client address. Forwarded headers are only
