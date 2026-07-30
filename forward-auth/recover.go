@@ -164,6 +164,32 @@ func (s *server) checkRecoveryToken(tok string) (string, bool) {
 // sendMailFunc is the mail sender (a variable so tests can stub it).
 var sendMailFunc = smtpSend
 
+// mailHeaderSafe reports whether v may be interpolated into a message header.
+// A CR or LF terminates a header line, so a value carrying one could append
+// headers of its own (Bcc:, Content-Type:, …) or close the header block and
+// forge a body; the other control characters have no legitimate use in an
+// address or subject. Recipients already pass normalizeEmail, and the
+// operator-supplied From cannot be attacker-controlled — this is the last
+// line of defence at the sink, where it holds for every future caller.
+func mailHeaderSafe(v string) bool {
+	return strings.IndexFunc(v, func(r rune) bool { return r < 0x20 || r == 0x7f }) < 0
+}
+
+// sanitizeMailBody strips control characters that let untrusted values forge
+// extra lines in a plain-text message body — the header block is already
+// closed by the time the body is written, so this is content spoofing rather
+// than header injection, but a username is not entitled to either. Tab and
+// newline are the only control characters a body legitimately contains, and
+// the lines this package composes need neither inside an interpolated field.
+func sanitizeMailBody(v string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, v)
+}
+
 // smtpSend delivers a plain-text message. SMTP_URL schemes:
 //
 //	smtps://user:pass@host[:465]  — implicit TLS, TLS 1.2 minimum
@@ -173,6 +199,15 @@ var sendMailFunc = smtpSend
 // a STARTTLS offer fails unless allowInsecure (SMTP_ALLOW_INSECURE) is set —
 // an explicit development-only opt-in.
 func smtpSend(rawURL, from, to, subject, body string, allowInsecure bool) error {
+	// Refuse before connecting: a header field carrying CR/LF would let the
+	// value append headers of its own to the message composed below.
+	for _, f := range [...]struct{ name, val string }{
+		{"From", from}, {"To", to}, {"Subject", subject},
+	} {
+		if !mailHeaderSafe(f.val) {
+			return fmt.Errorf("refusing to send mail: illegal character in %s header", f.name)
+		}
+	}
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return err
@@ -328,7 +363,7 @@ func (s *server) recoverRequest(w http.ResponseWriter, r *http.Request, n string
 					"A password reset was requested for %s at %s.\n\n%s\n\n"+
 						"The link is valid for 15 minutes and works exactly once.\n"+
 						"If you did not request this, ignore this email.",
-					u.Username, s.cfg.authHost, link)
+					sanitizeMailBody(u.Username), s.cfg.authHost, link)
 				if err := sendMailFunc(s.cfg.smtpURL, s.cfg.smtpFrom, to,
 					"Password reset — "+s.cfg.authHost, body, s.cfg.smtpAllowInsecure); err != nil {
 					s.log.Error("recovery email failed", "user", sanitizeLogField(username), "error", err)

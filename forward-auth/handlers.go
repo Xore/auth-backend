@@ -244,6 +244,9 @@ func (s *server) finishLogin(w http.ResponseWriter, r *http.Request, u *User, ip
 		http.Redirect(w, r, p, http.StatusFound)
 		return
 	}
+	// rd comes from safeRedirect(): HTTPS-only, restricted to the cookie
+	// domain, constant fallback — never attacker-controlled. Every caller of
+	// finishLogin passes a safeRedirect() result.
 	http.Redirect(w, r, rd, http.StatusFound)
 }
 

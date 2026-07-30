@@ -139,7 +139,7 @@ func (s *server) magicSend(w http.ResponseWriter, r *http.Request, n string) {
 					"A sign-in link was requested for %s at %s.\n\n%s\n\n"+
 						"The link is valid for 15 minutes and works exactly once.\n"+
 						"If you did not request this, ignore this email.",
-					u.Username, s.cfg.authHost, link)
+					sanitizeMailBody(u.Username), s.cfg.authHost, link)
 				if err := sendMailFunc(s.cfg.smtpURL, s.cfg.smtpFrom, to,
 					"Sign in — "+s.cfg.authHost, body, s.cfg.smtpAllowInsecure); err != nil {
 					s.log.Error("magic-link email failed", "user", sanitizeLogField(username), "error", err)

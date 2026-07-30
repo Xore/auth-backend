@@ -43,6 +43,36 @@ func TestNormalizeEmail(t *testing.T) {
 	}
 }
 
+// TestSMTPSendRejectsHeaderInjection pins the sink-side guard: a CR/LF in an
+// address or subject must fail before a connection is attempted, so no header
+// the caller did not compose can reach the server.
+func TestSMTPSendRejectsHeaderInjection(t *testing.T) {
+	const smtpURL = "smtp://127.0.0.1:0" // dialing must never happen
+	bad := []struct{ name, from, to, subject string }{
+		{"to", "auth@x.org", "a@x.org\r\nBcc: victim@x.org", "Sign in"},
+		{"from", "auth@x.org\nBcc: victim@x.org", "a@x.org", "Sign in"},
+		{"subject", "auth@x.org", "a@x.org", "Sign in\r\nContent-Type: text/html"},
+		{"subject-nul", "auth@x.org", "a@x.org", "Sign in\x00"},
+	}
+	for _, c := range bad {
+		if err := smtpSend(smtpURL, c.from, c.to, c.subject, "body", true); err == nil {
+			t.Errorf("%s: smtpSend accepted an injected header", c.name)
+		} else if !strings.Contains(err.Error(), "illegal character") {
+			t.Errorf("%s: rejected for the wrong reason: %v", c.name, err)
+		}
+	}
+}
+
+func TestSanitizeMailBody(t *testing.T) {
+	got := sanitizeMailBody("bob\r\nFrom: spoofed@x.org")
+	if want := "bobFrom: spoofed@x.org"; got != want {
+		t.Errorf("sanitizeMailBody = %q, want %q", got, want)
+	}
+	if got := sanitizeMailBody("alice@example.org"); got != "alice@example.org" {
+		t.Errorf("sanitizeMailBody mangled a clean value: %q", got)
+	}
+}
+
 func TestRecoveryEmailModel(t *testing.T) {
 	// the dedicated field wins
 	if got := (&User{Username: "bob", Email: "bob@example.org"}).recoveryEmail(); got != "bob@example.org" {
