@@ -4,6 +4,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -64,5 +65,55 @@ func TestAllowAppFramingAllowlistsConfiguredOrigins(t *testing.T) {
 	}
 	if !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "base-uri 'none'") {
 		t.Fatalf("other CSP directives must be preserved, got %q", csp)
+	}
+}
+
+func TestFrameAncestorsJSONHandlesNilAndConfiguredValues(t *testing.T) {
+	if got := frameAncestorsJSON(nil); string(got) != "[]" {
+		t.Fatalf("frameAncestorsJSON(nil) = %q, want []", got)
+	}
+	got := frameAncestorsJSON([]string{"https://dash.example.com", "https://other.example.org"})
+	want := `["https://dash.example.com","https://other.example.org"]`
+	if string(got) != want {
+		t.Fatalf("frameAncestorsJSON(...) = %q, want %q", got, want)
+	}
+}
+
+// TestRenderAppEmbedsFrameAncestorsForEmbedderPostMessage proves the app
+// shell's postMessage sender (issue #93 in honeypot-stack) gets the same
+// allowlist allowAppFraming already enforces via CSP, so it can signal
+// close/expiry to every origin CSP permits to frame this page.
+func TestRenderAppEmbedsFrameAncestorsForEmbedderPostMessage(t *testing.T) {
+	s, _, cookie := newPasswordTestServer(t)
+	s.cfg.frameAncestors = []string{"https://dash.example.com", "https://other.example.org"}
+
+	r := httptest.NewRequest(http.MethodGet, "https://auth.example.com/auth/app", nil)
+	r.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	s.renderApp(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	want := `var FRAME_ANCESTORS = ["https://dash.example.com","https://other.example.org"];`
+	if !strings.Contains(w.Body.String(), want) {
+		t.Fatalf("rendered app shell missing %q", want)
+	}
+}
+
+func TestRenderAppFrameAncestorsEmptyByDefault(t *testing.T) {
+	s, _, cookie := newPasswordTestServer(t)
+	// s.cfg.frameAncestors left at testConfig's zero value (unset).
+
+	r := httptest.NewRequest(http.MethodGet, "https://auth.example.com/auth/app", nil)
+	r.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	s.renderApp(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "var FRAME_ANCESTORS = [];") {
+		t.Fatalf("rendered app shell must default FRAME_ANCESTORS to an empty array, got body: %s", w.Body.String())
 	}
 }
