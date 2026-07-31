@@ -155,6 +155,22 @@ var IS_ADMIN = {{.IsAdmin}};
 var CURRENT_USER = "{{.User}}";
 var CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
 var FORM_TOKEN = "{{.FT}}";
+var FRAME_ANCESTORS = {{.FrameAncestors}};
+var EMBEDDED = window.self !== window.top;
+
+// ── embedder signal ──────────────────────────────────────────────────────
+// A framed page cannot read its parent's origin cross-origin, so this
+// targets every origin CSP already allows to frame /auth/app (frame-ancestors
+// in allowAppFraming) — a mismatched targetOrigin is silently dropped by the
+// browser, so posting to all of them is safe. Consumed by the honeypot
+// dashboard's settings popup (issue #93 in Xore/honeypot-stack) to close the
+// modal or re-check the caller's own session on "close"/"expired".
+function notifyEmbedder(type) {
+  if (!EMBEDDED) return;
+  FRAME_ANCESTORS.forEach(function (origin) {
+    try { window.parent.postMessage({source: 'xore-auth-app', type: type}, origin); } catch (e) { /* unreachable parent */ }
+  });
+}
 
 var activePane = 'account';
 var state = {users: [], audit: {Recent: [], Total: 0, Success: 0, Failed: 0}, locked: [], sessions: []};
@@ -212,7 +228,10 @@ function api(path, body) {
     headers: {'Content-Type': 'application/json', 'X-Csrf': CSRF_TOKEN},
     body: JSON.stringify(body)
   })
-    .then(function (r) { return r.json().catch(function () { return {error: 'http ' + r.status}; }); })
+    .then(function (r) {
+      if (r.status === 401 || r.status === 403) notifyEmbedder('expired');
+      return r.json().catch(function () { return {error: 'http ' + r.status}; });
+    })
     .then(function (j) { if (j.error) { flash(esc(j.error), true); throw j.error; } return j; });
 }
 
@@ -440,7 +459,7 @@ var PANE_TEMPLATES = {
       '<div class="card__row">' +
         '<div><div class="card__label">Log out</div>' +
         '<div class="card__value">End this session.</div></div>' +
-        '<a class="btn btn-secondary btn-sm" href="/_auth/logout">Log out</a>' +
+        '<a class="btn btn-secondary btn-sm" id="account-logout" href="/_auth/logout">Log out</a>' +
       '</div>' +
       '<div class="card__row">' +
         '<div><div class="card__label">Regenerate backup codes</div>' +
@@ -1082,7 +1101,10 @@ function showPane(id) {
 function fetchState() {
   if (!IS_ADMIN) return;
   fetch('/_auth/admin/api/state?n=300')
-    .then(function (r) { if (!r.ok) throw 'http ' + r.status; return r.json(); })
+    .then(function (r) {
+      if (r.status === 401 || r.status === 403) notifyEmbedder('expired');
+      if (!r.ok) throw 'http ' + r.status; return r.json();
+    })
     .then(function (j) {
       state = j;
       // Configuration is loaded independently. Refreshing it with the
@@ -1092,6 +1114,17 @@ function fetchState() {
       }
     })
     .catch(function (e) { /* transient poll error — keep last state */ });
+}
+
+// ── session polling (all roles, embedded only) ───────────────────────────
+// fetchState above only runs for admins. A plain user embedded in the
+// dashboard's settings popup needs its own signal that the session ended,
+// so this checks the one session endpoint every authenticated user can
+// already reach (issue #93).
+function pollOwnSession() {
+  fetch('/_auth/sessions/mine', {cache: 'no-store'})
+    .then(function (r) { if (r.status === 401 || r.status === 403) notifyEmbedder('expired'); })
+    .catch(function (e) { /* transient poll error */ });
 }
 
 // ── modal open/close ─────────────────────────────────────────────────────
@@ -1159,6 +1192,14 @@ document.addEventListener('click', function (e) {
   }
   var menuAction = e.target.closest('.action-menu__item');
   if (menuAction) menuAction.closest('.action-menu').removeAttribute('open');
+  if (e.target.closest('#account-logout')) {
+    // Give the postMessage a tick to reach the embedder before this frame
+    // navigates itself away and its message queue goes with it.
+    e.preventDefault();
+    notifyEmbedder('close');
+    setTimeout(function () { window.location.href = '/_auth/logout'; }, 0);
+    return;
+  }
   var item = e.target.closest('#settings-nav .sidebar__item');
   if (item && item.dataset.pane) { showPane(item.dataset.pane); return; }
   if (e.target.closest('#add-passkey')) { addPasskey(); return; }
@@ -1221,6 +1262,7 @@ contentEl.addEventListener('keydown', function (e) {
 });
 
 setInterval(fetchState, 5000);
+if (EMBEDDED) setInterval(pollOwnSession, 15000);
 
 window.onload = function () {
   var requestedPane = new URLSearchParams(window.location.search).get('pane');
