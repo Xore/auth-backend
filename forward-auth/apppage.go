@@ -5,6 +5,7 @@ package main
 // flag and per-session CSRF token into the template.
 
 import (
+	"encoding/json"
 	"html/template"
 	"net/http"
 	"strings"
@@ -29,6 +30,22 @@ type AppPageData struct {
 	CSRF    string
 	FT      string // form token for in-shell POST forms (backup codes)
 	Nonce   string
+	// FrameAncestors is the same allowlist allowAppFraming already enforces
+	// via CSP, JSON-marshaled for the page's own postMessage("close"/"expired")
+	// signal to the embedding parent (honeypot-stack issue #93): a framed page
+	// cannot read its parent's origin cross-origin, so it targets every origin
+	// CSP already permits to frame it, one postMessage call per origin.
+	FrameAncestors template.JS
+}
+
+// frameAncestorsJSON JSON-marshals ancestors for embedding as a JS array
+// literal. Marshaling a []string cannot fail.
+func frameAncestorsJSON(ancestors []string) template.JS {
+	if ancestors == nil {
+		ancestors = []string{}
+	}
+	encoded, _ := json.Marshal(ancestors)
+	return template.JS(encoded)
 }
 
 // allowAppFraming relaxes clickjacking protection for /auth/app only, and
@@ -60,11 +77,12 @@ func (s *server) renderApp(w http.ResponseWriter, r *http.Request) {
 	allowAppFraming(w.Header(), s.cfg.frameAncestors)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := appTmpl.Execute(w, AppPageData{
-		User:    u.Username,
-		IsAdmin: u.Role == roleAdmin,
-		CSRF:    s.cfg.csrfToken(cl.sid),
-		FT:      s.cfg.issueForm(),
-		Nonce:   n,
+		User:           u.Username,
+		IsAdmin:        u.Role == roleAdmin,
+		CSRF:           s.cfg.csrfToken(cl.sid),
+		FT:             s.cfg.issueForm(),
+		Nonce:          n,
+		FrameAncestors: frameAncestorsJSON(s.cfg.frameAncestors),
 	}); err != nil {
 		s.log.Error("render app shell", "error", err)
 	}
