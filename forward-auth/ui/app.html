@@ -49,6 +49,20 @@
   .danger-dialog__warning{padding:12px 14px;border:1px solid color-mix(in srgb,var(--danger) 35%,transparent);border-radius:var(--radius-md);
     background:var(--red-subtle);color:var(--text-primary);font-size:12px;line-height:1.55}
   .danger-dialog__warning ul{margin:8px 0 0;padding-left:18px}
+  .user-edit-dialog{width:min(640px,100%);max-height:min(88vh,880px);overflow-y:auto}
+  .user-edit-section{margin-top:18px;padding-top:18px;border-top:1px solid var(--border-subtle)}
+  .user-edit-section:first-of-type{margin-top:6px;padding-top:0;border-top:0}
+  .user-edit-section .settings-field{margin-top:12px}
+  .user-edit-section .settings-field:first-child{margin-top:0}
+  .user-edit-inline{display:flex;gap:8px;align-items:center}
+  .user-edit-inline .form-input{flex:1;min-width:0}
+  .user-edit-perm-list{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:10px;max-height:160px;overflow-y:auto;
+    padding:2px}
+  .user-edit-perm{display:flex;align-items:center;gap:6px;font-size:12px;font-family:'SF Mono','Fira Code','Cascadia Code',monospace;
+    white-space:nowrap}
+  .user-edit-perm input{margin:0}
+  .user-edit-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .user-edit-actions .btn{font-size:12px;padding:7px 12px}
   #flash{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:400;display:none;
     background:var(--surface-0);border:1px solid var(--green);border-radius:var(--radius-md);
     padding:14px 20px;font-size:13px;color:var(--text-primary);box-shadow:var(--shadow-modal);
@@ -112,15 +126,65 @@
       <!-- Panes rendered here by showPane() -->
     </div>
 
-    <div class="edit-dialog-backdrop" id="edit-dialog-backdrop" aria-hidden="true" inert>
-    <section class="edit-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-dialog-title">
-      <h2 class="edit-dialog__title" id="edit-dialog-title">Edit user</h2>
-      <p class="edit-dialog__desc" id="edit-dialog-desc"></p>
-      <label class="form-label" id="edit-dialog-label" for="edit-dialog-input"></label>
-      <input class="form-input" id="edit-dialog-input" autocomplete="off">
+    <div class="edit-dialog-backdrop" id="user-edit-backdrop" aria-hidden="true" inert>
+    <section class="edit-dialog user-edit-dialog" role="dialog" aria-modal="true" aria-labelledby="user-edit-title">
+      <h2 class="edit-dialog__title" id="user-edit-title">Edit user</h2>
+      <p class="edit-dialog__desc" id="user-edit-desc"></p>
+
+      <div class="user-edit-section">
+        <div class="settings-field">
+          <label class="form-label" for="ue-username">Username</label>
+          <div class="user-edit-inline">
+            <input class="form-input" id="ue-username" autocomplete="off" autocapitalize="none" spellcheck="false">
+            <button class="btn btn-secondary" id="ue-rename" type="button">Rename</button>
+          </div>
+          <div class="settings-field__desc">Renaming invalidates the current session for this user immediately — they must sign in again under the new name.</div>
+        </div>
+        <div class="settings-field">
+          <label class="form-label" for="ue-display-name">Display name</label>
+          <input class="form-input" id="ue-display-name" autocomplete="off" maxlength="80" placeholder="falls back to username when blank">
+        </div>
+        <div class="settings-field">
+          <label class="form-label" for="ue-description">Description</label>
+          <input class="form-input" id="ue-description" autocomplete="off" maxlength="500" placeholder="admin-only note, e.g. contractor, expires 2026-12-01">
+        </div>
+        <div class="settings-field">
+          <label class="form-label" for="ue-email">Recovery email</label>
+          <input class="form-input" id="ue-email" type="email" autocomplete="off" placeholder="user@example.com">
+        </div>
+        <div class="settings-field">
+          <label class="form-label" for="ue-role">Role</label>
+          <select class="form-input" id="ue-role"><option value="user">user</option><option value="admin">admin</option></select>
+        </div>
+        <div class="settings-field">
+          <label class="form-label" for="ue-hosts">Allowed hosts <span class="card__value">— blank = all</span></label>
+          <input class="form-input" id="ue-hosts" placeholder="grafana.example.com, *.media.example.com">
+        </div>
+      </div>
+
+      <div class="user-edit-section">
+        <div class="card__title">Permissions</div>
+        <div class="settings-field">
+          <label class="form-label" for="ue-perm-host">Host</label>
+          <select class="form-input" id="ue-perm-host"></select>
+          <input class="form-input" id="ue-perm-host-new" hidden placeholder="new-host.example.com">
+        </div>
+        <div id="ue-perm-checks" class="user-edit-perm-list"></div>
+        <div class="user-edit-inline">
+          <input class="form-input" id="ue-perm-new" placeholder="add a new permission key…" autocomplete="off">
+          <button class="btn btn-secondary" id="ue-perm-add" type="button">Add</button>
+        </div>
+        <div class="settings-field__desc">Permission keys are opaque strings defined by the consuming app — auth-backend only stores and serves them. Switching hosts saves the currently shown host's checkboxes into the form; each host is applied separately when you save.</div>
+      </div>
+
+      <div class="user-edit-section">
+        <div class="card__title">Security actions</div>
+        <div class="user-edit-actions" id="ue-security-actions"></div>
+      </div>
+
       <div class="edit-dialog__actions">
-        <button class="btn btn-secondary" id="edit-dialog-cancel" type="button">Cancel</button>
-        <button class="btn btn-primary" id="edit-dialog-save" type="button">Save</button>
+        <button class="btn btn-secondary" id="user-edit-cancel" type="button">Close</button>
+        <button class="btn btn-primary" id="user-edit-save" type="button">Save changes</button>
       </div>
     </section>
     </div>
@@ -180,16 +244,6 @@ function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
     return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
   });
-}
-// firstPermissionEntry formats one host's grants as "host: key, key" to
-// pre-fill the permissions edit dialog -- v1 edits one host per submission,
-// so this just picks a stable (sorted) starting point, not "the" host.
-function firstPermissionEntry(permissions) {
-  if (!permissions) return '';
-  var hosts = Object.keys(permissions).sort();
-  if (!hosts.length) return '';
-  var host = hosts[0];
-  return host + ': ' + (permissions[host] || []).join(', ');
 }
 function ts(s) {
   if (!s || s.startsWith('0001')) return '–';
@@ -340,153 +394,236 @@ function createUser(confirmed) {
   }).catch(function () { /* error already flashed by api() */ });
 }
 
-function editHosts(name, cur) {
-  openEditDialog('hosts', name, cur);
+// ── user edit modal ──────────────────────────────────────────────────────
+// One place to change everything about a user: profile fields, permission
+// grants (per host, as checkboxes over every key seen anywhere in the
+// permission set, plus freeform "add a new key"), and the existing
+// security actions -- all reusing the same act()/confirmAct()/
+// openDangerDialog() flow the row action-menu already used, so behavior
+// stays identical regardless of which entry point triggered it.
+
+function findUser(username) {
+  var users = state.users || [];
+  for (var i = 0; i < users.length; i++) if (users[i].username === username) return users[i];
+  return null;
 }
 
-function editEmail(name, cur) {
-  openEditDialog('email', name, cur);
+// securityActionSpecs is the single source of truth for the stateful,
+// immediately-effective user actions (as opposed to the form fields saved
+// together above). Both the row action-menu and the edit modal render from
+// this so the two entry points can never drift apart.
+function securityActionSpecs(u) {
+  var specs = [];
+  specs.push(u.disabled
+    ? {act: 'enable', label: 'Enable user'}
+    : {act: 'disable', label: 'Disable user', msg: 'Disable ' + u.username + '?'});
+  specs.push({act: 'reset_password', label: 'Reset password', msg: 'Reset password for ' + u.username + '?'});
+  specs.push({act: 'reset_totp', label: 'Reset two-factor', msg: 'Reset 2FA for ' + u.username + '? They will re-enroll on next login.'});
+  if (u.passkeys) specs.push({act: 'reset_passkeys', label: 'Reset passkeys', msg: 'Remove all passkeys for ' + u.username + '?'});
+  specs.push({act: 'logout_user', label: 'Log out everywhere', msg: 'Log ' + u.username + ' out everywhere?'});
+  specs.push({act: 'set_role', label: u.role === 'admin' ? 'Demote to user' : 'Promote to admin', extra: {role: u.role === 'admin' ? 'user' : 'admin'}});
+  specs.push({act: 'delete', label: 'Delete user', msg: 'DELETE ' + u.username + '? This cannot be undone.', danger: true});
+  return specs;
 }
 
-function editDisplayName(name, cur) {
-  openEditDialog('display_name', name, cur);
+function securityActionAttrs(u, s) {
+  var attrs = 'data-act="' + s.act + '" data-user="' + esc(u.username) + '"';
+  if (s.msg) attrs += ' data-msg="' + esc(s.msg) + '"';
+  for (var k in (s.extra || {})) attrs += ' data-' + k + '="' + esc(s.extra[k]) + '"';
+  return attrs;
 }
 
-function editDescription(name, cur) {
-  openEditDialog('description', name, cur);
+function renderSecurityMenuItems(u) {
+  return securityActionSpecs(u).map(function (s) {
+    return '<button class="action-menu__item' + (s.danger ? ' action-menu__item--danger' : '') + '" role="menuitem" ' +
+      securityActionAttrs(u, s) + '>' + s.label + '</button>';
+  }).join('');
 }
 
-function editPermissions(name, cur) {
-  // v1: one host's grants at a time. cur is pre-filled with the first host
-  // this user already has grants for, formatted "host: key, key" -- submit
-  // again with a different host prefix to edit another host's grants; other
-  // hosts' grants are untouched by that submission.
-  openEditDialog('permissions', name, cur);
+function renderSecurityButtons(u) {
+  return securityActionSpecs(u).map(function (s) {
+    return '<button class="btn ' + (s.danger ? 'btn-danger' : 'btn-secondary') + '" type="button" ' +
+      securityActionAttrs(u, s) + '>' + s.label + '</button>';
+  }).join('');
 }
 
-function editUsername(name) {
-  openEditDialog('username', name, name);
+// permissionHostsFor lists the hosts worth offering in the host picker for
+// this user: their allowed (non-wildcard) hosts, plus any host they
+// already have grants under.
+function permissionHostsFor(u) {
+  var hosts = {};
+  (u.allowed_hosts || []).forEach(function (h) { if (h && h.indexOf('*') < 0) hosts[h] = true; });
+  Object.keys(u.permissions || {}).forEach(function (h) { hosts[h] = true; });
+  return Object.keys(hosts).sort();
 }
 
-var editDialogState = null;
+// allKnownPermissionKeys scans every projected user for keys already used
+// under this host, so previously-typed keys become reusable checkboxes
+// instead of having to be retyped for each user.
+function allKnownPermissionKeys(host) {
+  var keys = {};
+  (state.users || []).forEach(function (u) {
+    ((u.permissions || {})[host] || []).forEach(function (k) { keys[k] = true; });
+  });
+  return keys;
+}
 
-function openEditDialog(kind, name, current) {
-  editDialogState = {kind: kind, username: name};
-  var title = document.getElementById('edit-dialog-title');
-  var desc = document.getElementById('edit-dialog-desc');
-  var label = document.getElementById('edit-dialog-label');
-  var input = document.getElementById('edit-dialog-input');
-  if (kind === 'hosts') {
-    title.textContent = 'Edit allowed hosts';
-    desc.textContent = 'Update access for ' + name + '. Separate hosts with commas; wildcards such as *.example.com are supported. Leave blank to allow all hosts.';
-    label.textContent = 'Allowed hosts';
-    input.type = 'text';
-    input.placeholder = 'grafana.example.com, *.media.example.com';
-  } else if (kind === 'display_name') {
-    title.textContent = 'Edit display name';
-    desc.textContent = 'Set the name shown for ' + name + ' in consuming apps. Leave blank to fall back to the username.';
-    label.textContent = 'Display name';
-    input.type = 'text';
-    input.placeholder = name;
-  } else if (kind === 'description') {
-    title.textContent = 'Edit description';
-    desc.textContent = 'Admin-only note about ' + name + '. Never shown to the user themselves.';
-    label.textContent = 'Description';
-    input.type = 'text';
-    input.placeholder = 'e.g. contractor, expires 2026-12-01';
-  } else if (kind === 'permissions') {
-    title.textContent = 'Edit permissions';
-    desc.textContent = 'Grant ' + name + ' opaque, app-defined capability keys for one host at a time: "host: key, key". Leave the keys blank to clear that host’s grants. Other hosts’ grants are unaffected.';
-    label.textContent = 'Host: permission keys';
-    input.type = 'text';
-    input.placeholder = 'dashboard.example.com: pages:sandbox:view, actions:export';
-  } else if (kind === 'username') {
-    title.textContent = 'Rename user';
-    desc.textContent = 'Change the username ' + name + ' signs in with. Their current session is invalidated immediately and they must sign in again under the new name.';
-    label.textContent = 'New username';
-    input.type = 'text';
-    input.placeholder = name;
-  } else {
-    title.textContent = 'Edit recovery email';
-    desc.textContent = 'Set the address used for password recovery for ' + name + '. Leave blank to disable email recovery.';
-    label.textContent = 'Recovery email';
-    input.type = 'email';
-    input.placeholder = 'user@example.com';
+function renderPermChecks(host, granted) {
+  var grantedSet = {};
+  (granted || []).forEach(function (k) { grantedSet[k] = true; });
+  var keys = allKnownPermissionKeys(host);
+  Object.keys(grantedSet).forEach(function (k) { keys[k] = true; });
+  var sorted = Object.keys(keys).sort();
+  var checks = document.getElementById('ue-perm-checks');
+  if (!sorted.length) {
+    checks.innerHTML = '<span class="card__value">no known permission keys for this host yet — add one below</span>';
+    return;
   }
-  input.value = current || '';
-  var backdrop = document.getElementById('edit-dialog-backdrop');
+  checks.innerHTML = sorted.map(function (k) {
+    return '<label class="user-edit-perm"><input type="checkbox" value="' + esc(k) + '"' + (grantedSet[k] ? ' checked' : '') + '> ' + esc(k) + '</label>';
+  }).join('');
+}
+
+function currentPermHost() {
+  var sel = document.getElementById('ue-perm-host');
+  if (!sel) return '';
+  if (sel.value === '__new__') return document.getElementById('ue-perm-host-new').value.trim();
+  return sel.value;
+}
+
+function populatePermHostSelect(u, preferredHost) {
+  var hosts = permissionHostsFor(u);
+  var sel = document.getElementById('ue-perm-host');
+  sel.innerHTML = hosts.map(function (h) { return '<option value="' + esc(h) + '">' + esc(h) + '</option>'; }).join('') +
+    '<option value="__new__">+ add a new host…</option>';
+  var newInput = document.getElementById('ue-perm-host-new');
+  var target = preferredHost && hosts.indexOf(preferredHost) >= 0 ? preferredHost : hosts[0];
+  if (target) {
+    sel.value = target;
+    newInput.hidden = true;
+    renderPermChecks(target, (u.permissions || {})[target] || []);
+  } else {
+    sel.value = '__new__';
+    newInput.hidden = false;
+    newInput.value = '';
+    renderPermChecks('', []);
+  }
+}
+
+var userEditState = null;
+
+function openUserEditModal(username) {
+  var u = findUser(username);
+  if (!u) return;
+  userEditState = {username: username};
+  document.getElementById('user-edit-title').textContent = 'Edit user: ' + username;
+  document.getElementById('user-edit-desc').textContent = 'Everything related to this account in one place.';
+  document.getElementById('ue-username').value = u.username;
+  document.getElementById('ue-display-name').value = u.display_name || '';
+  document.getElementById('ue-description').value = u.description || '';
+  document.getElementById('ue-email').value = u.email || '';
+  document.getElementById('ue-role').value = u.role;
+  document.getElementById('ue-hosts').value = (u.allowed_hosts || []).join(', ');
+  document.getElementById('ue-perm-new').value = '';
+  populatePermHostSelect(u, null);
+  document.getElementById('ue-security-actions').innerHTML = renderSecurityButtons(u);
+  var backdrop = document.getElementById('user-edit-backdrop');
   backdrop.removeAttribute('inert');
   backdrop.classList.add('open');
   backdrop.setAttribute('aria-hidden', 'false');
-  setTimeout(function () { input.focus(); input.select(); }, 0);
+  setTimeout(function () { document.getElementById('ue-display-name').focus(); }, 0);
 }
 
-function closeEditDialog() {
-  var backdrop = document.getElementById('edit-dialog-backdrop');
+function closeUserEditModal() {
+  var backdrop = document.getElementById('user-edit-backdrop');
   backdrop.classList.remove('open');
   backdrop.setAttribute('aria-hidden', 'true');
   backdrop.setAttribute('inert', '');
-  editDialogState = null;
+  userEditState = null;
 }
 
-var EDIT_DIALOG_ACTIONS = {
-  hosts: 'set_hosts', email: 'set_email', display_name: 'set_display_name',
-  description: 'set_description', permissions: 'set_permissions'
-};
-var EDIT_DIALOG_LABELS = {
-  hosts: 'Allowed hosts', email: 'Recovery email', display_name: 'Display name',
-  description: 'Description', permissions: 'Permissions'
-};
-
-function saveEditDialog() {
-  if (!editDialogState) return;
-  var kind = editDialogState.kind;
-  var input = document.getElementById('edit-dialog-input');
-  var value = input.value.trim();
-  if (kind === 'email' && value && !input.checkValidity()) {
-    input.reportValidity();
-    return;
-  }
-  var request;
-  if (kind === 'hosts') {
-    request = {username: editDialogState.username, hosts: value.split(',').map(function (s) { return s.trim(); }).filter(Boolean)};
-  } else if (kind === 'display_name') {
-    request = {username: editDialogState.username, display_name: value};
-  } else if (kind === 'description') {
-    request = {username: editDialogState.username, description: value};
-  } else if (kind === 'permissions') {
-    var sep = value.indexOf(':');
-    if (sep < 0 || !value.slice(0, sep).trim()) {
-      flash('enter as "host: key, key"', true);
-      return;
-    }
-    var host = value.slice(0, sep).trim();
-    var keys = value.slice(sep + 1).split(',').map(function (s) { return s.trim(); }).filter(Boolean);
-    request = {username: editDialogState.username, host: host, permissions: keys};
-  } else if (kind === 'username') {
-    if (!value) { flash('username required', true); return; }
-    if (value === editDialogState.username) { closeEditDialog(); return; }
-    var oldName = editDialogState.username;
-    closeEditDialog();
-    openDangerDialog('Rename ' + oldName + ' to ' + value + '?',
-      'Their current session is invalidated immediately.',
-      '<b>This action takes effect immediately:</b><p class="u-mt8">They must sign in again as <b>' + esc(value) + '</b>. Anything referencing the old username by name (not by internal ID) will need updating separately.</p>',
-      'Rename user', function () {
-        act('rename_user', {username: oldName, new_username: value}).then(function () {
-          flash('Renamed <b>' + esc(oldName) + '</b> to <b>' + esc(value) + '</b>.');
-          fetchState();
-        });
+function renameUserFromModal() {
+  if (!userEditState) return;
+  var oldName = userEditState.username;
+  var newName = document.getElementById('ue-username').value.trim();
+  if (!newName) { flash('username required', true); return; }
+  if (newName === oldName) return;
+  openDangerDialog('Rename ' + oldName + ' to ' + newName + '?',
+    'Their current session is invalidated immediately.',
+    '<b>This action takes effect immediately:</b><p class="u-mt8">They must sign in again as <b>' + esc(newName) + '</b>. Anything referencing the old username by name (not by internal ID) will need updating separately.</p>',
+    'Rename user', function () {
+      act('rename_user', {username: oldName, new_username: newName}).then(function () {
+        flash('Renamed <b>' + esc(oldName) + '</b> to <b>' + esc(newName) + '</b>.');
+        closeUserEditModal();
       });
+    });
+}
+
+function addPermissionCheckbox() {
+  var input = document.getElementById('ue-perm-new');
+  var key = input.value.trim();
+  if (!key) return;
+  if (!/^[a-zA-Z0-9._:-]{1,64}$/.test(key)) {
+    flash('permission keys may only use letters, numbers, and . _ : -', true);
     return;
-  } else {
-    request = {username: editDialogState.username, email: value};
   }
-  var action = EDIT_DIALOG_ACTIONS[kind] || 'set_email';
-  var user = editDialogState.username;
-  act(action, request).then(function () {
-    closeEditDialog();
-    flash((EDIT_DIALOG_LABELS[kind] || 'Field') + ' updated for <b>' + esc(user) + '</b>.');
-  });
+  var checks = document.getElementById('ue-perm-checks');
+  var boxes = Array.prototype.slice.call(checks.querySelectorAll('input[type=checkbox]'));
+  var existing = boxes.filter(function (el) { return el.value === key; })[0];
+  if (existing) {
+    existing.checked = true;
+  } else {
+    if (!boxes.length) checks.innerHTML = '';
+    var label = document.createElement('label');
+    label.className = 'user-edit-perm';
+    label.innerHTML = '<input type="checkbox" checked value="' + esc(key) + '"> ' + esc(key);
+    checks.appendChild(label);
+  }
+  input.value = '';
+}
+
+function saveUserEditModal() {
+  if (!userEditState) return;
+  var username = userEditState.username;
+  var u = findUser(username);
+  if (!u) { closeUserEditModal(); return; }
+
+  var jobs = [];
+
+  var displayName = document.getElementById('ue-display-name').value.trim();
+  if (displayName !== (u.display_name || '')) jobs.push(['set_display_name', {display_name: displayName}]);
+
+  var description = document.getElementById('ue-description').value.trim();
+  if (description !== (u.description || '')) jobs.push(['set_description', {description: description}]);
+
+  var emailInput = document.getElementById('ue-email');
+  var email = emailInput.value.trim();
+  if (email && !emailInput.checkValidity()) { emailInput.reportValidity(); return; }
+  if (email !== (u.email || '')) jobs.push(['set_email', {email: email}]);
+
+  var role = document.getElementById('ue-role').value;
+  if (role !== u.role) jobs.push(['set_role', {role: role}]);
+
+  var hosts = document.getElementById('ue-hosts').value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+  if (hosts.slice().sort().join(',') !== (u.allowed_hosts || []).slice().sort().join(',')) jobs.push(['set_hosts', {hosts: hosts}]);
+
+  var permHost = currentPermHost();
+  if (permHost) {
+    var checked = Array.prototype.slice.call(document.querySelectorAll('#ue-perm-checks input[type=checkbox]:checked'))
+      .map(function (el) { return el.value; });
+    var currentGrants = ((u.permissions || {})[permHost] || []).slice().sort().join(',');
+    if (checked.slice().sort().join(',') !== currentGrants) jobs.push(['set_permissions', {host: permHost, permissions: checked}]);
+  }
+
+  if (!jobs.length) { closeUserEditModal(); return; }
+  Promise.all(jobs.map(function (job) {
+    var extra = job[1];
+    extra.username = username;
+    return act(job[0], extra);
+  })).then(function () {
+    flash('Updated <b>' + esc(username) + '</b>.');
+    closeUserEditModal();
+  }).catch(function () { /* individual failures already flashed by api() */ });
 }
 
 // ── sidebar nav ──────────────────────────────────────────────────────────
@@ -942,21 +1079,8 @@ function loadAdminUsers() {
       '<td class="cell-mono hide-sm">' + (u.last_ip ? ts(u.last_login) + ' (' + esc(u.last_ip) + ')' : '–') + '</td>' +
       '<td><details class="action-menu"><summary aria-label="Actions for ' + esc(u.username) + '" title="Actions">&#8942;</summary>' +
       '<div class="action-menu__popover" role="menu">' +
-      (u.disabled
-        ? '<button class="action-menu__item" role="menuitem" data-act="enable" data-user="' + esc(u.username) + '">Enable user</button>'
-        : '<button class="action-menu__item" role="menuitem" data-act="disable" data-msg="Disable ' + esc(u.username) + '?" data-user="' + esc(u.username) + '">Disable user</button>') +
-      '<button class="action-menu__item" role="menuitem" data-act="reset_password" data-msg="Reset password for ' + esc(u.username) + '?" data-user="' + esc(u.username) + '">Reset password</button>' +
-      '<button class="action-menu__item" role="menuitem" data-act="reset_totp" data-msg="Reset 2FA for ' + esc(u.username) + '? They will re-enroll on next login." data-user="' + esc(u.username) + '">Reset two-factor</button>' +
-      (u.passkeys ? '<button class="action-menu__item" role="menuitem" data-act="reset_passkeys" data-msg="Remove all passkeys for ' + esc(u.username) + '?" data-user="' + esc(u.username) + '">Reset passkeys</button>' : '') +
-      '<button class="action-menu__item" role="menuitem" data-act="logout_user" data-msg="Log ' + esc(u.username) + ' out everywhere?" data-user="' + esc(u.username) + '">Log out everywhere</button>' +
-      '<button class="action-menu__item" role="menuitem" data-act="edit_hosts" data-user="' + esc(u.username) + '" data-hosts="' + esc((u.allowed_hosts || []).join(', ')) + '">Edit allowed hosts</button>' +
-      '<button class="action-menu__item" role="menuitem" data-act="edit_email" data-user="' + esc(u.username) + '" data-email="' + esc(u.email || '') + '">Edit recovery email</button>' +
-      '<button class="action-menu__item" role="menuitem" data-act="edit_display_name" data-user="' + esc(u.username) + '" data-display-name="' + esc(u.display_name || '') + '">Edit display name</button>' +
-      '<button class="action-menu__item" role="menuitem" data-act="edit_description" data-user="' + esc(u.username) + '" data-description="' + esc(u.description || '') + '">Edit description</button>' +
-      '<button class="action-menu__item" role="menuitem" data-act="edit_permissions" data-user="' + esc(u.username) + '" data-permissions="' + esc(firstPermissionEntry(u.permissions)) + '">Edit permissions</button>' +
-      '<button class="action-menu__item" role="menuitem" data-act="edit_username" data-user="' + esc(u.username) + '">Rename user</button>' +
-      '<button class="action-menu__item" role="menuitem" data-act="set_role" data-user="' + esc(u.username) + '" data-role="' + (u.role === 'admin' ? 'user' : 'admin') + '">' + (u.role === 'admin' ? 'Demote to user' : 'Promote to admin') + '</button>' +
-      '<button class="action-menu__item action-menu__item--danger" role="menuitem" data-act="delete" data-msg="DELETE ' + esc(u.username) + '? This cannot be undone." data-user="' + esc(u.username) + '">Delete user</button>' +
+      '<button class="action-menu__item" role="menuitem" data-act="edit_user" data-user="' + esc(u.username) + '">Edit user…</button>' +
+      renderSecurityMenuItems(u) +
       '</div></details></td>' +
       '</tr>';
   }).join('');
@@ -1248,7 +1372,7 @@ document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape') {
     if (pendingDangerAction) { closeDangerDialog(); return; }
     if (pendingRotationKey) { closeRotateDialog(); return; }
-    if (editDialogState) { closeEditDialog(); return; }
+    if (userEditState) { closeUserEditModal(); return; }
     var openMenu = document.querySelector('.action-menu[open]');
     if (openMenu) { openMenu.removeAttribute('open'); return; }
   }
@@ -1264,13 +1388,29 @@ document.addEventListener('toggle', function (e) {
 // Event wiring (no inline handlers — CSP script-src is nonce-only)
 document.getElementById('settings-modal').addEventListener('cancel', function (e) { e.preventDefault(); });
 document.getElementById('sidebar-search').addEventListener('input', function () { filterSidebar(this.value); });
-document.getElementById('edit-dialog-cancel').addEventListener('click', closeEditDialog);
-document.getElementById('edit-dialog-save').addEventListener('click', saveEditDialog);
-document.getElementById('edit-dialog-input').addEventListener('keydown', function (e) {
-  if (e.key === 'Enter') { e.preventDefault(); saveEditDialog(); }
+document.getElementById('user-edit-cancel').addEventListener('click', closeUserEditModal);
+document.getElementById('user-edit-save').addEventListener('click', saveUserEditModal);
+document.getElementById('user-edit-backdrop').addEventListener('click', function (e) {
+  if (e.target === this) closeUserEditModal();
 });
-document.getElementById('edit-dialog-backdrop').addEventListener('click', function (e) {
-  if (e.target === this) closeEditDialog();
+document.getElementById('ue-rename').addEventListener('click', renameUserFromModal);
+document.getElementById('ue-perm-add').addEventListener('click', addPermissionCheckbox);
+document.getElementById('ue-perm-new').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter') { e.preventDefault(); addPermissionCheckbox(); }
+});
+document.getElementById('ue-perm-host').addEventListener('change', function () {
+  var u = findUser(userEditState && userEditState.username);
+  if (!u) return;
+  var newInput = document.getElementById('ue-perm-host-new');
+  if (this.value === '__new__') {
+    newInput.hidden = false;
+    newInput.value = '';
+    renderPermChecks('', []);
+    setTimeout(function () { newInput.focus(); }, 0);
+  } else {
+    newInput.hidden = true;
+    renderPermChecks(this.value, (u.permissions || {})[this.value] || []);
+  }
 });
 document.getElementById('rotate-dialog-cancel').addEventListener('click', closeRotateDialog);
 document.getElementById('rotate-dialog-confirm').addEventListener('click', confirmConfigRotation);
@@ -1322,12 +1462,7 @@ document.addEventListener('click', function (e) {
   var b = e.target.closest('button[data-act]');
   if (!b) return;
   var d = b.dataset;
-  if (d.act === 'edit_hosts') { editHosts(d.user, d.hosts); return; }
-  if (d.act === 'edit_email') { editEmail(d.user, d.email); return; }
-  if (d.act === 'edit_display_name') { editDisplayName(d.user, d.displayName); return; }
-  if (d.act === 'edit_description') { editDescription(d.user, d.description); return; }
-  if (d.act === 'edit_permissions') { editPermissions(d.user, d.permissions); return; }
-  if (d.act === 'edit_username') { editUsername(d.user); return; }
+  if (d.act === 'edit_user') { openUserEditModal(d.user); return; }
   var extra = {};
   if (d.user) extra.username = d.user;
   if (d.ip) extra.ip = d.ip;
