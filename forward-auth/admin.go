@@ -58,18 +58,21 @@ func jsonErr(w http.ResponseWriter, msg string) {
 
 // adminUserView is a User with secrets stripped for the panel.
 type adminUserView struct {
-	Username     string    `json:"username"`
-	Role         string    `json:"role"`
-	Email        string    `json:"email"`
-	Disabled     bool      `json:"disabled"`
-	MustChange   bool      `json:"must_change"`
-	TOTPEnrolled bool      `json:"totp_enrolled"`
-	BackupCodes  int       `json:"backup_codes"`
-	AllowedHosts []string  `json:"allowed_hosts"`
-	Created      time.Time `json:"created"`
-	LastLogin    time.Time `json:"last_login"`
-	LastIP       string    `json:"last_ip"`
-	Passkeys     int       `json:"passkeys"`
+	Username     string              `json:"username"`
+	DisplayName  string              `json:"display_name"`
+	Description  string              `json:"description"`
+	Role         string              `json:"role"`
+	Email        string              `json:"email"`
+	Disabled     bool                `json:"disabled"`
+	MustChange   bool                `json:"must_change"`
+	TOTPEnrolled bool                `json:"totp_enrolled"`
+	BackupCodes  int                 `json:"backup_codes"`
+	AllowedHosts []string            `json:"allowed_hosts"`
+	Permissions  map[string][]string `json:"permissions"`
+	Created      time.Time           `json:"created"`
+	LastLogin    time.Time           `json:"last_login"`
+	LastIP       string              `json:"last_ip"`
+	Passkeys     int                 `json:"passkeys"`
 }
 
 func (s *server) adminState(w http.ResponseWriter, r *http.Request) {
@@ -85,10 +88,15 @@ func (s *server) adminState(w http.ResponseWriter, r *http.Request) {
 		if hosts == nil {
 			hosts = []string{}
 		}
+		perms := u.Permissions
+		if perms == nil {
+			perms = map[string][]string{}
+		}
 		views = append(views, adminUserView{
-			Username: u.Username, Role: u.Role, Email: u.Email, Disabled: u.Disabled,
+			Username: u.Username, DisplayName: u.DisplayName, Description: u.Description,
+			Role: u.Role, Email: u.Email, Disabled: u.Disabled,
 			MustChange: u.MustChange, TOTPEnrolled: u.TOTPSecret != "",
-			BackupCodes: len(u.BackupCodes), AllowedHosts: hosts,
+			BackupCodes: len(u.BackupCodes), AllowedHosts: hosts, Permissions: perms,
 			Created: u.Created, LastLogin: u.LastLogin, LastIP: u.LastIP,
 			Passkeys: len(u.Passkeys),
 		})
@@ -168,13 +176,18 @@ func (s *server) adminAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Action   string   `json:"action"`
-		Username string   `json:"username"`
-		Role     string   `json:"role"`
-		Email    string   `json:"email"`
-		Hosts    []string `json:"hosts"`
-		IP       string   `json:"ip"`
-		SID      string   `json:"sid"`
+		Action      string   `json:"action"`
+		Username    string   `json:"username"`
+		Role        string   `json:"role"`
+		Email       string   `json:"email"`
+		Hosts       []string `json:"hosts"`
+		IP          string   `json:"ip"`
+		SID         string   `json:"sid"`
+		NewUsername string   `json:"new_username"`
+		DisplayName string   `json:"display_name"`
+		Description string   `json:"description"`
+		Host        string   `json:"host"`
+		Permissions []string `json:"permissions"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.maxBodyBytes)
 	dec := json.NewDecoder(r.Body)
@@ -308,6 +321,87 @@ func (s *server) adminAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		done(nil)
+	case "set_display_name":
+		name, err := normalizeDisplayName(req.DisplayName)
+		if err != nil {
+			jsonErr(w, err.Error())
+			return
+		}
+		var before string
+		if err := s.users.mutate(req.Username, func(u *User) bool {
+			before = u.DisplayName
+			u.DisplayName = name
+			return true
+		}); err != nil {
+			jsonErr(w, err.Error())
+			return
+		}
+		s.audit(fmt.Sprintf("admin_set_display_name:%s before=%q after=%q", req.Username, before, name), ip, actor.Username, r)
+		s.ntf.send("admin_set_display_name", actor.Username, ip, s.cfg.authHost, "target "+req.Username)
+		jsonOut(w, http.StatusOK, map[string]string{"ok": "1"})
+	case "set_description":
+		desc, err := normalizeDescription(req.Description)
+		if err != nil {
+			jsonErr(w, err.Error())
+			return
+		}
+		if err := s.users.mutate(req.Username, func(u *User) bool { u.Description = desc; return true }); err != nil {
+			jsonErr(w, err.Error())
+			return
+		}
+		s.audit("admin_set_description:"+req.Username, ip, actor.Username, r)
+		s.ntf.send("admin_set_description", actor.Username, ip, s.cfg.authHost, "target "+req.Username)
+		jsonOut(w, http.StatusOK, map[string]string{"ok": "1"})
+	case "rename_user":
+		if err := s.users.rename(req.Username, req.NewUsername); err != nil {
+			jsonErr(w, err.Error())
+			return
+		}
+		s.audit(fmt.Sprintf("admin_rename_user:%s before=%q after=%q", req.NewUsername, req.Username, req.NewUsername), ip, actor.Username, r)
+		s.ntf.send("admin_rename_user", actor.Username, ip, s.cfg.authHost, "target "+req.Username+" -> "+req.NewUsername)
+		jsonOut(w, http.StatusOK, map[string]string{"ok": "1"})
+	case "set_permissions":
+		if req.Host == "" || normalizeHost(req.Host) == "" {
+			jsonErr(w, "host required")
+			return
+		}
+		host := normalizeHost(req.Host)
+		perms, err := normalizePermissions(req.Permissions)
+		if err != nil {
+			jsonErr(w, err.Error())
+			return
+		}
+		var before []string
+		var hostCapExceeded bool
+		applied, err := s.users.mutateIf(req.Username, func(u *User) bool {
+			before = u.Permissions[host]
+			if len(perms) == 0 {
+				if u.Permissions != nil {
+					delete(u.Permissions, host)
+				}
+				return true
+			}
+			if u.Permissions == nil {
+				u.Permissions = map[string][]string{}
+			}
+			if _, exists := u.Permissions[host]; !exists && len(u.Permissions) >= maxPermissionsHost {
+				hostCapExceeded = true
+				return false
+			}
+			u.Permissions[host] = perms
+			return true
+		})
+		if err != nil {
+			jsonErr(w, err.Error())
+			return
+		}
+		if !applied && hostCapExceeded {
+			jsonErr(w, fmt.Sprintf("at most %d hosts can carry permission grants for one user", maxPermissionsHost))
+			return
+		}
+		s.audit(fmt.Sprintf("admin_set_permissions:%s host=%s before=%v after=%v", req.Username, host, before, perms), ip, actor.Username, r)
+		s.ntf.send("admin_set_permissions", actor.Username, ip, s.cfg.authHost, "target "+req.Username+" host "+host)
+		jsonOut(w, http.StatusOK, map[string]string{"ok": "1"})
 	case "reset_passkeys":
 		if err := s.users.mutate(req.Username, func(u *User) bool {
 			u.Passkeys = nil

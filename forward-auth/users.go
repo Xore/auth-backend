@@ -31,6 +31,7 @@ import (
 	"net/mail"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -74,6 +75,66 @@ func normalizeEmail(s string) (string, error) {
 	return local + "@" + strings.ToLower(domain), nil
 }
 
+const (
+	maxDisplayNameLen  = 80
+	maxDescriptionLen  = 500
+	maxPermissionsHost = 32 // distinct hosts a user can have grants under
+	maxPermissionsKey  = 16 // grants per host
+	maxPermissionLen   = 64 // bytes per permission string
+)
+
+// permissionKeyRe bounds the opaque, consumer-app-defined permission
+// strings. auth-backend never interprets them, but still bounds their shape
+// so a consumer's own key format can't be used to smuggle arbitrary bytes
+// through this store.
+var permissionKeyRe = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,64}$`)
+
+// normalizeDisplayName trims and bounds an admin-supplied display name. An
+// empty result clears the field; introspection then falls back to Username.
+func normalizeDisplayName(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if len(s) > maxDisplayNameLen {
+		return "", fmt.Errorf("display name must not exceed %d characters", maxDisplayNameLen)
+	}
+	return s, nil
+}
+
+// normalizeDescription trims and bounds an admin-supplied user description.
+func normalizeDescription(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if len(s) > maxDescriptionLen {
+		return "", fmt.Errorf("description must not exceed %d characters", maxDescriptionLen)
+	}
+	return s, nil
+}
+
+// normalizePermissions validates and de-duplicates an admin-supplied
+// permission grant list for one host. An empty list clears any existing
+// grants for that host (deny-by-default: nothing is implicitly kept).
+func normalizePermissions(perms []string) ([]string, error) {
+	if len(perms) > maxPermissionsKey {
+		return nil, fmt.Errorf("at most %d permissions per host", maxPermissionsKey)
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(perms))
+	for _, p := range perms {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if len(p) > maxPermissionLen || !permissionKeyRe.MatchString(p) {
+			return nil, fmt.Errorf("invalid permission key %q: 1-%d chars of a-z A-Z 0-9 . _ : -", p, maxPermissionLen)
+		}
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 // recoveryEmail returns the address recovery mail is sent to: the validated
 // Email field when set, otherwise — for backward compatibility with
 // email-shaped usernames — the username itself when it parses as an email
@@ -89,26 +150,33 @@ func (u *User) recoveryEmail() string {
 }
 
 type User struct {
-	Subject       string        `json:"subject"`
-	Username      string        `json:"username"`
-	Hash          string        `json:"hash"`
-	Role          string        `json:"role"`
-	Email         string        `json:"email,omitempty"` // optional recovery address; usernames stay opaque IDs
-	Disabled      bool          `json:"disabled,omitempty"`
-	MustChange    bool          `json:"must_change,omitempty"`
-	TOTPSecret    string        `json:"totp_secret,omitempty"`
-	PendingTOTP   string        `json:"pending_totp,omitempty"`
-	BackupCodes   []string      `json:"backup_codes,omitempty"` // sha256 hex, removed on use
-	Gen           int           `json:"gen"`                    // bump to kill all sessions
-	AllowedHosts  []string      `json:"allowed_hosts,omitempty"`
-	Created       time.Time     `json:"created"`
-	LastLogin     time.Time     `json:"last_login,omitempty"`
-	LastIP        string        `json:"last_ip,omitempty"`
-	PasskeyUserID []byte        `json:"webauthn_id,omitempty"`
-	Passkeys      []Passkey     `json:"passkeys,omitempty"`
-	DeviceGen     int           `json:"device_gen,omitempty"`
-	MagicSeq      int           `json:"magic_seq,omitempty"` // magic-link single-use counter
-	History       []loginRecord `json:"history,omitempty"`   // recent successful logins, for risk scoring
+	Subject      string   `json:"subject"`
+	Username     string   `json:"username"`
+	DisplayName  string   `json:"display_name,omitempty"` // admin-editable; introspection falls back to Username when empty
+	Description  string   `json:"description,omitempty"`  // admin-editable free text, never shown to the user themselves as a credential
+	Hash         string   `json:"hash"`
+	Role         string   `json:"role"`
+	Email        string   `json:"email,omitempty"` // optional recovery address; usernames stay opaque IDs
+	Disabled     bool     `json:"disabled,omitempty"`
+	MustChange   bool     `json:"must_change,omitempty"`
+	TOTPSecret   string   `json:"totp_secret,omitempty"`
+	PendingTOTP  string   `json:"pending_totp,omitempty"`
+	BackupCodes  []string `json:"backup_codes,omitempty"` // sha256 hex, removed on use
+	Gen          int      `json:"gen"`                    // bump to kill all sessions
+	AllowedHosts []string `json:"allowed_hosts,omitempty"`
+	// Permissions carries opaque, consumer-app-defined capability strings
+	// per host, deny-by-default: an absent host key or absent string grants
+	// nothing beyond whatever the coarse Role already gives a consumer.
+	// auth-backend stores and serves this; it never interprets the strings.
+	Permissions   map[string][]string `json:"permissions,omitempty"`
+	Created       time.Time           `json:"created"`
+	LastLogin     time.Time           `json:"last_login,omitempty"`
+	LastIP        string              `json:"last_ip,omitempty"`
+	PasskeyUserID []byte              `json:"webauthn_id,omitempty"`
+	Passkeys      []Passkey           `json:"passkeys,omitempty"`
+	DeviceGen     int                 `json:"device_gen,omitempty"`
+	MagicSeq      int                 `json:"magic_seq,omitempty"` // magic-link single-use counter
+	History       []loginRecord       `json:"history,omitempty"`   // recent successful logins, for risk scoring
 }
 
 // loginRecord is one successful sign-in, kept (capped) for risk-based
@@ -417,6 +485,55 @@ func (st *userStore) create(u *User) error {
 	st.users[u.Username] = u
 	if err := st.saveLocked(); err != nil {
 		delete(st.users, u.Username)
+		return err
+	}
+	return nil
+}
+
+// rename changes a user's username, the map key everything (sessions,
+// TOTP-replay state, the login store itself) is keyed on. Subject, Created,
+// and every other field are preserved unchanged. Session cookies embed the
+// username directly (sessionClaims.user, token.go), so a rename cannot keep
+// existing sessions valid the way disable/reset_password already don't —
+// Gen and DeviceGen are bumped here for the same reason those actions bump
+// them, forcing a fresh login under the new name.
+func (st *userStore) rename(oldName, newName string) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if !usernameRe.MatchString(newName) {
+		return errors.New("username must be 1-32 chars of a-z 0-9 . _ -")
+	}
+	u, ok := st.users[oldName]
+	if !ok {
+		return errNoSuchUser
+	}
+	if oldName == newName {
+		return nil
+	}
+	if _, taken := st.users[newName]; taken {
+		return errors.New("username already taken")
+	}
+	oldStep, hadStep := st.lastStep[oldName]
+	u.Username = newName
+	u.Gen++
+	u.DeviceGen++
+	delete(st.users, oldName)
+	st.users[newName] = u
+	delete(st.lastStep, oldName)
+	if hadStep {
+		st.lastStep[newName] = oldStep
+	}
+	if err := st.saveLocked(); err != nil {
+		// Roll back: restore the old key/name/counters and TOTP-replay state.
+		u.Username = oldName
+		u.Gen--
+		u.DeviceGen--
+		delete(st.users, newName)
+		st.users[oldName] = u
+		delete(st.lastStep, newName)
+		if hadStep {
+			st.lastStep[oldName] = oldStep
+		}
 		return err
 	}
 	return nil

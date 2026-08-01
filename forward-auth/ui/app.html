@@ -181,6 +181,16 @@ function esc(s) {
     return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
   });
 }
+// firstPermissionEntry formats one host's grants as "host: key, key" to
+// pre-fill the permissions edit dialog -- v1 edits one host per submission,
+// so this just picks a stable (sorted) starting point, not "the" host.
+function firstPermissionEntry(permissions) {
+  if (!permissions) return '';
+  var hosts = Object.keys(permissions).sort();
+  if (!hosts.length) return '';
+  var host = hosts[0];
+  return host + ': ' + (permissions[host] || []).join(', ');
+}
 function ts(s) {
   if (!s || s.startsWith('0001')) return '–';
   var d = new Date(s);
@@ -338,6 +348,26 @@ function editEmail(name, cur) {
   openEditDialog('email', name, cur);
 }
 
+function editDisplayName(name, cur) {
+  openEditDialog('display_name', name, cur);
+}
+
+function editDescription(name, cur) {
+  openEditDialog('description', name, cur);
+}
+
+function editPermissions(name, cur) {
+  // v1: one host's grants at a time. cur is pre-filled with the first host
+  // this user already has grants for, formatted "host: key, key" -- submit
+  // again with a different host prefix to edit another host's grants; other
+  // hosts' grants are untouched by that submission.
+  openEditDialog('permissions', name, cur);
+}
+
+function editUsername(name) {
+  openEditDialog('username', name, name);
+}
+
 var editDialogState = null;
 
 function openEditDialog(kind, name, current) {
@@ -352,6 +382,30 @@ function openEditDialog(kind, name, current) {
     label.textContent = 'Allowed hosts';
     input.type = 'text';
     input.placeholder = 'grafana.example.com, *.media.example.com';
+  } else if (kind === 'display_name') {
+    title.textContent = 'Edit display name';
+    desc.textContent = 'Set the name shown for ' + name + ' in consuming apps. Leave blank to fall back to the username.';
+    label.textContent = 'Display name';
+    input.type = 'text';
+    input.placeholder = name;
+  } else if (kind === 'description') {
+    title.textContent = 'Edit description';
+    desc.textContent = 'Admin-only note about ' + name + '. Never shown to the user themselves.';
+    label.textContent = 'Description';
+    input.type = 'text';
+    input.placeholder = 'e.g. contractor, expires 2026-12-01';
+  } else if (kind === 'permissions') {
+    title.textContent = 'Edit permissions';
+    desc.textContent = 'Grant ' + name + ' opaque, app-defined capability keys for one host at a time: "host: key, key". Leave the keys blank to clear that host’s grants. Other hosts’ grants are unaffected.';
+    label.textContent = 'Host: permission keys';
+    input.type = 'text';
+    input.placeholder = 'dashboard.example.com: pages:sandbox:view, actions:export';
+  } else if (kind === 'username') {
+    title.textContent = 'Rename user';
+    desc.textContent = 'Change the username ' + name + ' signs in with. Their current session is invalidated immediately and they must sign in again under the new name.';
+    label.textContent = 'New username';
+    input.type = 'text';
+    input.placeholder = name;
   } else {
     title.textContent = 'Edit recovery email';
     desc.textContent = 'Set the address used for password recovery for ' + name + '. Leave blank to disable email recovery.';
@@ -375,22 +429,63 @@ function closeEditDialog() {
   editDialogState = null;
 }
 
+var EDIT_DIALOG_ACTIONS = {
+  hosts: 'set_hosts', email: 'set_email', display_name: 'set_display_name',
+  description: 'set_description', permissions: 'set_permissions'
+};
+var EDIT_DIALOG_LABELS = {
+  hosts: 'Allowed hosts', email: 'Recovery email', display_name: 'Display name',
+  description: 'Description', permissions: 'Permissions'
+};
+
 function saveEditDialog() {
   if (!editDialogState) return;
+  var kind = editDialogState.kind;
   var input = document.getElementById('edit-dialog-input');
   var value = input.value.trim();
-  if (editDialogState.kind === 'email' && value && !input.checkValidity()) {
+  if (kind === 'email' && value && !input.checkValidity()) {
     input.reportValidity();
     return;
   }
-  var request = editDialogState.kind === 'hosts'
-    ? {username: editDialogState.username, hosts: value.split(',').map(function (s) { return s.trim(); }).filter(Boolean)}
-    : {username: editDialogState.username, email: value};
-  var action = editDialogState.kind === 'hosts' ? 'set_hosts' : 'set_email';
+  var request;
+  if (kind === 'hosts') {
+    request = {username: editDialogState.username, hosts: value.split(',').map(function (s) { return s.trim(); }).filter(Boolean)};
+  } else if (kind === 'display_name') {
+    request = {username: editDialogState.username, display_name: value};
+  } else if (kind === 'description') {
+    request = {username: editDialogState.username, description: value};
+  } else if (kind === 'permissions') {
+    var sep = value.indexOf(':');
+    if (sep < 0 || !value.slice(0, sep).trim()) {
+      flash('enter as "host: key, key"', true);
+      return;
+    }
+    var host = value.slice(0, sep).trim();
+    var keys = value.slice(sep + 1).split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+    request = {username: editDialogState.username, host: host, permissions: keys};
+  } else if (kind === 'username') {
+    if (!value) { flash('username required', true); return; }
+    if (value === editDialogState.username) { closeEditDialog(); return; }
+    var oldName = editDialogState.username;
+    closeEditDialog();
+    openDangerDialog('Rename ' + oldName + ' to ' + value + '?',
+      'Their current session is invalidated immediately.',
+      '<b>This action takes effect immediately:</b><p class="u-mt8">They must sign in again as <b>' + esc(value) + '</b>. Anything referencing the old username by name (not by internal ID) will need updating separately.</p>',
+      'Rename user', function () {
+        act('rename_user', {username: oldName, new_username: value}).then(function () {
+          flash('Renamed <b>' + esc(oldName) + '</b> to <b>' + esc(value) + '</b>.');
+          fetchState();
+        });
+      });
+    return;
+  } else {
+    request = {username: editDialogState.username, email: value};
+  }
+  var action = EDIT_DIALOG_ACTIONS[kind] || 'set_email';
   var user = editDialogState.username;
   act(action, request).then(function () {
     closeEditDialog();
-    flash((action === 'set_hosts' ? 'Allowed hosts' : 'Recovery email') + ' updated for <b>' + esc(user) + '</b>.');
+    flash((EDIT_DIALOG_LABELS[kind] || 'Field') + ' updated for <b>' + esc(user) + '</b>.');
   });
 }
 
@@ -856,6 +951,10 @@ function loadAdminUsers() {
       '<button class="action-menu__item" role="menuitem" data-act="logout_user" data-msg="Log ' + esc(u.username) + ' out everywhere?" data-user="' + esc(u.username) + '">Log out everywhere</button>' +
       '<button class="action-menu__item" role="menuitem" data-act="edit_hosts" data-user="' + esc(u.username) + '" data-hosts="' + esc((u.allowed_hosts || []).join(', ')) + '">Edit allowed hosts</button>' +
       '<button class="action-menu__item" role="menuitem" data-act="edit_email" data-user="' + esc(u.username) + '" data-email="' + esc(u.email || '') + '">Edit recovery email</button>' +
+      '<button class="action-menu__item" role="menuitem" data-act="edit_display_name" data-user="' + esc(u.username) + '" data-display-name="' + esc(u.display_name || '') + '">Edit display name</button>' +
+      '<button class="action-menu__item" role="menuitem" data-act="edit_description" data-user="' + esc(u.username) + '" data-description="' + esc(u.description || '') + '">Edit description</button>' +
+      '<button class="action-menu__item" role="menuitem" data-act="edit_permissions" data-user="' + esc(u.username) + '" data-permissions="' + esc(firstPermissionEntry(u.permissions)) + '">Edit permissions</button>' +
+      '<button class="action-menu__item" role="menuitem" data-act="edit_username" data-user="' + esc(u.username) + '">Rename user</button>' +
       '<button class="action-menu__item" role="menuitem" data-act="set_role" data-user="' + esc(u.username) + '" data-role="' + (u.role === 'admin' ? 'user' : 'admin') + '">' + (u.role === 'admin' ? 'Demote to user' : 'Promote to admin') + '</button>' +
       '<button class="action-menu__item action-menu__item--danger" role="menuitem" data-act="delete" data-msg="DELETE ' + esc(u.username) + '? This cannot be undone." data-user="' + esc(u.username) + '">Delete user</button>' +
       '</div></details></td>' +
@@ -1225,6 +1324,10 @@ document.addEventListener('click', function (e) {
   var d = b.dataset;
   if (d.act === 'edit_hosts') { editHosts(d.user, d.hosts); return; }
   if (d.act === 'edit_email') { editEmail(d.user, d.email); return; }
+  if (d.act === 'edit_display_name') { editDisplayName(d.user, d.displayName); return; }
+  if (d.act === 'edit_description') { editDescription(d.user, d.description); return; }
+  if (d.act === 'edit_permissions') { editPermissions(d.user, d.permissions); return; }
+  if (d.act === 'edit_username') { editUsername(d.user); return; }
   var extra = {};
   if (d.user) extra.username = d.user;
   if (d.ip) extra.ip = d.ip;

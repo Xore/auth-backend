@@ -31,6 +31,10 @@ type introspectionResponse struct {
 	DisplayName string `json:"display_name,omitempty"`
 	Role        string `json:"role"`
 	Generation  int    `json:"generation"`
+	// Permissions carries this user's opaque grant list for the requested
+	// target_host only (never other hosts) -- deny-by-default: absent means
+	// no grants beyond whatever the consumer already derives from Role.
+	Permissions []string `json:"permissions,omitempty"`
 }
 
 // introspect is a service-to-service identity lookup for applications that
@@ -87,7 +91,7 @@ func (s *server) introspect(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(introspectionResponse{
-		Subject: user.Subject, Username: user.Username, DisplayName: user.Username,
-		Role: user.Role, Generation: user.Gen,
+		Subject: user.Subject, Username: user.Username, DisplayName: firstNonEmpty(user.DisplayName, user.Username),
+		Role: user.Role, Generation: user.Gen, Permissions: user.Permissions[host],
 	})
 }
