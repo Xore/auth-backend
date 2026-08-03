@@ -218,9 +218,7 @@ const pageCSS = `
   .brand__slash{color:var(--accent)}
   .sub{text-align:center;font-size:11px;font-weight:500;letter-spacing:.06em;
     text-transform:uppercase;color:var(--text-muted);margin-bottom:24px}
-  .check{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-secondary);
     margin-bottom:16px;cursor:pointer}
-  .check input{width:auto;margin:0;accent-color:var(--accent)}
   .notice{display:flex;justify-content:center;margin-bottom:20px}
   .foot{margin-top:20px;text-align:center;font-size:11px;letter-spacing:.06em;
     color:var(--text-muted);text-transform:uppercase}
@@ -246,7 +244,7 @@ const pageCSS = `
     color:var(--accent);letter-spacing:.06em;text-align:center}
   .status-ok{color:var(--green);font-size:15px;margin-bottom:18px}
   .status-err{color:var(--red);font-size:13px;margin-bottom:14px}
-  .text-muted{font-size:13px;color:var(--text-secondary);line-height:1.6;margin-bottom:18px}
+  .auth-note{font-size:13px;color:var(--text-secondary);line-height:1.6;margin-bottom:18px}
   .label-hint{text-transform:none;color:var(--text-muted)}
   .form-spaced{margin-top:10px}
   @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
@@ -316,7 +314,7 @@ const backupCodesPage = pageHead + `
   <div class="card auth-card auth-card--wide">` + brandHTML + `
     <div class="sub">recovery codes</div>
     <div class="notice"><span class="badge badge--orange">shown once — store them now</span></div>
-    <p class="text-muted">
+    <p class="auth-note">
       Two-factor is active. If you lose your authenticator, any of these one-time
       codes signs you in (enter it in the 2fa field). Each works once.</p>
     <ul id="codes" class="codes-grid">
@@ -370,7 +368,7 @@ const forbiddenPage = pageHead + `
   <div class="card auth-card auth-center">` + brandHTML + `
     <div class="sub">access denied</div>
     <p class="status-err">&#10007; not authorized for {{HOST}}</p>
-    <p class="text-muted">
+    <p class="auth-note">
       Your account doesn't have access to this service. If it should,
       ask an admin to add it to your allowed hosts.</p>
     <div class="foot foot-flat"><a href="/_auth/logout">switch account</a></div>
