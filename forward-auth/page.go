@@ -140,6 +140,18 @@ func (s *server) renderForbidden(w http.ResponseWriter, host, nonce string) {
 	_, _ = w.Write([]byte(page))
 }
 
+// renderRestrictedApp is shown instead of the full /auth/app settings shell
+// to a non-admin visiting it as a top-level page rather than embedded in the
+// dashboard's account modal (honeypot-stack issue #473). It carries no
+// account data of its own — just a pointer back to the dashboard and a way
+// out — so there's nothing here worth protecting beyond secHeaders' usual
+// CSP/framing defaults.
+func (s *server) renderRestrictedApp(w http.ResponseWriter, nonce string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	page := strings.ReplaceAll(restrictedAppPage, "{{NONCE}}", nonce)
+	_, _ = w.Write([]byte(page))
+}
+
 // renderRecoverRequest shows the "request a reset link" form. sent renders
 // the generic success notice (identical whether or not the account exists).
 func (s *server) renderRecoverRequest(w http.ResponseWriter, errMsg string, sent bool, nonce string) {
@@ -372,6 +384,18 @@ const forbiddenPage = pageHead + `
       Your account doesn't have access to this service. If it should,
       ask an admin to add it to your allowed hosts.</p>
     <div class="foot foot-flat"><a href="/_auth/logout">switch account</a></div>
+  </div>
+</body>
+</html>`
+
+const restrictedAppPage = pageHead + `
+  <div class="card auth-card auth-center">` + brandHTML + `
+    <div class="sub">use the dashboard's account menu</div>
+    <p class="auth-note">
+      This account page is only available embedded in the dashboard (the
+      profile menu in the bottom-left corner &rarr; Settings). Standalone
+      access to the full site is limited to administrators.</p>
+    <div class="foot foot-flat"><a href="/_auth/logout">log out</a></div>
   </div>
 </body>
 </html>`

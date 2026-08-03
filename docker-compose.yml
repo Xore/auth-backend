@@ -45,6 +45,15 @@ services:
       # Optional: comma-separated https origins allowed to embed /auth/app in
       # an iframe (e.g. the honeypot dashboard settings popup). Empty = deny.
       - APP_FRAME_ANCESTORS=${APP_FRAME_ANCESTORS:-}
+      # Optional: a bare domain (no scheme/port) trusted to iframe /auth/app
+      # for non-admin users -- itself and any subdomain (e.g.
+      # "dashboard.example.com" covers "settings.dashboard.example.com"
+      # too). Non-admins visiting /auth/app as a top-level page (not
+      # embedded from this domain) get a small notice instead of the full
+      # standalone settings site; admins are never restricted. Empty = no
+      # restriction (standalone access stays open to everyone, the
+      # pre-#473 behavior).
+      - APP_EMBED_DOMAIN=${APP_EMBED_DOMAIN:-}
       - TOTP_ISSUER=${TOTP_ISSUER:-}
       - SESSION_TTL_HOURS=${SESSION_TTL_HOURS:-12}
       - IDLE_TIMEOUT_MINUTES=${IDLE_TIMEOUT_MINUTES:-60}
