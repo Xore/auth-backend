@@ -16,22 +16,37 @@
          above any z-index, so a body-level flash is invisible here. -->
     <div id="flash"></div>
 
-    <!-- Sidebar -->
-    <aside class="modal__sidebar">
-      <div class="sidebar__search">
-        <svg class="sidebar__search-icon" width="14" height="14" viewBox="0 0 24 24"
-             fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-        </svg>
-        <input type="search" id="sidebar-search" placeholder="Search"
-               aria-label="Search settings" />
-      </div>
-      <nav id="settings-nav" aria-label="Settings navigation"></nav>
-    </aside>
+    <!-- Layout matches Xore/theme's own settings-layout pattern (the same
+         one honeypot-stack's dashboard settings modal uses) rather than the
+         generic .modal__sidebar/.modal__content pair -- theme.css even
+         carries a ".modal--permanent > .settings-layout" rule specifically
+         for this full-page case. -->
+    <div class="settings-layout">
+      <aside class="settings-layout__sidebar" aria-label="Settings sections">
+        <div class="sidebar__search">
+          <svg class="sidebar__search-icon" width="14" height="14" viewBox="0 0 24 24"
+               fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+          </svg>
+          <input type="search" id="sidebar-search" placeholder="Search"
+                 aria-label="Search settings" />
+        </div>
+        <nav id="settings-nav" aria-label="Settings navigation"></nav>
+      </aside>
 
-    <!-- Content -->
-    <div class="modal__content" id="settings-content">
-      <!-- Panes rendered here by showPane() -->
+      <main class="settings-layout__content">
+        <div class="hp-settings-column">
+          <header class="hp-settings-head">
+            <div>
+              <h1 id="settings-title">Settings</h1>
+              <p id="settings-desc"></p>
+            </div>
+          </header>
+          <p class="hp-settings-status" role="status" aria-live="polite" id="settings-status"></p>
+          <!-- Panes rendered here by showPane() -->
+          <section class="hp-settings-pane" id="settings-content" data-hp-pane="account"></section>
+        </div>
+      </main>
     </div>
 
     <div class="edit-dialog-backdrop" id="user-edit-backdrop" aria-hidden="true" inert>
@@ -551,7 +566,7 @@ var ADMIN_NAV = [
 
 function renderNav() {
   var nav = document.getElementById('settings-nav');
-  var html = '<div class="sidebar__section-label">Settings</div>';
+  var html = '<div class="sidebar__section-label">Personal</div>';
   SETTINGS_NAV.forEach(function (item) {
     html += '<button class="sidebar__item' + (activePane === item.id ? ' active' : '') +
       '" data-pane="' + item.id + '">' + item.icon + ' ' + item.label + '</button>';
@@ -583,9 +598,23 @@ function filterSidebar(query) {
 }
 
 // ── pane skeletons ───────────────────────────────────────────────────────
+// PANE_DESC mirrors the dashboard settings modal's per-pane
+// data-hp-pane-desc text under a persistent "Settings" heading, in place of
+// this page's old per-pane <h2>.
+var PANE_DESC = {
+  'account':        'Manage your account, password, and trusted devices.',
+  'passkeys':       'Phishing-resistant sign-in with hardware keys and platform authenticators.',
+  'privacy':        'What auth-backend logs and stores about your account.',
+  'sessions':       'Devices and browsers currently signed in as you.',
+  'admin-users':    'Create, edit, and manage every account on this auth service.',
+  'admin-logs':     'Sign-in attempts, lockouts, and administrative actions.',
+  'admin-sessions': 'Every authenticated session across all users.',
+  'admin-settings': 'Branding, application, and infrastructure settings.',
+  'admin-system':   'Runtime version, uptime, and deployment details.'
+};
+
 var PANE_TEMPLATES = {
   'account':
-    '<h2 id="settings-title">Account</h2>' +
     '<div class="card">' +
       '<div class="card__row">' +
         '<div><div class="card__label">Signed in as</div>' +
@@ -617,7 +646,6 @@ var PANE_TEMPLATES = {
     '</table>',
 
   'passkeys':
-    '<h2 id="settings-title">Passkeys</h2>' +
     '<p class="pane__desc">Use your phone, computer, password manager, or hardware security key for phishing-resistant sign-in.</p>' +
     '<div class="card">' +
       '<div class="card__title">Your passkeys</div>' +
@@ -634,7 +662,6 @@ var PANE_TEMPLATES = {
     '</div>',
 
   'privacy':
-    '<h2 id="settings-title">Privacy</h2>' +
     '<div class="card">' +
       '<div class="card__row">' +
         '<div><div class="card__label">Security logging</div>' +
@@ -649,7 +676,6 @@ var PANE_TEMPLATES = {
     '</div>',
 
   'sessions':
-    '<h2 id="settings-title">Active sessions</h2>' +
     '<table class="data-table">' +
       '<thead><tr><th>Device</th><th>IP</th><th>Created</th><th>Last seen</th><th></th></tr></thead>' +
       '<tbody id="my-sessions-body">' +
@@ -658,7 +684,6 @@ var PANE_TEMPLATES = {
     '</table>',
 
   'admin-users':
-    '<h2 id="settings-title">Users</h2>' +
     '<div class="card">' +
       '<div class="card__title">Create user</div>' +
       '<div class="newuser">' +
@@ -682,7 +707,6 @@ var PANE_TEMPLATES = {
     '</div>',
 
   'admin-logs':
-    '<h2 id="settings-title">Audit Log</h2>' +
     '<div class="metric-grid">' +
       '<div class="metric"><div class="metric__value" id="st-total">–</div><div class="metric__label">Attempts</div></div>' +
       '<div class="metric"><div class="metric__value" id="st-ok">–</div><div class="metric__label">Successful</div></div>' +
@@ -717,7 +741,6 @@ var PANE_TEMPLATES = {
     '</div>',
 
   'admin-sessions':
-    '<h2 id="settings-title">Active Sessions</h2>' +
     '<div class="card">' +
       '<div class="card__desc">All users, best effort — repopulates after restart.</div>' +
       '<table class="data-table">' +
@@ -728,7 +751,6 @@ var PANE_TEMPLATES = {
     '</div>',
 
   'admin-settings':
-    '<h2 id="settings-title">Configuration</h2>' +
     '<p class="pane__desc">Branding changes apply immediately. Runtime and infrastructure settings are staged for the next restart. Secret values are never displayed.</p>' +
     '<div class="card"><div class="card__title">Login page branding</div>' +
       '<div class="settings-grid u-mt14">' +
@@ -745,7 +767,6 @@ var PANE_TEMPLATES = {
       '<span class="restart-note" id="restart-note"></span></div></div>',
 
   'admin-system':
-    '<h2 id="settings-title">System</h2>' +
     '<div class="card">' +
       '<div class="card__row"><span class="card__label">Version</span>' +
         '<span class="card__value--mono" id="sys-version">–</span></div>' +
@@ -1221,9 +1242,19 @@ function showPane(id) {
   activePane = id;
   renderNav(); // re-render sidebar to update .active class
 
+  var desc = document.getElementById('settings-desc');
+  if (desc) desc.textContent = PANE_DESC[id] || '';
+
   var content = document.getElementById('settings-content');
+  content.dataset.hpPane = id;
   content.innerHTML = PANE_TEMPLATES[id] || PANE_TEMPLATES['account'];
-  content.scrollTop = 0;
+  // #settings-content stopped being the scrolling element itself once the
+  // scrollable container became .settings-layout__content (the <main>,
+  // matching the dashboard's own settings-layout) -- resetting the
+  // now-inner section's own scrollTop would no longer move the visible
+  // scroll position at all.
+  var scroller = document.querySelector('.settings-layout__content');
+  if (scroller) scroller.scrollTop = 0;
 
   if (PANE_LOADERS[id]) PANE_LOADERS[id]();
 }
