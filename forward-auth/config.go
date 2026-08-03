@@ -57,6 +57,7 @@ type config struct {
 	orgID             string
 	ssoURL            string
 	frameAncestors    []string // APP_FRAME_ANCESTORS: https origins allowed to frame /auth/app
+	appEmbedDomain    string   // APP_EMBED_DOMAIN: base domain (+ any subdomain) allowed to iframe /auth/app as a non-admin
 	smtpURL           string
 	smtpFrom          string
 	smtpAllowInsecure bool // dev-only: permit smtp:// without STARTTLS
@@ -163,6 +164,28 @@ func parseFrameAncestors(raw string, logger *slog.Logger) []string {
 	return origins
 }
 
+// parseEmbedDomain validates APP_EMBED_DOMAIN: a bare hostname (no scheme,
+// port, path, or userinfo) that #473's non-admin /auth/app restriction
+// treats as trusted to iframe the app, along with any of its subdomains. An
+// empty or malformed value disables the whitelist entirely (renderApp then
+// leaves the standalone-site restriction unenforced, same as an unset
+// APP_FRAME_ANCESTORS) rather than guessing at operator intent.
+func parseEmbedDomain(raw string, logger *slog.Logger) string {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	if raw == "" {
+		return ""
+	}
+	if strings.ContainsAny(raw, "/:@?#") {
+		logger.Warn("ignoring invalid APP_EMBED_DOMAIN (expected a bare hostname)", "value", raw)
+		return ""
+	}
+	if u, err := url.Parse("https://" + raw); err != nil || u.Hostname() != raw {
+		logger.Warn("ignoring invalid APP_EMBED_DOMAIN (expected a bare hostname)", "value", raw)
+		return ""
+	}
+	return raw
+}
+
 func loadConfig(logger *slog.Logger) config {
 	secret := []byte(getenvFile("COOKIE_SECRET", ""))
 	if len(secret) == 0 {
@@ -255,6 +278,7 @@ func loadConfig(logger *slog.Logger) config {
 		orgID:             getenv("ORG_ID", ""),
 		ssoURL:            getenv("SSO_URL", ""),
 		frameAncestors:    parseFrameAncestors(getenv("APP_FRAME_ANCESTORS", ""), logger),
+		appEmbedDomain:    parseEmbedDomain(getenv("APP_EMBED_DOMAIN", ""), logger),
 		smtpURL:           getenv("SMTP_URL", ""),
 		smtpFrom:          getenv("SMTP_FROM", "forward-auth@"+authHost),
 		smtpAllowInsecure: getenv("SMTP_ALLOW_INSECURE", "false") == "true",

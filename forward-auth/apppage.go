@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"html/template"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -66,6 +67,42 @@ func allowAppFraming(h http.Header, ancestors []string) {
 	))
 }
 
+// isFramedAppRequest reports whether r looks like it was loaded inside an
+// <iframe> on APP_EMBED_DOMAIN itself or one of its subdomains (the
+// honeypot dashboard's account modal is the intended one) rather than
+// typed/clicked as a top-level navigation straight to /auth/app.
+// Sec-Fetch-Dest is sent by every browser this app already requires for its
+// other security headers (see secHeaders) and cannot be set by the page
+// content itself, only by the browser's own navigation type — a much
+// stronger signal than Referer, which some browsers/extensions strip. A
+// missing header (very old browser, or a non-browser client) is treated as
+// "not framed": failing closed here only ever narrows a non-admin from the
+// full standalone site down to the same personal-settings pane the
+// dashboard's modal already gives them, so there's no functionality lost by
+// erring toward the restricted view when the signal is absent.
+func isFramedAppRequest(r *http.Request, embedDomain string) bool {
+	if embedDomain == "" || r.Header.Get("Sec-Fetch-Dest") != "iframe" {
+		return false
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		if ref := r.Header.Get("Referer"); ref != "" {
+			if u, err := url.Parse(ref); err == nil {
+				origin = u.Scheme + "://" + u.Host
+			}
+		}
+	}
+	if origin == "" {
+		return false
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme != "https" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == embedDomain || strings.HasSuffix(host, "."+embedDomain)
+}
+
 func (s *server) renderApp(w http.ResponseWriter, r *http.Request) {
 	cl, u, ok := s.session(w, r)
 	if !ok {
@@ -75,6 +112,17 @@ func (s *server) renderApp(w http.ResponseWriter, r *http.Request) {
 	n := nonce()
 	secHeaders(w, n)
 	allowAppFraming(w.Header(), s.cfg.frameAncestors)
+	// #473: the standalone /auth/app site is admin-only. Regular users only
+	// ever reach their account settings through the dashboard's own account
+	// modal (an iframe of this same page) -- a top-level visit gets a small
+	// notice instead of the full settings shell with its sidebar nav. Only
+	// enforced once APP_EMBED_DOMAIN names an embedding domain at all; a
+	// deployment with none configured has no modal to send a non-admin back
+	// to, so the standalone site stays their only way in.
+	if s.cfg.appEmbedDomain != "" && u.Role != roleAdmin && !isFramedAppRequest(r, s.cfg.appEmbedDomain) {
+		s.renderRestrictedApp(w, n)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := appTmpl.Execute(w, AppPageData{
 		User:           u.Username,
