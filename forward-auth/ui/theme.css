@@ -2524,7 +2524,17 @@ button.sidebar__profile:disabled:hover { background: transparent; }
 .u-mt8 { margin-top: 8px; }
 .u-mt12 { margin-top: 12px; }
 .u-mt14 { margin-top: 14px; }
-body { overflow: hidden; }
+/* Removed: was a bare `body { overflow: hidden; }`. That's app-specific
+   fixed-viewport-shell behavior, and this file has no app-specific
+   exceptions -- every consumer gets the same shared rules this repo's own
+   examples demonstrate (.app-shell's min-height:100dvh + .app-main's
+   overflow:auto already contain a fixed-viewport shell's scrolling
+   correctly, with no help needed from body). The unscoped selector leaked
+   into every consumer regardless of whether it used that shell pattern,
+   breaking plain document scrolling on this repo's own long-form example
+   pages (components.html and others, none of which use .app-shell) --
+   theme/examples#22. Any app that still needs body-level scroll locking
+   for its own layout owns that in its own stylesheet, not here. */
 .pane__h3 { margin-bottom: 4px; }
 .pane__desc { font-size: 13px; color: var(--text-secondary); margin-bottom: 16px; }
 .filter-row { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
