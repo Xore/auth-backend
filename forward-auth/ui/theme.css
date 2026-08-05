@@ -216,6 +216,18 @@ html {
   min-height: 100%;
   background: var(--app-bg);
   font-size: 14px;
+  /* Reserves the scrollbar's track width up front instead of letting it
+     appear/disappear as content settles during load (webfont metrics,
+     late-loading iframe content, a table that only grows past viewport
+     height once its rows render). Without this, any width computed from
+     100vw -- .modal's width: min(1280px, calc(100vw - 40px)) and
+     .auth-split's siblings among them -- visibly jumps by the scrollbar's
+     width the moment it appears or disappears, which reads as a brief
+     resize flash. Falls back to nothing (no gutter reserved, the old
+     behavior) on a browser that doesn't support the property; it is not
+     polyfillable and there is no worse-than-before regression in not
+     having it. */
+  scrollbar-gutter: stable;
 }
 
 body {
@@ -678,6 +690,14 @@ select.form-input { cursor: pointer; }
   color: var(--text-primary);
   font-size: var(--font-size-caption);
   vertical-align: middle;
+  /* table-layout:auto sizes a column by its narrowest reasonable content --
+     often the header word, not the (frequently longer) data underneath.
+     Without a wrap fallback, a squeezed column with unbroken content (an
+     IP, a country name with no natural break point, an ASN string) spills
+     visibly past its own cell instead of staying inside the row. Wrapping
+     here keeps data readable and contained; .n's own white-space: nowrap
+     below is untouched since numeric counts should never wrap. */
+  overflow-wrap: anywhere;
 }
 .data-table tbody tr:last-child td { border-bottom: 0; }
 .data-table tbody tr:hover td { background: var(--surface-hover); }
@@ -1216,8 +1236,13 @@ pre {
   top: 50%;
   left: 50%;
   display: none;
-  width: min(960px, calc(100vw - 40px));
-  height: min(680px, calc(100dvh - 40px));
+  /* Caps were fixed at 960x680 regardless of viewport, so a modal (PDF
+     viewer, settings, log viewer) stayed small on a large/4K display even
+     though there was plenty of room. Scaling the cap with viewport size
+     (still leaving a margin, still bounded so it doesn't sprawl on an
+     ultrawide) uses that space without the modal ever exceeding it. */
+  width: min(1280px, calc(100vw - 40px));
+  height: min(840px, calc(100dvh - 40px));
   margin: 0;
   padding: 0;
   overflow: hidden;
@@ -1890,7 +1915,7 @@ button.copy:hover { color: var(--text-primary); background: var(--surface-2); }
 /* ── Evidence viewer (hp-evidence.js) ───────────────────────────────────── */
 .hp-evidence-modal {
   flex-direction: column;
-  width: min(1000px, calc(100vw - 40px));
+  width: min(1320px, calc(100vw - 40px));
   max-height: calc(100dvh - 48px);
 }
 .hp-evidence-modal .modal__header { flex: none; background: var(--sidebar-bg); }
