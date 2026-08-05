@@ -1512,8 +1512,18 @@ pre {
   .app-sidebar .sidebar__item { justify-content: center; }
   .app-content { width: min(100% - 28px, var(--content-width)); padding-top: 22px; }
   .command-bar { right: 14px; left: calc(var(--sidebar-width) + 14px); width: auto; }
-  .settings-layout { grid-template-columns: 1fr; }
-  .settings-layout__sidebar { border-right: 0; border-bottom: 1px solid var(--border-subtle); }
+  /* Stacking to one column here leaves .settings-layout's two rows both
+     sized "auto" with no explicit grid-template-rows -- grid then splits
+     the container's leftover definite height (it's height:100% inside a
+     fixed-height modal, see .hp-dash-settings > .settings-layout below)
+     roughly evenly between them regardless of actual content, so a short
+     nav list and a tall settings pane end up ~50/50 and the pane a viewer
+     actually needs is left cramped. Sizing the nav row to its own content
+     and giving the content row the rest fixes that; capping the nav's
+     height (with its own scrollbar) keeps a long admin nav list from
+     re-creating the same problem in reverse. */
+  .settings-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .settings-layout__sidebar { border-right: 0; border-bottom: 1px solid var(--border-subtle); max-height: 25dvh; overflow-y: auto; }
   .settings-grid { grid-template-columns: 1fr; }
   .modal { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }
   .modal__sidebar { width: 190px; }
@@ -1654,8 +1664,16 @@ body [hidden] { display: none !important; }
    26px->32px size and the border reset->transparent-border swap differ,
    both accepted as-is from theme. */
 .btn-icon:has(.hp-alert-badge) { position: relative; }
+/* .btn-icon is exactly 32px (width and min-height) -- the same value as
+   --toolbar-height -- so the icon button has no vertical centering slack
+   inside the toolbar and sits flush against its top edge. This badge's
+   own negative top offset used to push it a further ~3px above that,
+   landing it partly above the toolbar's (and the viewport's, since the
+   toolbar sits at the very top of the page) top edge -- clipped and
+   unreadable rather than an overlapping notification dot. Reported live
+   on a mobile phone. */
 .hp-alert-badge {
-  position: absolute; top: -3px; right: -4px;
+  position: absolute; top: 1px; right: -4px;
   min-width: 14px; height: 14px; padding: 0 3px;
   display: grid; place-items: center;
   border-radius: var(--radius-pill);
