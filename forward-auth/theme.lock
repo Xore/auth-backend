@@ -2,6 +2,6 @@
 # scripts/check-vendored-theme.sh. forward-auth/ui/theme.css must stay
 # byte-identical to theme.css at this commit.
 repository=https://github.com/Xore/theme
-commit=e010f868fe40525a18cb0eaae0c5f9f3f30df100
-date=2026-08-03T03:00:15+02:00
-sha256=e5da9d3c528a69e25f7b440230f1f50f04a1e9a462d79d95ac59f7208d2113a6
+commit=bac746fb6a73d36d0e0e6300fdb93f4588635c71
+date=2026-08-05T03:22:04+02:00
+sha256=867987e70832c62bc3c228a81c6e5c82bc69c11d0abc25e896151f1dd0f1b790
