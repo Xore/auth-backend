@@ -1723,6 +1723,15 @@ a.metric:hover { border-color: var(--border-strong); background: var(--surface-2
 .card:has(table) { overflow: auto; }
 .card table { min-width: 0; }
 .card.wide table { min-width: 720px; }
+/* A card whose list/table content can grow without bound (every row of a
+   config-driven list, not a fixed top-N) needs its own bounded, scrollable
+   region instead of relying on .card:has(table)'s overflow:auto, which only
+   engages once something ELSE already constrains the card's height -- with
+   no such constraint the card just grows forever and the page scrolls
+   instead. Wrap the growing part (table, list, ...) in this rather than the
+   whole card, so a heading/note/toolbar above it stays pinned in view while
+   only the content below scrolls. */
+.card__scroll { max-height: 340px; overflow-y: auto; }
 /* The payloads list row ends in a kebab menu (#205) whose popover is
    position:absolute and must escape the row -- overflow:auto on an
    ancestor clips it regardless of scroll position, popover open or not
