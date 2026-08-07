@@ -624,24 +624,6 @@ func (st *userStore) rename(oldName, newName string) error {
 	return nil
 }
 
-func (st *userStore) delete(name string) error {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	if _, ok := st.users[name]; !ok {
-		return errors.New("no such user")
-	}
-	old := st.users[name]
-	oldStep := st.lastStep[name]
-	delete(st.users, name)
-	delete(st.lastStep, name)
-	if err := st.saveLocked(); err != nil {
-		st.users[name] = old
-		st.lastStep[name] = oldStep
-		return err
-	}
-	return nil
-}
-
 // checkPassword verifies the password against the stored hash, burning
 // comparable time on unknown users so the response can't be used for
 // enumeration. Existing bcrypt hashes are accepted and transparently
