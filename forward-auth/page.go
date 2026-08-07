@@ -87,7 +87,7 @@ func (s *server) renderVerify(w http.ResponseWriter, rd, errMsg, nonce string) {
 	}
 }
 
-func (s *server) renderEnroll(w http.ResponseWriter, u *User, errMsg, nonce string) {
+func (s *server) renderEnroll(w http.ResponseWriter, u *User, errMsg, sid, nonce string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	errHTML := ""
 	if errMsg != "" {
@@ -99,7 +99,11 @@ func (s *server) renderEnroll(w http.ResponseWriter, u *User, errMsg, nonce stri
 	page = strings.ReplaceAll(page, "{{URI}}", htmlEscape(uri))
 	page = strings.ReplaceAll(page, "{{SECRET}}", htmlEscape(u.PendingTOTP))
 	page = strings.ReplaceAll(page, "{{USER}}", htmlEscape(u.Username))
-	page = strings.ReplaceAll(page, "{{FT}}", s.cfg.issueForm())
+	// Session-bound, not the pre-auth issueForm(): enroll is only ever
+	// reachable with a valid session, and the token must be tied to it (see
+	// checkSessionCSRF) so a form submitted under a different session can't
+	// drive this account's enrollment.
+	page = strings.ReplaceAll(page, "{{FT}}", s.cfg.csrfToken(sid))
 	page = strings.ReplaceAll(page, "{{ERROR}}", errHTML)
 	page = strings.ReplaceAll(page, "{{NONCE}}", nonce)
 	_, _ = w.Write([]byte(page))
@@ -116,7 +120,7 @@ func (s *server) renderBackupCodes(w http.ResponseWriter, codes []string, nonce 
 	_, _ = w.Write([]byte(page))
 }
 
-func (s *server) renderPassword(w http.ResponseWriter, mustChange bool, errMsg, nonce string) {
+func (s *server) renderPassword(w http.ResponseWriter, mustChange bool, errMsg, sid, nonce string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	errHTML := ""
 	if errMsg != "" {
@@ -127,15 +131,17 @@ func (s *server) renderPassword(w http.ResponseWriter, mustChange bool, errMsg, 
 		notice = `<div class="notice"><span class="badge badge--orange">temporary password — change required</span></div>`
 	}
 	page := passwordPage
-	page = strings.ReplaceAll(page, "{{FT}}", s.cfg.issueForm())
+	// Session-bound (see renderEnroll's comment and checkSessionCSRF).
+	page = strings.ReplaceAll(page, "{{FT}}", s.cfg.csrfToken(sid))
 	page = strings.ReplaceAll(page, "{{ERROR}}", errHTML)
 	page = strings.ReplaceAll(page, "{{NOTICE}}", notice)
 	page = strings.ReplaceAll(page, "{{NONCE}}", nonce)
 	_, _ = w.Write([]byte(page))
 }
 
-func (s *server) renderForbidden(w http.ResponseWriter, host, nonce string) {
+func (s *server) renderForbidden(w http.ResponseWriter, host, sid, nonce string) {
 	page := strings.ReplaceAll(forbiddenPage, "{{HOST}}", htmlEscape(host))
+	page = strings.ReplaceAll(page, "{{FT}}", s.cfg.csrfToken(sid))
 	page = strings.ReplaceAll(page, "{{NONCE}}", nonce)
 	_, _ = w.Write([]byte(page))
 }
@@ -146,9 +152,10 @@ func (s *server) renderForbidden(w http.ResponseWriter, host, nonce string) {
 // account data of its own — just a pointer back to the dashboard and a way
 // out — so there's nothing here worth protecting beyond secHeaders' usual
 // CSP/framing defaults.
-func (s *server) renderRestrictedApp(w http.ResponseWriter, nonce string) {
+func (s *server) renderRestrictedApp(w http.ResponseWriter, sid, nonce string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	page := strings.ReplaceAll(restrictedAppPage, "{{NONCE}}", nonce)
+	page := strings.ReplaceAll(restrictedAppPage, "{{FT}}", s.cfg.csrfToken(sid))
+	page = strings.ReplaceAll(page, "{{NONCE}}", nonce)
 	_, _ = w.Write([]byte(page))
 }
 
@@ -305,7 +312,7 @@ const enrollPage = pageHead + `
       </div>
       <button type="submit" class="btn btn-primary auth-btn">verify &amp; activate</button>
     </form>
-    <div class="foot"><a href="/_auth/logout">cancel &amp; log out</a></div>
+    <div class="foot"><a href="/_auth/logout?csrf={{FT}}">cancel &amp; log out</a></div>
   </div>
   <script nonce="{{NONCE}}">
     function copyText(id) {
@@ -371,7 +378,7 @@ const passwordPage = pageHead + `
       <input class="form-input" id="n2" name="new2" type="password" autocomplete="new-password">
     </div>
     <button type="submit" class="btn btn-primary auth-btn">change password</button>
-    <div class="foot"><a href="/_auth/logout">log out</a></div>
+    <div class="foot"><a href="/_auth/logout?csrf={{FT}}">log out</a></div>
   </form>
 </body>
 </html>`
@@ -383,7 +390,7 @@ const forbiddenPage = pageHead + `
     <p class="auth-note">
       Your account doesn't have access to this service. If it should,
       ask an admin to add it to your allowed hosts.</p>
-    <div class="foot foot-flat"><a href="/_auth/logout">switch account</a></div>
+    <div class="foot foot-flat"><a href="/_auth/logout?csrf={{FT}}">switch account</a></div>
   </div>
 </body>
 </html>`
@@ -395,7 +402,7 @@ const restrictedAppPage = pageHead + `
       This account page is only available embedded in the dashboard (the
       profile menu in the bottom-left corner &rarr; Settings). Standalone
       access to the full site is limited to administrators.</p>
-    <div class="foot foot-flat"><a href="/_auth/logout">log out</a></div>
+    <div class="foot foot-flat"><a href="/_auth/logout?csrf={{FT}}">log out</a></div>
   </div>
 </body>
 </html>`

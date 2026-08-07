@@ -87,7 +87,7 @@ func (s *server) verify(w http.ResponseWriter, r *http.Request) {
 			secHeaders(w, n)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusForbidden)
-			s.renderForbidden(w, normalizeHost(host), n)
+			s.renderForbidden(w, normalizeHost(host), cl.sid, n)
 			return
 		}
 		if err := s.reg.touch(cl.sid, u.Username, s.clientIP(r), r.UserAgent()); err != nil {
@@ -413,16 +413,37 @@ func (s *server) totpFail(w http.ResponseWriter, r *http.Request, ip, user, rd, 
 	s.renderVerify(w, rd, "Invalid code.", nonce)
 }
 
+// logout is reachable via a plain top-level GET link by design (every page
+// that links here renders it with its own session's csrfToken as ?csrf=,
+// so the link keeps working with no JS/form-submit required). SameSite=Lax
+// cookies are still attached on a cross-site top-level GET navigation
+// though, so without the CSRF check below, any third-party page could force
+// a visitor's session closed just by linking to this URL — the check binds
+// the request to the session that rendered its own logout link, which an
+// attacker's page never has.
 func (s *server) logout(w http.ResponseWriter, r *http.Request) {
 	secHeaders(w, nonce())
-	if c, err := r.Cookie(s.cfg.cookieName); err == nil {
-		if cl, ok, _ := s.cfg.parseSessionPASETO(c.Value); ok {
-			if err := s.reg.revoke(cl.sid); err != nil {
-				s.log.Error("persist logout revocation", "error", err)
-			}
-			s.audit("logout", s.clientIP(r), cl.user, r)
-		}
+	c, err := r.Cookie(s.cfg.cookieName)
+	if err != nil {
+		http.Redirect(w, r, "https://"+s.cfg.authHost+"/_auth/login", http.StatusFound)
+		return
 	}
+	cl, ok, _ := s.cfg.parseSessionPASETO(c.Value)
+	if !ok {
+		http.Redirect(w, r, "https://"+s.cfg.authHost+"/_auth/login", http.StatusFound)
+		return
+	}
+	if !s.cfg.checkSessionCSRF(r.URL.Query().Get("csrf"), cl.sid) {
+		// wrong/missing token: neither revoke nor clear the cookie, so a
+		// forged request has no effect at all (not even a client-side
+		// logout) instead of silently degrading to "just clears the cookie".
+		http.Redirect(w, r, "https://"+s.cfg.authHost+"/_auth/login", http.StatusFound)
+		return
+	}
+	if err := s.reg.revoke(cl.sid); err != nil {
+		s.log.Error("persist logout revocation", "error", err)
+	}
+	s.audit("logout", s.clientIP(r), cl.user, r)
 	s.clearCookie(w)
 	http.Redirect(w, r, "https://"+s.cfg.authHost+"/_auth/login", http.StatusFound)
 }
@@ -455,14 +476,14 @@ func (s *server) enroll(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPost {
 		r.Body = http.MaxBytesReader(w, r.Body, s.cfg.maxBodyBytes)
-		if err := r.ParseForm(); err != nil || !s.cfg.checkForm(r.PostForm.Get("ft")) {
-			s.renderEnroll(w, u, "Session expired — try again.", n)
+		if err := r.ParseForm(); err != nil || !s.cfg.checkSessionCSRF(r.PostForm.Get("ft"), cl.sid) {
+			s.renderEnroll(w, u, "Session expired — try again.", cl.sid, n)
 			return
 		}
 		pending := u.PendingTOTP
 		okCode, _ := totpValidStep(pending, r.PostForm.Get("totp"))
 		if pending == "" || !okCode {
-			s.renderEnroll(w, u, "That code didn't match — scan again and retry.", n)
+			s.renderEnroll(w, u, "That code didn't match — scan again and retry.", cl.sid, n)
 			return
 		}
 		plain, hashed := newBackupCodes(8)
@@ -498,7 +519,7 @@ func (s *server) enroll(w http.ResponseWriter, r *http.Request) {
 		}
 		u = s.users.get(u.Username)
 	}
-	s.renderEnroll(w, u, "", n)
+	s.renderEnroll(w, u, "", cl.sid, n)
 }
 
 // handleBackupCodes lets a signed-in user regenerate their one-time
@@ -522,7 +543,7 @@ func (s *server) handleBackupCodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.maxBodyBytes)
-	if err := r.ParseForm(); err != nil || !s.cfg.checkForm(r.PostForm.Get("ft")) {
+	if err := r.ParseForm(); err != nil || !s.cfg.checkSessionCSRF(r.PostForm.Get("ft"), cl.sid) {
 		http.Error(w, "session expired — try again", http.StatusForbidden)
 		return
 	}
@@ -552,7 +573,7 @@ func (s *server) password(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
-		s.renderPassword(w, cl.has("c"), "", n)
+		s.renderPassword(w, cl.has("c"), "", cl.sid, n)
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -561,31 +582,31 @@ func (s *server) password(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.maxBodyBytes)
-	if err := r.ParseForm(); err != nil || !s.cfg.checkForm(r.PostForm.Get("ft")) {
-		s.renderPassword(w, cl.has("c"), "Session expired — try again.", n)
+	if err := r.ParseForm(); err != nil || !s.cfg.checkSessionCSRF(r.PostForm.Get("ft"), cl.sid) {
+		s.renderPassword(w, cl.has("c"), "Session expired — try again.", cl.sid, n)
 		return
 	}
 	if !s.users.checkPassword(u.Username, r.PostForm.Get("current")) {
 		s.audit("pw_change_fail", s.clientIP(r), u.Username, r)
-		s.renderPassword(w, cl.has("c"), "Current password is wrong.", n)
+		s.renderPassword(w, cl.has("c"), "Current password is wrong.", cl.sid, n)
 		return
 	}
 	newPW := r.PostForm.Get("new1")
 	if err := validatePassword(newPW); err != nil {
-		s.renderPassword(w, cl.has("c"), "New password "+err.Error()+".", n)
+		s.renderPassword(w, cl.has("c"), "New password "+err.Error()+".", cl.sid, n)
 		return
 	}
 	if newPW != r.PostForm.Get("new2") {
-		s.renderPassword(w, cl.has("c"), "Passwords don't match.", n)
+		s.renderPassword(w, cl.has("c"), "Passwords don't match.", cl.sid, n)
 		return
 	}
 	if isCommonPassword(newPW) {
-		s.renderPassword(w, cl.has("c"), "That password appears in breach lists — choose a unique one.", n)
+		s.renderPassword(w, cl.has("c"), "That password appears in breach lists — choose a unique one.", cl.sid, n)
 		return
 	}
 	hash, err := hashPassword(newPW)
 	if err != nil {
-		s.renderPassword(w, cl.has("c"), "Internal error — try again.", n)
+		s.renderPassword(w, cl.has("c"), "Internal error — try again.", cl.sid, n)
 		return
 	}
 	// bump the generation: a password change invalidates every other session

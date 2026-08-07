@@ -74,6 +74,18 @@ func newSID() string {
 // of its own, it dies with the session.
 func (c config) csrfToken(sid string) string { return c.mac("csrf|" + sid) }
 
+// checkSessionCSRF verifies tok against the per-session CSRF token
+// (csrfToken(sid)) in constant time. Session-gated, state-changing
+// endpoints (enroll, handleBackupCodes, password) use this instead of
+// checkForm: checkForm's "ft" token only proves dwell-time/anti-bot — it is
+// valid for any session (or none), so it does not stop a form submitted
+// under an attacker's session from acting on the victim's. Binding the
+// token to sid the same way the admin API's X-Csrf header already does
+// closes that gap.
+func (c config) checkSessionCSRF(tok, sid string) bool {
+	return subtle.ConstantTimeCompare([]byte(tok), []byte(c.csrfToken(sid))) == 1
+}
+
 // --- PASETO v4.local session tokens -------------------------------------------
 //
 // The only session format: claims are JSON, encrypted and authenticated with

@@ -628,7 +628,7 @@ var PANE_TEMPLATES = {
       '<div class="card__row">' +
         '<div><div class="card__label">Log out</div>' +
         '<div class="card__value">End this session.</div></div>' +
-        '<a class="btn btn-secondary btn-sm" id="account-logout" href="/_auth/logout">Log out</a>' +
+        '<a class="btn btn-secondary btn-sm" id="account-logout" href="/_auth/logout?csrf=' + encodeURIComponent(FORM_TOKEN) + '">Log out</a>' +
       '</div>' +
       '<div class="card__row">' +
         '<div><div class="card__label">Regenerate backup codes</div>' +
@@ -1375,7 +1375,7 @@ document.addEventListener('click', function (e) {
     // navigates itself away and its message queue goes with it.
     e.preventDefault();
     notifyEmbedder('close');
-    setTimeout(function () { window.location.href = '/_auth/logout'; }, 0);
+    setTimeout(function () { window.location.href = '/_auth/logout?csrf=' + encodeURIComponent(FORM_TOKEN); }, 0);
     return;
   }
   var item = e.target.closest('#settings-nav .sidebar__item');
