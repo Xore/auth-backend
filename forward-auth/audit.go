@@ -28,12 +28,42 @@ type authEvent struct {
 
 // auditMAC computes the chain MAC for an event. Keep in sync with
 // verifyAuditLines.
+//
+// Fields are netstring-encoded ("<len>:<content>,") rather than joined with a
+// plain "|" separator: several fields (User, UA, Host) are request-derived
+// and may themselves contain "|", which would otherwise let two different
+// field assignments collapse to the same signed byte string (e.g. moving a
+// "|" from Event into IP). Length-prefixing each field makes the encoding
+// injective — there is exactly one way to decompose the signed body into the
+// original fields — so no redistribution of content across a field boundary
+// can preserve the MAC.
 func auditMAC(key []byte, e authEvent) string {
-	body := strings.Join([]string{
+	fields := []string{
 		fmt.Sprint(e.Seq), e.Prev, e.Time.UTC().Format(time.RFC3339Nano),
 		e.Event, e.IP, e.User, e.UA, e.Host,
-	}, "|")
-	return macWith(key, body)
+	}
+	var body strings.Builder
+	for _, f := range fields {
+		fmt.Fprintf(&body, "%d:%s,", len(f), f)
+	}
+	return macWith(key, body.String())
+}
+
+// auditMACValid reports whether e.MAC matches auditMAC under any of the
+// given keys, newest first. Multiple keys let verification span a
+// COOKIE_SECRET rotation: entries written before the rotation were signed
+// with the previous key and remain verifiable as long as that key is still
+// supplied (main passes it via COOKIE_SECRET_PREVIOUS).
+func auditMACValid(keys [][]byte, e authEvent) bool {
+	if e.MAC == "" {
+		return false
+	}
+	for _, k := range keys {
+		if e.MAC == auditMAC(k, e) {
+			return true
+		}
+	}
+	return false
 }
 
 type auditor struct {
@@ -47,19 +77,23 @@ type auditor struct {
 	failByIP map[string]int
 
 	// chain state for the signed audit log (empty key = unsigned)
-	key     []byte
-	seq     int
-	lastMAC string
+	key      []byte
+	prevKeys [][]byte
+	seq      int
+	lastMAC  string
 }
 
-// newAuditor opens the audit ring and optional JSONL file. When a key is
-// supplied (main passes COOKIE_SECRET), every recorded event is chained and
-// signed; if the file already ends with a chained entry, the chain resumes
-// from it so a restart does not break tamper evidence.
+// newAuditor opens the audit ring and optional JSONL file. The first key
+// (main passes COOKIE_SECRET) signs every newly recorded event; any further
+// keys (COOKIE_SECRET_PREVIOUS) are accepted only when verifying entries
+// already on disk, so a key rotation doesn't strand the pre-rotation tail.
+// If the file already ends with a chained entry, the chain resumes from it
+// so a restart does not break tamper evidence.
 func newAuditor(path string, capacity int, keys ...[]byte) *auditor {
 	a := &auditor{capacity: capacity, failByIP: map[string]int{}}
 	if len(keys) > 0 {
 		a.key = keys[0]
+		a.prevKeys = keys[1:]
 	}
 	if path != "" {
 		if f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640); err == nil {
@@ -72,31 +106,41 @@ func newAuditor(path string, capacity int, keys ...[]byte) *auditor {
 	return a
 }
 
-// resumeChain reads the last line of an existing audit file and adopts its
-// seq/MAC so the chain continues across restarts.
+// resumeChain verifies the entire existing audit file (not just its last
+// line) before trusting it, then adopts the last entry's seq/MAC so the
+// chain continues across restarts. A file that fails verification is never
+// silently accepted: it's reported loudly and a fresh chain is started, so
+// tampering anywhere in the file — not only in the final line — is visible
+// to whoever operates this service instead of vanishing into a passing
+// resumeChain call that nobody was checking.
 func (a *auditor) resumeChain(path string) {
 	raw, err := os.ReadFile(path)
 	if err != nil || len(raw) == 0 {
 		return
 	}
-	const tail = 64 << 10
-	if len(raw) > tail {
-		raw = raw[len(raw)-tail:]
-	}
 	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	keys := append([][]byte{a.key}, a.prevKeys...)
+	if err := verifyAuditLines(lines, keys); err != nil {
+		fmt.Fprintf(os.Stderr,
+			"audit: EXISTING LOG AT %s FAILED INTEGRITY VERIFICATION (%v) — starting a new chain from seq 1; "+
+				"investigate before trusting entries prior to this restart\n", path, err)
+		return
+	}
 	var last authEvent
 	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil {
-		return // tail corrupt or unsigned — start a fresh chain
+		return
 	}
-	if last.MAC != "" && last.MAC == auditMAC(a.key, last) {
-		a.seq, a.lastMAC = last.Seq, last.MAC
-	}
+	a.seq, a.lastMAC = last.Seq, last.MAC
 }
 
 // verifyAuditLines checks a sequence of audit lines (as read from the JSONL
 // file) for chain integrity: strictly increasing Seq, linked Prev values,
-// and valid MACs. Unsigned lines fail — a stripped signature is tampering.
-func verifyAuditLines(lines []string, key []byte) error {
+// and a MAC valid under at least one of the given keys. Unsigned lines fail
+// — a stripped signature is tampering. Accepting any key in keys (rather
+// than a single fixed key) lets a chain that spans a COOKIE_SECRET rotation
+// still verify: entries before the rotation validate under the previous
+// key, entries after it validate under the current one.
+func verifyAuditLines(lines []string, keys [][]byte) error {
 	prev := ""
 	prevSeq := 0
 	for i, line := range lines {
@@ -104,7 +148,7 @@ func verifyAuditLines(lines []string, key []byte) error {
 		if err := json.Unmarshal([]byte(line), &e); err != nil {
 			return fmt.Errorf("line %d: unparseable: %w", i+1, err)
 		}
-		if e.MAC == "" || e.MAC != auditMAC(key, e) {
+		if !auditMACValid(keys, e) {
 			return fmt.Errorf("line %d: bad MAC", i+1)
 		}
 		if e.Prev != prev || e.Seq != prevSeq+1 {
@@ -113,6 +157,20 @@ func verifyAuditLines(lines []string, key []byte) error {
 		prev, prevSeq = e.MAC, e.Seq
 	}
 	return nil
+}
+
+// Close releases the audit log file handle, if one is open. Safe to call on
+// an auditor with no file backing (e.g. AUDIT_LOG unset, or in tests that
+// never open one).
+func (a *auditor) Close() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.file == nil {
+		return nil
+	}
+	err := a.file.Close()
+	a.file = nil
+	return err
 }
 
 func (a *auditor) record(e authEvent) {
