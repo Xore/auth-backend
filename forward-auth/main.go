@@ -78,6 +78,19 @@ func main() {
 		log.Info("bootstrapped admin user from environment", "user", cfg.username,
 			"totp_enrolled", cfg.totpSecret != "", "store", cfg.usersFile)
 	}
+	if cfg.passwordless && !users.hasEnabledAdminWithPasskey() {
+		// PASSWORDLESS disables password login and password recovery, and
+		// passkey enrollment (/_auth/enroll's passkey equivalent) requires
+		// an authenticated session to reach — so a deployment that reaches
+		// this state with no admin passkey already registered has no way
+		// for anyone to ever authenticate again. Refuse to start rather
+		// than silently boot into a permanently locked-out server.
+		log.Error("PASSWORDLESS=true but no enabled administrator has a registered passkey — refusing to start; " +
+			"this would lock every administrator out, since password login/recovery are disabled and passkey " +
+			"enrollment itself requires a session. Set PASSWORDLESS=false, sign in, register a passkey for an " +
+			"administrator, then re-enable PASSWORDLESS")
+		os.Exit(1)
+	}
 	if os.Getenv("FIRST_RUN") != "" {
 		log.Warn("FIRST_RUN is deprecated and ignored — TOTP enrollment now happens per-user at /_auth/enroll after login")
 	}
