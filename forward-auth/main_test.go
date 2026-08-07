@@ -132,6 +132,34 @@ func mustIssuePASETO(t *testing.T, c config, cl sessionClaims) string {
 	return tok
 }
 
+// waitMailSent waits (bounded) for dispatchMail's async goroutine to
+// deliver on ch — magic-link/recovery mail sends off the request path (see
+// #41, #42), so tests stubbing sendMailFunc must synchronize on a channel
+// rather than reading a variable immediately after the handler returns.
+func waitMailSent(t *testing.T, ch <-chan string) string {
+	t.Helper()
+	select {
+	case got := <-ch:
+		return got
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for async mail dispatch")
+		return ""
+	}
+}
+
+// assertNoMailSent asserts dispatchMail's goroutine never fires. The
+// handler has already returned by the time this runs, and any dispatch it
+// made was launched synchronously before that return, so a short wait is
+// enough to be confident nothing is coming.
+func assertNoMailSent(t *testing.T, ch <-chan string) {
+	t.Helper()
+	select {
+	case got := <-ch:
+		t.Fatalf("mail sent when none was expected: %q", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
 // TestLegacyTokenRejected: the legacy pipe-delimited HMAC format is no
 // longer accepted (roadmap Step 17).
 func TestLegacyTokenRejected(t *testing.T) {
@@ -1058,6 +1086,33 @@ func TestRecoveryTokenSingleUse(t *testing.T) {
 	}
 }
 
+// docs/CREDENTIAL-RECOVERY.md documents that "logout" — which bumps Gen but
+// not Hash — is the cheapest action that invalidates every outstanding
+// recovery link. That's only true if recoveryFP actually covers Gen (#34):
+// before that fix, a Gen-only bump (logout everywhere, admin disable, TOTP
+// or passkey reset) left an outstanding recovery link fully valid.
+func TestRecoveryTokenDiesOnGenerationBump(t *testing.T) {
+	c := testConfig(t)
+	path := filepath.Join(t.TempDir(), "users.json")
+	st := newUserStore(path)
+	if _, err := st.bootstrap("alice@example.com", "a-long-test-password", ""); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", "raw", slog.Default())}
+
+	tok := c.issueRecoveryToken(st.get("alice@example.com"))
+	if _, ok := s.checkRecoveryToken(tok); !ok {
+		t.Fatal("valid recovery token rejected before any revocation")
+	}
+
+	if err := st.mutate("alice@example.com", func(u *User) bool { u.Gen++; return true }); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.checkRecoveryToken(tok); ok {
+		t.Fatal("recovery token survived a generation bump with the password hash unchanged")
+	}
+}
+
 func TestRecoveryRateLimit(t *testing.T) {
 	now := time.Now()
 	rl := rateLimiter{max: 2, window: time.Minute, now: func() time.Time { return now }}
@@ -1175,10 +1230,11 @@ func TestRecoverResetFlow(t *testing.T) {
 	}
 	s := &server{cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c), aud: newAuditor("", 10), log: slog.New(slog.NewTextHandler(io.Discard, nil)), ntf: newNotifier("", "raw", slog.Default()), recoverLimit: rateLimiter{max: 3, window: time.Hour}}
 
-	var sentTo, sentBody string
+	type mail struct{ to, body string }
+	sent := make(chan mail, 1)
 	old := sendMailFunc
 	sendMailFunc = func(_, from, to, subject, body string, _ bool) error {
-		sentTo, sentBody = to, body
+		sent <- mail{to, body}
 		return nil
 	}
 	t.Cleanup(func() { sendMailFunc = old })
@@ -1194,10 +1250,16 @@ func TestRecoverResetFlow(t *testing.T) {
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "reset email is on its way") {
 		t.Fatalf("request form: got %d", w.Code)
 	}
-	if sentTo != "alice@example.com" || !strings.Contains(sentBody, "/_auth/recover?token=") {
-		t.Fatalf("no reset mail captured (to=%q)", sentTo)
+	var got mail
+	select {
+	case got = <-sent:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for async mail dispatch")
 	}
-	rest := sentBody[strings.Index(sentBody, "token=")+len("token="):]
+	if got.to != "alice@example.com" || !strings.Contains(got.body, "/_auth/recover?token=") {
+		t.Fatalf("no reset mail captured (to=%q)", got.to)
+	}
+	rest := got.body[strings.Index(got.body, "token=")+len("token="):]
 	tok, _ := url.QueryUnescape(strings.Fields(rest)[0])
 
 	// reset with a common password: rejected, breach list applies
