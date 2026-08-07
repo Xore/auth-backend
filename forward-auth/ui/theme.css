@@ -295,9 +295,14 @@ p { color: var(--text-secondary); }
   to { opacity: 1; }
 }
 
+/* #672 (APIARY): dropped the X component (was translate(-50%, ...)) --
+   .modal's horizontal centering no longer uses a transform at all (see
+   its own comment), only the vertical translateY(-50%) still does. The
+   Y motion itself (starts 8px lower, settles up into place while
+   scaling in) is unchanged. */
 @keyframes dialog-in {
-  from { opacity: 0; transform: translate(-50%, calc(-50% + 8px)) scale(0.99); }
-  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  from { opacity: 0; transform: translateY(calc(-50% + 8px)) scale(0.99); }
+  to { opacity: 1; transform: translateY(-50%) scale(1); }
 }
 
 /* ── Entrance/attention motion utilities ─────────────────────────────────
@@ -622,6 +627,12 @@ select.form-input { cursor: pointer; }
   font-weight: 500;
   line-height: 1.45;
   white-space: nowrap;
+  /* .badge is also used on <a> (a clickable filter/pivot chip -- e.g.
+     Xore/honeypot-stack's event tables link a country-code badge to a
+     filtered view) -- text-decoration:none here means a consumer doesn't
+     need its own override just to stop the badge looking like an
+     underlined hyperlink. No effect on the common <span> case. */
+  text-decoration: none;
 }
 .badge--accent { background: var(--accent-soft); color: var(--accent); }
 .badge--green, .badge--success { background: var(--success-soft); color: var(--success); }
@@ -694,14 +705,102 @@ select.form-input { cursor: pointer; }
      often the header word, not the (frequently longer) data underneath.
      Without a wrap fallback, a squeezed column with unbroken content (an
      IP, a country name with no natural break point, an ASN string) spills
-     visibly past its own cell instead of staying inside the row. Wrapping
-     here keeps data readable and contained; .n's own white-space: nowrap
-     below is untouched since numeric counts should never wrap. */
-  overflow-wrap: anywhere;
+     visibly past its own cell instead of staying inside the row.
+     break-word (not the older anywhere value this used to be) still
+     protects against that -- a single run wider than the whole cell still
+     gets forced to break -- but tries every normal line-breaking
+     opportunity first (spaces, hyphens), so a short, atomic token that
+     fits the column at all (an IP address, a 2-letter country code, a
+     port number) renders on one line instead of being cut at an arbitrary
+     mid-character point wherever the available width happened to run out.
+     Confirmed live (Xore/honeypot-stack dashboard, #24 follow-up): with
+     the old `anywhere` value, "203.0.113.55" in a merely-narrow (not
+     truly too-small) column rendered as three broken lines with no
+     relation to the address's own digit groups. Only a genuinely
+     unbreakable long run (a 64-char hash with no natural break point at
+     all) still force-wraps here, which is the case this rule actually
+     exists for. .n's own white-space: nowrap below is untouched since
+     numeric counts should never wrap either way. */
+  overflow-wrap: break-word;
 }
 .data-table tbody tr:last-child td { border-bottom: 0; }
 .data-table tbody tr:hover td { background: var(--surface-hover); }
 .table-scroll { width: 100%; overflow-x: auto; }
+
+/* #24 follow-up: opt-in responsive variant for a .data-table whose columns
+   can't all fit a phone-width viewport at once (more than 2-3 columns, or
+   columns whose content is inherently wide -- IPs, timestamps, hashes).
+   Below the breakpoint each row becomes a stacked label:value block
+   instead of a horizontally-scrolling or truncated table -- every column
+   stays reachable without side-scrolling, and the label makes it
+   unambiguous which value is which without a human having to cross-
+   reference a header row that's no longer visually aligned with its
+   column. The header row itself is visually hidden rather than
+   display:none, so it's still announced by a screen reader before each
+   stacked row's labels repeat the same information visually.
+
+   Requires each <td> to carry a data-label="<column header text>"
+   attribute -- this can't be generated from the <th> text automatically
+   (CSS has no "read this other element's text content" mechanism), so
+   the consuming page's own markup/template is responsible for keeping
+   the two in sync. */
+@media (max-width: 720px) {
+  .data-table--responsive, .data-table--responsive thead,
+  .data-table--responsive tbody, .data-table--responsive th,
+  .data-table--responsive td, .data-table--responsive tr {
+    display: block;
+  }
+  .data-table--responsive thead tr {
+    position: absolute;
+    width: 1px; height: 1px;
+    margin: -1px; padding: 0; border: 0;
+    clip: rect(0 0 0 0);
+    overflow: hidden;
+  }
+  .data-table--responsive tbody tr {
+    margin-bottom: 12px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-panel);
+    padding: 4px 0;
+    overflow: hidden;
+  }
+  .data-table--responsive tbody tr:last-child { margin-bottom: 0; }
+  /* Label stacked above value, not beside it -- a beside-it flex row
+     works fine for short fixed-width values (a time, a port) but a
+     column like a free-text detail/message has no predictable length,
+     and squeezing it into "whatever's left of the row next to the
+     label" either overflows past the card or needs its own extra
+     min-width:0/wrap plumbing to behave. Stacking sidesteps that
+     entirely: the value always gets the row's full width to wrap into,
+     which is correct for both the short and the long case. */
+  .data-table--responsive td {
+    padding: 7px 14px;
+    border-bottom: 1px solid var(--border-subtle);
+    white-space: normal;
+    overflow-wrap: break-word;
+  }
+  .data-table--responsive tr td:last-child { border-bottom: 0; }
+  .data-table--responsive td::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 2px;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: 500;
+  }
+  .data-table--responsive td:empty { display: none; }
+  /* .card.wide table's own min-width:720px (below, a desktop-only
+     "don't let a wide card's table get too cramped" rule) otherwise
+     wins here too, since it targets the same <table> element -- found
+     live: the responsive layout rules above were all correctly applying
+     (td became a block, the label rendered), but the table's outer box
+     still measured 720px wide inside a 390px card, so unwrapped content
+     ran off into space nothing could scroll to reach rather than
+     visibly wrapping. */
+  .card.wide .data-table--responsive, .data-table--responsive {
+    min-width: 0;
+  }
+}
 
 .progress {
   height: 6px;
@@ -1169,7 +1268,15 @@ pre {
 .app-sidebar__body { flex: 1; overflow-y: auto; }
 .app-main { min-width: 0; overflow: auto; }
 .app-content { width: min(100% - 40px, var(--content-width)); margin: 0 auto; padding: 30px 0 96px; }
-.app-content--wide { --content-width: 1360px; }
+/* A flat 1360px cap left large unused margins on any screen wider than
+   that -- confirmed live (Xore/honeypot-stack dashboard) on a 1920px
+   display the content area used barely 70% of the available width, and
+   on a 3840px 4K display well under half. 94vw scales the cap with the
+   viewport instead of ignoring it past 1360px; the 2200px ceiling is
+   still there so table columns/paragraphs don't get uncomfortably wide
+   and sparse on a genuinely huge display -- this is a density-heavy data
+   dashboard's own content width, not a marketing page's reading column. */
+.app-content--wide { --content-width: min(94vw, 2200px); }
 
 .sidebar__search { margin-bottom: 12px; }
 .sidebar__section-label { padding: 12px 9px 5px; }
@@ -1234,7 +1341,32 @@ pre {
   position: fixed;
   z-index: 101;
   top: 50%;
-  left: 50%;
+  /* #672 (APIARY): horizontal centering was left: 50% + a matching
+     -50% in the transform below, the same percentage-offset trick the
+     vertical axis still uses (kept -- see why below). It has a real bug
+     with this codebase's own scrollbar-gutter: stable (html rule, this
+     file): confirmed live, at a 390px viewport with a modal at width:
+     100vw (the <=720px breakpoint further down), `left: 50%` resolved
+     to 187.5px instead of 195px -- a 7.5px discrepancy, exactly half
+     the reserved scrollbar gutter, reproducing even with no scrollbar
+     actually visible. left: 0 + right: 0 + margin-inline: auto centers
+     a box with an explicit width identically, but never computes a
+     percentage-of-viewport value at all, so it can't inherit that
+     interaction -- confirmed live, the same 390px case now lands flush
+     at both edges, zero overflow.
+     Vertical (top: 50% + translateY(-50%)) is deliberately NOT changed
+     the same way: scrollbar-gutter reserves horizontal space for a
+     vertical scrollbar, so the vertical axis was never actually
+     affected by this bug in the first place -- and unlike the
+     horizontal fix, an inset-based vertical equivalent (top: 0;
+     bottom: 0; margin-block: auto) has its own real cost: it only
+     centers when height is an explicit value. .modal--promo's
+     height: auto (content-sized) would stop being centered at all
+     under that scheme -- confirmed live before settling on this mixed
+     approach instead of applying the same fix to both axes uniformly. */
+  left: 0;
+  right: 0;
+  margin-inline: auto;
   display: none;
   /* Caps were fixed at 960x680 regardless of viewport, so a modal (PDF
      viewer, settings, log viewer) stayed small on a large/4K display even
@@ -1243,10 +1375,10 @@ pre {
      ultrawide) uses that space without the modal ever exceeding it. */
   width: min(1280px, calc(100vw - 40px));
   height: min(840px, calc(100dvh - 40px));
-  margin: 0;
+  margin-block: 0;
   padding: 0;
   overflow: hidden;
-  transform: translate(-50%, -50%);
+  transform: translateY(-50%);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-dialog);
   background: var(--surface-0);
@@ -1415,10 +1547,17 @@ pre {
    a palette with only a field and no results list is a complete, valid
    instance of this component. */
 .modal--palette {
+  /* Anchored near the top, not vertically centered like the base
+     .modal -- top: 14dvh is meant literally, so the base's
+     translateY(-50%) has to be cancelled (transform: none) or it would
+     shift this well above its intended position. Horizontal centering
+     needs no override at all: the base's left: 0; right: 0;
+     margin-inline: auto (not a transform) already centers any width,
+     including this variant's own narrower one. */
   top: 14dvh;
+  transform: none;
   height: auto;
   max-height: min(72dvh, 560px);
-  transform: translateX(-50%);
   flex-direction: column;
   width: min(680px, calc(100vw - 40px));
 }
