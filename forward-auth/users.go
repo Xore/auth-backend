@@ -51,6 +51,10 @@ const (
 // errNoSuchUser is returned by store mutations for a missing username.
 var errNoSuchUser = errors.New("no such user")
 
+// errLastAdmin is returned by mutateAdminGuarded/deleteAdminGuarded when an
+// action would leave the deployment with no enabled administrator.
+var errLastAdmin = errors.New("cannot remove the last admin")
+
 // normalizeEmail validates and normalizes an email address for storage.
 // The local part is kept verbatim (it is case-sensitive per RFC 5321); the
 // domain is lowercased. An empty input normalizes to "" (field cleared).
@@ -482,6 +486,71 @@ func (st *userStore) mutateIf(name string, fn func(*User) bool) (applied bool, e
 	return true, nil
 }
 
+// mutateAdminGuarded runs fn on the named user under the store lock,
+// passing the count of *other* enabled administrators computed under that
+// same lock — so fn can atomically refuse an action that would leave zero
+// enabled admins (disable, delete, demote). The previous approach called
+// adminCount() and get() as two separate, independently-locked reads
+// before the mutation; nothing held the lock across the gap, so two
+// concurrent admin actions against different accounts could each see
+// "not the last admin" and both proceed, driving the count to zero. fn
+// returning a non-nil error (typically errLastAdmin) aborts without
+// persisting; the same error is returned here.
+func (st *userStore) mutateAdminGuarded(name string, fn func(u *User, otherEnabledAdmins int) error) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	u := st.users[name]
+	if u == nil {
+		return errNoSuchUser
+	}
+	others := 0
+	for uname, other := range st.users {
+		if uname != name && other.Role == roleAdmin && !other.Disabled {
+			others++
+		}
+	}
+	before := cloneUser(u)
+	if err := fn(u, others); err != nil {
+		return err
+	}
+	if err := st.saveLocked(); err != nil {
+		st.users[name] = before
+		return err
+	}
+	return nil
+}
+
+// deleteAdminGuarded removes name, refusing atomically (see
+// mutateAdminGuarded) if name is the last enabled administrator.
+func (st *userStore) deleteAdminGuarded(name string) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	u, ok := st.users[name]
+	if !ok {
+		return errNoSuchUser
+	}
+	others := 0
+	for uname, other := range st.users {
+		if uname != name && other.Role == roleAdmin && !other.Disabled {
+			others++
+		}
+	}
+	if u.Role == roleAdmin && !u.Disabled && others == 0 {
+		return errLastAdmin
+	}
+	oldStep, hadStep := st.lastStep[name]
+	delete(st.users, name)
+	delete(st.lastStep, name)
+	if err := st.saveLocked(); err != nil {
+		st.users[name] = u
+		if hadStep {
+			st.lastStep[name] = oldStep
+		}
+		return err
+	}
+	return nil
+}
+
 func (st *userStore) create(u *User) error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -550,24 +619,6 @@ func (st *userStore) rename(oldName, newName string) error {
 		if hadStep {
 			st.lastStep[oldName] = oldStep
 		}
-		return err
-	}
-	return nil
-}
-
-func (st *userStore) delete(name string) error {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	if _, ok := st.users[name]; !ok {
-		return errors.New("no such user")
-	}
-	old := st.users[name]
-	oldStep := st.lastStep[name]
-	delete(st.users, name)
-	delete(st.lastStep, name)
-	if err := st.saveLocked(); err != nil {
-		st.users[name] = old
-		st.lastStep[name] = oldStep
 		return err
 	}
 	return nil
