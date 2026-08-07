@@ -22,7 +22,11 @@ func init() {
 	commonPwSet = make(map[string]struct{})
 	for _, line := range strings.Split(commonPasswords, "\n") {
 		if p := strings.TrimSpace(line); p != "" {
-			commonPwSet[p] = struct{}{}
+			// Lowercased on insertion: isCommonPassword looks up
+			// strings.ToLower(pw), so any list entry containing an
+			// uppercase character (map keys are case-sensitive) could
+			// never match, letting that breached password through.
+			commonPwSet[strings.ToLower(p)] = struct{}{}
 		}
 	}
 }
