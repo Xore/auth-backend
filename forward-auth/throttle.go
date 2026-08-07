@@ -22,6 +22,13 @@ import (
 type ThrottleBackend interface {
 	locked(ip string) (bool, time.Duration, error)
 	fail(ip string) (lockedNow bool, err error)
+	// reserve atomically checks whether ip is locked and, if not,
+	// provisionally records this attempt as a failure before the caller
+	// runs its (slow) credential check — closing the check-then-act race
+	// between a plain locked()+fail() pair spanning an Argon2id hash. The
+	// caller MUST call reset(ip) on a successful login to undo the
+	// provisional increment.
+	reserve(ip string) (allowed bool, retryAfter time.Duration, err error)
 	reset(ip string)
 	snapshot() []lockedIP
 }
@@ -121,26 +128,37 @@ func (t *throttle) persistLocked(path string) error {
 func (t *throttle) locked(ip string) (bool, time.Duration, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	locked, d := t.checkLocked(ip, time.Now())
+	return locked, d, nil
+}
+
+// checkLocked reports whether ip is currently locked. Caller must hold t.mu.
+// A lock past its grace period is pruned so it doesn't linger as a dead
+// entry, but a live counting entry (no lock yet) is left alone — the fails
+// must keep accumulating.
+func (t *throttle) checkLocked(ip string, now time.Time) (bool, time.Duration) {
 	e := t.m[ip]
-	if e == nil {
-		return false, 0, nil
+	if e == nil || e.lockUntil.IsZero() {
+		return false, 0
 	}
-	if e.lockUntil.IsZero() {
-		// counting entry, no lock yet — keep it, the fails must accumulate
-		return false, 0, nil
+	if d := e.lockUntil.Sub(now); d > 0 {
+		return true, d
 	}
-	if d := time.Until(e.lockUntil); d > 0 {
-		return true, d, nil
-	}
-	if time.Since(e.lockUntil) > t.cfg.lockout {
+	if now.Sub(e.lockUntil) > t.cfg.lockout {
 		delete(t.m, ip)
 	}
-	return false, 0, nil
+	return false, 0
 }
 
 func (t *throttle) fail(ip string) (lockedNow bool, err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	return t.recordFailure(ip), nil
+}
+
+// recordFailure increments ip's failure count and, once it reaches
+// maxAttempts, starts (or extends) its lock. Caller must hold t.mu.
+func (t *throttle) recordFailure(ip string) (lockedNow bool) {
 	e := t.m[ip]
 	if e == nil {
 		e = &entry{}
@@ -160,9 +178,19 @@ func (t *throttle) fail(ip string) (lockedNow bool, err error) {
 		if t.path != "" {
 			_ = t.persistLocked(t.path) // durable lockout; best-effort
 		}
-		return true, nil
+		return true
 	}
-	return false, nil
+	return false
+}
+
+func (t *throttle) reserve(ip string) (allowed bool, retryAfter time.Duration, err error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if locked, d := t.checkLocked(ip, time.Now()); locked {
+		return false, d, nil
+	}
+	t.recordFailure(ip)
+	return true, 0, nil
 }
 
 func (t *throttle) pruneLocked(now time.Time) {
@@ -174,9 +202,16 @@ func (t *throttle) pruneLocked(now time.Time) {
 			delete(t.m, key)
 		}
 	}
-	for key := range t.m {
+	for key, e := range t.m {
 		if len(t.m) <= 4096 {
 			break
+		}
+		if !e.lockUntil.IsZero() && e.lockUntil.After(now) {
+			// never evict an entry serving an active lock — random
+			// eviction here would let an attacker (or noisy scanner
+			// traffic) clear their own or someone else's lockout early
+			// simply by pushing the map past the eviction threshold.
+			continue
 		}
 		delete(t.m, key)
 	}

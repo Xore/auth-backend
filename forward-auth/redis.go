@@ -38,6 +38,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
@@ -75,6 +76,35 @@ if d > maxLock then
 end
 redis.call('SET', KEYS[2], n, 'PX', d)
 return d
+`)
+
+// reserveScript atomically checks the lock and, if not locked, performs the
+// same increment+lock transition as failScript — collapsing the check
+// (locked) and the increment (fail) that callers used to issue as two
+// separate round trips on either side of an expensive credential check.
+// Doing them separately let a burst of concurrent requests each observe
+// "not locked" before any of them recorded a failure. KEYS: 1=failKey
+// 2=lockKey. ARGV: 1=failTTL seconds 2=maxAttempts 3=lockout ms 4=maxLock
+// ms. Returns {allowed 0/1, retryAfterMs}.
+var reserveScript = redis.NewScript(`
+local ttl = redis.call('PTTL', KEYS[2])
+if ttl > 0 then
+	return {0, ttl}
+end
+local n = redis.call('INCR', KEYS[1])
+redis.call('EXPIRE', KEYS[1], ARGV[1])
+local maxAttempts = tonumber(ARGV[2])
+if n < maxAttempts then
+	return {1, 0}
+end
+local over = math.min(n - maxAttempts, 10)
+local d = tonumber(ARGV[3]) * (2 ^ over)
+local maxLock = tonumber(ARGV[4])
+if d > maxLock then
+	d = maxLock
+end
+redis.call('SET', KEYS[2], n, 'PX', d)
+return {1, 0}
 `)
 
 // touchScript atomically creates-or-refreshes a session entry and its TTL:
@@ -187,6 +217,30 @@ func (rb *redisBackends) fail(key string) (lockedNow bool, err error) {
 		return false, err
 	}
 	return d > 0, nil
+}
+
+// reserve atomically checks whether key is locked and, if not, provisionally
+// records this attempt as a failure before the caller's (slow) credential
+// check runs — see reserveScript. Callers must call reset(key) on success to
+// undo the provisional increment.
+func (rb *redisBackends) reserve(key string) (allowed bool, retryAfter time.Duration, err error) {
+	ctx, cancel := rb.op()
+	defer cancel()
+	res, err := reserveScript.Run(ctx, rb.rdb,
+		[]string{throttleFailKey(key), throttleLockKey(key)},
+		int(redisFailKeyTTL.Seconds()), rb.cfg.maxAttempts,
+		rb.cfg.lockout.Milliseconds(), redisMaxLockDur.Milliseconds()).Result()
+	if err != nil {
+		rb.log.Warn("redis reserve() failed", "key", sanitizeLogField(key), "error", err)
+		return false, 0, err
+	}
+	arr, ok := res.([]interface{})
+	if !ok || len(arr) != 2 {
+		return false, 0, fmt.Errorf("redis: unexpected reserve script result %T(%v)", res, res)
+	}
+	allowedN, _ := arr[0].(int64)
+	retryMs, _ := arr[1].(int64)
+	return allowedN == 1, time.Duration(retryMs) * time.Millisecond, nil
 }
 
 // reset deletes all throttle state for key (counter and lock) — a single
