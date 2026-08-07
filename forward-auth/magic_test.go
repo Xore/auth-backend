@@ -191,6 +191,15 @@ func TestMagicRequestNoEnumeration(t *testing.T) {
 	// exercising the limiter.
 	s.magicLimit = rateLimiter{max: 100, window: time.Hour}
 
+	// Stub sendMailFunc: mail dispatch is async (dispatchMail), so an
+	// unstubbed real smtpSend here would spawn a goroutine attempting a
+	// real network dial that can easily outlive this test — racing with
+	// any later test that reassigns the shared sendMailFunc var.
+	sent := make(chan struct{}, 4)
+	old := sendMailFunc
+	sendMailFunc = func(_, _, _, _, _ string, _ bool) error { sent <- struct{}{}; return nil }
+	t.Cleanup(func() { sendMailFunc = old })
+
 	post := func(username string) string {
 		f := url.Values{}
 		f.Set("username", username)
@@ -218,6 +227,66 @@ func TestMagicRequestNoEnumeration(t *testing.T) {
 	}
 	if known != disabled {
 		t.Fatal("response differs for disabled accounts — enumeration signal")
+	}
+	// Exactly one of the three requests above (the enabled, mailable
+	// account) actually dispatches mail; wait for it so the goroutine can't
+	// outlive this test.
+	select {
+	case <-sent:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected exactly one mail dispatch, for the known/mailable account")
+	}
+}
+
+// magicSend's own doc comment says the response must be identical whether
+// or not an account is reachable by mail — but a synchronous SMTP round
+// trip only on the "real, mailable account" branch would still leak that
+// distinction through response *timing* (#41). This proves the fix
+// directly: the handler must return before a deliberately-blocked mail
+// send completes, not just "usually faster."
+func TestMagicSendReturnsBeforeMailSendCompletes(t *testing.T) {
+	c := magicConfig(t)
+	st := newMagicTestStore(t)
+	s := newMagicTestServer(t, c, st)
+
+	release := make(chan struct{})
+	done := make(chan struct{}, 1)
+	old := sendMailFunc
+	sendMailFunc = func(_, _, _, _, _ string, _ bool) error {
+		<-release
+		done <- struct{}{}
+		return nil
+	}
+	t.Cleanup(func() { sendMailFunc = old })
+
+	f := url.Values{}
+	f.Set("username", "alice@example.com")
+	f.Set("ft", c.issueForm())
+
+	handlerReturned := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		r := httptest.NewRequest("POST", "http://auth/_auth/magic", strings.NewReader(f.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		s.magic(w, r)
+		handlerReturned <- w
+	}()
+
+	var w *httptest.ResponseRecorder
+	select {
+	case w = <-handlerReturned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("magicSend blocked on a still-pending mail send instead of returning immediately")
+	}
+	if w.Code != http.StatusOK {
+		t.Fatalf("unexpected status before mail send completed: %d", w.Code)
+	}
+
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("async mail send never completed")
 	}
 }
 

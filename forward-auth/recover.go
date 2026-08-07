@@ -112,10 +112,17 @@ func (rl *rateLimiter) pruneLocked(now time.Time) {
 
 // --- recovery tokens ----------------------------------------------------------
 
-// recoveryFP fingerprints the current password hash. After a successful
-// reset the hash changes and every outstanding token becomes invalid.
+// recoveryFP fingerprints the state that must invalidate an outstanding
+// reset link: the password hash and the session generation. Hash gives
+// single-use — after a successful reset the hash changes and the token
+// dies. Gen piggybacks on every other revocation action ("log out
+// everywhere", admin disable, TOTP/passkey reset all bump it) the same way
+// magicFP does, so those actions actually invalidate outstanding recovery
+// links too — see docs/CREDENTIAL-RECOVERY.md's "logout invalidates every
+// outstanding email link" contract, which Gen alone (not Hash) is what
+// logout bumps.
 func (c config) recoveryFP(u *User) string {
-	return c.mac("recfp|" + u.Username + "|" + u.Hash)[:16]
+	return c.mac("recfp|" + u.Username + "|" + strconv.Itoa(u.Gen) + "|" + u.Hash)[:16]
 }
 
 func (c config) issueRecoveryToken(u *User) string {
@@ -163,6 +170,46 @@ func (s *server) checkRecoveryToken(tok string) (string, bool) {
 
 // sendMailFunc is the mail sender (a variable so tests can stub it).
 var sendMailFunc = smtpSend
+
+// mailDispatchLimit bounds concurrent async mail sends (dispatchMail) so a
+// burst of magic-link/recovery requests can't open unbounded connections to
+// the SMTP relay.
+const mailDispatchLimit = 8
+
+var mailSem = make(chan struct{}, mailDispatchLimit)
+
+// dispatchMail sends an email off the request path. recoverRequest and
+// magicSend must return the identical generic notice in constant-ish time
+// whether or not an account exists, is disabled, or has a recovery address
+// — but their own doc comments say so while a real SMTP round trip
+// (DNS/TCP dial, optional STARTTLS, AUTH, DATA) only ran on the "account is
+// real and mailable" branch, leaving exactly the response-timing side
+// channel those comments claim doesn't exist. Dispatching here instead
+// means every branch returns as soon as the handler is done, regardless of
+// whether mail is ever actually sent. event is recorded to the audit log
+// only on a successful send, matching the previous synchronous behavior;
+// if mailSem is full, the send is dropped and logged rather than blocking
+// the request path or growing unboundedly.
+func (s *server) dispatchMail(r *http.Request, event, ip, username, to, subject, body, failLogMsg string) {
+	select {
+	case mailSem <- struct{}{}:
+	default:
+		s.log.Warn("mail dispatch dropped — too many in flight", "event", event, "user", sanitizeLogField(username))
+		return
+	}
+	host := firstNonEmpty(r.Header.Get("X-Forwarded-Host"), r.Host)
+	ua := r.UserAgent()
+	go func() {
+		defer func() { <-mailSem }()
+		if err := sendMailFunc(s.cfg.smtpURL, s.cfg.smtpFrom, to, subject, body, s.cfg.smtpAllowInsecure); err != nil {
+			s.log.Error(failLogMsg, "user", sanitizeLogField(username), "error", err)
+			return
+		}
+		s.log.Info("auth", "event", sanitizeLogField(event), "ip", sanitizeLogField(ip),
+			"user", sanitizeLogField(username), "ua", sanitizeLogField(ua), "host", sanitizeLogField(host))
+		s.aud.record(authEvent{Time: time.Now().UTC(), Event: event, IP: ip, User: username, UA: ua, Host: host})
+	}()
+}
 
 // mailHeaderSafe reports whether v may be interpolated into a message header.
 // A CR or LF terminates a header line, so a value carrying one could append
@@ -364,12 +411,8 @@ func (s *server) recoverRequest(w http.ResponseWriter, r *http.Request, n string
 						"The link is valid for 15 minutes and works exactly once.\n"+
 						"If you did not request this, ignore this email.",
 					sanitizeMailBody(u.Username), s.cfg.authHost, link)
-				if err := sendMailFunc(s.cfg.smtpURL, s.cfg.smtpFrom, to,
-					"Password reset — "+s.cfg.authHost, body, s.cfg.smtpAllowInsecure); err != nil {
-					s.log.Error("recovery email failed", "user", sanitizeLogField(username), "error", err)
-				} else {
-					s.audit("recover_request", ip, username, r)
-				}
+				s.dispatchMail(r, "recover_request", ip, username, to,
+					"Password reset — "+s.cfg.authHost, body, "recovery email failed")
 			}
 		}
 	}

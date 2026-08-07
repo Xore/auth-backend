@@ -158,9 +158,9 @@ func TestRecoverRequestUsesEmailField(t *testing.T) {
 	mk("carol", "")
 	s := newRecoverTestServer(t, c, st)
 
-	var sentTo string
+	sentTo := make(chan string, 1)
 	old := sendMailFunc
-	sendMailFunc = func(_, _, to, _, _ string, _ bool) error { sentTo = to; return nil }
+	sendMailFunc = func(_, _, to, _, _ string, _ bool) error { sentTo <- to; return nil }
 	t.Cleanup(func() { sendMailFunc = old })
 
 	post := func(username string) *httptest.ResponseRecorder {
@@ -171,29 +171,74 @@ func TestRecoverRequestUsesEmailField(t *testing.T) {
 	}
 
 	w := post("bob")
-	if sentTo != "bob@example.org" {
-		t.Fatalf("recovery mail went to %q, want the Email field", sentTo)
+	if got := waitMailSent(t, sentTo); got != "bob@example.org" {
+		t.Fatalf("recovery mail went to %q, want the Email field", got)
 	}
 	if !strings.Contains(w.Body.String(), "reset email is on its way") {
 		t.Fatal("generic notice missing for emailable account")
 	}
 
-	sentTo = ""
 	w = post("carol")
-	if sentTo != "" {
-		t.Fatalf("mail sent for account without recovery address: %q", sentTo)
-	}
+	assertNoMailSent(t, sentTo)
 	if !strings.Contains(w.Body.String(), "reset email is on its way") {
 		t.Fatal("response differs between emailable and unemailable accounts — enumeration signal")
 	}
 
-	sentTo = ""
 	w = post("ghost")
-	if sentTo != "" {
-		t.Fatal("mail sent for unknown account")
-	}
+	assertNoMailSent(t, sentTo)
 	if !strings.Contains(w.Body.String(), "reset email is on its way") {
 		t.Fatal("response differs for unknown accounts — enumeration signal")
+	}
+}
+
+// recoverRequest's own doc comment says the response is identical whether
+// or not an account is reachable by mail — but a synchronous SMTP round
+// trip only on the "real, mailable account" branch would still leak that
+// distinction through response *timing* (#42). This proves the fix
+// directly: the handler must return before a deliberately-blocked mail
+// send completes, not just "usually faster."
+func TestRecoverRequestReturnsBeforeMailSendCompletes(t *testing.T) {
+	c := testConfig(t)
+	c.smtpURL = "smtp://mail.example.com"
+	path := filepath.Join(t.TempDir(), "users.json")
+	st := newUserStore(path)
+	if _, err := st.bootstrap("alice@example.com", "a-long-test-password", ""); err != nil {
+		t.Fatal(err)
+	}
+	s := newRecoverTestServer(t, c, st)
+
+	release := make(chan struct{})
+	done := make(chan struct{}, 1)
+	old := sendMailFunc
+	sendMailFunc = func(_, _, _, _, _ string, _ bool) error {
+		<-release
+		done <- struct{}{}
+		return nil
+	}
+	t.Cleanup(func() { sendMailFunc = old })
+
+	f := url.Values{}
+	f.Set("ft", c.issueForm())
+	f.Set("username", "alice@example.com")
+
+	handlerReturned := make(chan *httptest.ResponseRecorder, 1)
+	go func() { handlerReturned <- recoverPostForm(s, f) }()
+
+	var w *httptest.ResponseRecorder
+	select {
+	case w = <-handlerReturned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("recoverRequest blocked on a still-pending mail send instead of returning immediately")
+	}
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "reset email is on its way") {
+		t.Fatalf("unexpected response before mail send completed: %d %s", w.Code, w.Body.String())
+	}
+
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("async mail send never completed")
 	}
 }
 
