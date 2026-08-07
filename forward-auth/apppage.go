@@ -120,15 +120,17 @@ func (s *server) renderApp(w http.ResponseWriter, r *http.Request) {
 	// deployment with none configured has no modal to send a non-admin back
 	// to, so the standalone site stays their only way in.
 	if s.cfg.appEmbedDomain != "" && u.Role != roleAdmin && !isFramedAppRequest(r, s.cfg.appEmbedDomain) {
-		s.renderRestrictedApp(w, n)
+		s.renderRestrictedApp(w, cl.sid, n)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := appTmpl.Execute(w, AppPageData{
-		User:           u.Username,
-		IsAdmin:        u.Role == roleAdmin,
-		CSRF:           s.cfg.csrfToken(cl.sid),
-		FT:             s.cfg.issueForm(),
+		User:    u.Username,
+		IsAdmin: u.Role == roleAdmin,
+		CSRF:    s.cfg.csrfToken(cl.sid),
+		// Session-bound, not the pre-auth issueForm() — the backup-codes
+		// form this feeds is a session-gated mutation (see checkSessionCSRF).
+		FT:             s.cfg.csrfToken(cl.sid),
 		Nonce:          n,
 		FrameAncestors: frameAncestorsJSON(s.cfg.frameAncestors),
 	}); err != nil {

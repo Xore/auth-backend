@@ -8,7 +8,7 @@
 //	GET  /_auth/verify        — Traefik calls this; 2xx = allow, 302 = go log in
 //	GET  /_auth/login         — the login page (served on auth.<domain>)
 //	POST /_auth/login         — validate credentials (+ per-user TOTP), set cookie
-//	GET  /_auth/logout        — clear the cookie
+//	GET  /_auth/logout        — clear the cookie (requires ?csrf=<session token>)
 //	GET  /_auth/health        — unauthenticated health probe
 //	GET  /_auth/enroll        — session-gated TOTP enrollment (QR + confirm)
 //	GET  /_auth/password      — self-service password change

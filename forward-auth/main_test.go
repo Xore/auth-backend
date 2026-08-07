@@ -764,7 +764,7 @@ func newPasswordTestServer(t *testing.T) (*server, *userStore, *http.Cookie) {
 
 func postPasswordChange(s *server, sess *http.Cookie, new1, new2 string) *httptest.ResponseRecorder {
 	f := url.Values{}
-	f.Set("ft", s.cfg.issueForm())
+	f.Set("ft", s.cfg.csrfToken("sid")) // must match newPasswordTestServer's session sid
 	f.Set("current", "a-long-test-password")
 	f.Set("new1", new1)
 	f.Set("new2", new2)
@@ -908,7 +908,7 @@ func TestBackupCodeRegeneration(t *testing.T) {
 	cl := sessionClaims{user: u.Username, gen: u.Gen, sid: "sid", exp: time.Now().Add(time.Minute).Unix()}
 
 	f := url.Values{}
-	f.Set("ft", c.issueForm())
+	f.Set("ft", c.csrfToken(cl.sid))
 	r := httptest.NewRequest("POST", "http://auth/_auth/backup-codes", strings.NewReader(f.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.AddCookie(&http.Cookie{Name: c.cookieName, Value: mustIssuePASETO(t, c, cl)})
