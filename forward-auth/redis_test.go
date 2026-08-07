@@ -368,6 +368,54 @@ func TestRedisThrottleFailIsAtomic(t *testing.T) {
 	}
 }
 
+// reserveScript must combine the locked-check and the increment into one
+// round trip: allowed while under the limit, still allowed (but locking)
+// on the crossing attempt, and rejected with a positive retry-after once
+// locked — mirroring the in-memory throttle's reserve() semantics (#37).
+func TestRedisThrottleReserveIsAtomic(t *testing.T) {
+	mr, rb := newTestRedis(t)
+	ip := "10.0.0.30"
+	rb.cfg.maxAttempts = 3
+
+	for i := 1; i <= 2; i++ {
+		allowed, retry, err := rb.reserve(ip)
+		if err != nil {
+			t.Fatalf("reserve %d: %v", i, err)
+		}
+		if !allowed || retry != 0 {
+			t.Fatalf("reserve %d = (%v, %v), want (true, 0)", i, allowed, retry)
+		}
+	}
+	// third reservation crosses maxAttempts: still allowed (this attempt
+	// proceeds), but a lock is now set.
+	allowed, retry, err := rb.reserve(ip)
+	if err != nil {
+		t.Fatalf("reserve 3: %v", err)
+	}
+	if !allowed || retry != 0 {
+		t.Fatalf("reserve 3 = (%v, %v), want (true, 0)", allowed, retry)
+	}
+	if got, _ := mr.Get(throttleLockKey(ip)); got != "3" {
+		t.Fatalf("lock value = %q, want 3", got)
+	}
+
+	// now locked: further reservations must be rejected without
+	// incrementing the counter further.
+	allowed, retry, err = rb.reserve(ip)
+	if err != nil {
+		t.Fatalf("reserve while locked: %v", err)
+	}
+	if allowed {
+		t.Fatal("reserve should reject while locked")
+	}
+	if retry <= 0 {
+		t.Fatalf("retryAfter = %v, want > 0", retry)
+	}
+	if got, _ := mr.Get(throttleFailKey(ip)); got != "3" {
+		t.Fatalf("counter incremented while locked: %q, want unchanged at 3", got)
+	}
+}
+
 // The touch Lua script applies fields + TTL atomically, and created
 // survives later touches.
 func TestRedisSessionTouchIsAtomic(t *testing.T) {

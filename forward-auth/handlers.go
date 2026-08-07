@@ -141,15 +141,6 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.maxBodyBytes)
 
-	if locked, d, err := s.tr.locked(ip); err != nil {
-		s.log.Warn("throttle check failed — failing closed", "error", err)
-		http.Error(w, "authentication storage unavailable", http.StatusServiceUnavailable)
-		return
-	} else if locked {
-		s.audit("locked_out", ip, "", r)
-		s.renderLogin(w, rd, "Too many attempts. Try again in "+d.Round(time.Second).String()+".", n)
-		return
-	}
 	if err := r.ParseForm(); err != nil {
 		s.fail(w, r, ip, rd, "bad_request", n)
 		return
@@ -166,24 +157,50 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	username := r.PostForm.Get("username")
-	if locked, d, err := s.tr.locked("user:" + strings.ToLower(username)); err != nil {
+	userKey := "user:" + strings.ToLower(username)
+
+	// Reserve both the ip and user throttle slots atomically with (i.e.
+	// immediately before) the credential check below, instead of checking
+	// locked() ahead of it and recording fail() only after: that
+	// check-then-act split left a window spanning the Argon2id hash in
+	// which a burst of concurrent requests could each observe "not locked"
+	// and get a free guess before any of them was counted. See reserve()'s
+	// doc comment. A successful, enabled login resets both reservations
+	// below; a failure or a disabled account leaves them counted.
+	if allowed, d, err := s.tr.reserve(ip); err != nil {
 		s.log.Warn("throttle check failed — failing closed", "error", err)
 		http.Error(w, "authentication storage unavailable", http.StatusServiceUnavailable)
 		return
-	} else if locked {
+	} else if !allowed {
+		s.audit("locked_out", ip, "", r)
+		s.renderLogin(w, rd, "Too many attempts. Try again in "+d.Round(time.Second).String()+".", n)
+		return
+	}
+	if allowed, d, err := s.tr.reserve(userKey); err != nil {
+		s.log.Warn("throttle check failed — failing closed", "error", err)
+		http.Error(w, "authentication storage unavailable", http.StatusServiceUnavailable)
+		return
+	} else if !allowed {
 		s.audit("locked_out", ip, "", r)
 		s.renderLogin(w, rd, "Too many attempts. Try again in "+d.Round(time.Second).String()+".", n)
 		return
 	}
 	if !s.users.checkPassword(username, r.PostForm.Get("password")) {
-		s.fail(w, r, ip, rd, "bad_credentials", n)
+		s.failAfterReserve(w, r, ip, rd, "bad_credentials", n)
 		return
 	}
 	u := s.users.get(username)
 	if u.Disabled {
-		s.fail(w, r, ip, rd, "disabled_user", n)
+		s.failAfterReserve(w, r, ip, rd, "disabled_user", n)
 		return
 	}
+	// Credentials are valid for an enabled account: undo the provisional
+	// reservation now rather than waiting for finishLogin, which for a
+	// TOTP-pending login only runs after a later, separate request — a
+	// correct password should not sit there counted as a failure while a
+	// second factor is still pending.
+	s.tr.reset(ip)
+	s.tr.reset(userKey)
 	trusted := s.trustedDevice(r, username)
 	if trusted && u.TOTPSecret != "" && riskScore(u, ip, r.UserAgent(), time.Now()) > 50 {
 		// anomalous sign-in: device trust alone is not enough — demand the
@@ -260,6 +277,31 @@ func (s *server) fail(w http.ResponseWriter, r *http.Request, ip, rd, reason, no
 		} else if userLocked {
 			locked = true
 		}
+	}
+	if err != nil {
+		// throttle state could not be recorded — fail closed with a
+		// controlled 503 rather than letting attempts through unthrottled
+		s.log.Warn("throttle record failed — failing closed", "error", err)
+		http.Error(w, "authentication storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if locked {
+		s.ntf.send("locked_out", r.PostForm.Get("username"), ip, s.cfg.authHost, reason)
+	}
+	s.audit("login_fail:"+reason, ip, r.PostForm.Get("username"), r)
+	s.renderLogin(w, rd, "Invalid credentials.", nonce)
+}
+
+// failAfterReserve renders the same failure page as fail(), but for a
+// request whose ip and user throttle slots were already recorded by an
+// earlier reserve() call (see login()). It must NOT call tr.fail() again —
+// that would count a single attempt twice — so it only reads current lock
+// status (for the notification) and audits/renders.
+func (s *server) failAfterReserve(w http.ResponseWriter, r *http.Request, ip, rd, reason, nonce string) {
+	username := strings.ToLower(strings.TrimSpace(r.PostForm.Get("username")))
+	locked, _, err := s.tr.locked(ip)
+	if err == nil && !locked && username != "" {
+		locked, _, err = s.tr.locked("user:" + username)
 	}
 	if err != nil {
 		// throttle state could not be recorded — fail closed with a
