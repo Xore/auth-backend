@@ -5,10 +5,10 @@ package main
 // HKDF key-stretching helper.
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"log/slog"
@@ -75,12 +75,17 @@ func getenv(k, def string) string {
 }
 
 // getenvFile supports docker secrets: FOO_FILE=/run/secrets/foo takes
-// precedence over FOO.
+// precedence over FOO. A _FILE path that's set but unreadable is reported
+// to stderr rather than silently falling back to FOO/def — otherwise a
+// broken secrets mount (wrong permissions, a typo'd path) looks identical
+// to the operator simply never having set FOO_FILE.
 func getenvFile(k, def string) string {
 	if p := os.Getenv(k + "_FILE"); p != "" {
-		if raw, err := os.ReadFile(p); err == nil {
+		raw, err := os.ReadFile(p)
+		if err == nil {
 			return strings.TrimSpace(string(raw))
 		}
+		fmt.Fprintf(os.Stderr, "%s_FILE is set to %q but could not be read: %v\n", k, p, err)
 	}
 	return getenv(k, def)
 }
@@ -187,14 +192,16 @@ func parseEmbedDomain(raw string, logger *slog.Logger) string {
 }
 
 func loadConfig(logger *slog.Logger) config {
-	secret := []byte(getenvFile("COOKIE_SECRET", ""))
-	if len(secret) == 0 {
-		secret = make([]byte, 32)
-		if _, err := rand.Read(secret); err != nil {
-			panic("crypto/rand failed: " + err.Error())
-		}
-		logger.Warn("COOKIE_SECRET not set — generated a random key; sessions drop on restart and won't match across replicas")
-	}
+	// COOKIE_SECRET is documented as required (README, .env.example, and
+	// the bundled docker-compose.yml's ${COOKIE_SECRET:?...} all enforce
+	// this already). It used to fail open here instead: an unset value
+	// silently generated a random in-memory key and only logged a Warn, so
+	// a deployment run outside the bundled compose stack (a bare binary, a
+	// hand-written Kubernetes manifest, a broken _FILE mount) started up
+	// looking healthy while every session/CSRF/device-trust/recovery token
+	// — and the audit log's HMAC chain — regenerates from scratch on every
+	// restart. Fail closed like every other required setting instead.
+	secret := []byte(requireEnvFile("COOKIE_SECRET"))
 	authHost := getenv("AUTH_HOST", "")
 	if authHost == "" {
 		log.Fatal("AUTH_HOST must be set")
@@ -244,6 +251,22 @@ func loadConfig(logger *slog.Logger) config {
 			oldPasetoKeys = append(oldPasetoKeys, k)
 		}
 	}
+	// Unlike WEBHOOK_URL/SMTP_URL/SSO_URL, REDIS_URL isn't required to use
+	// a TLS scheme: the bundled docker-compose.yml deliberately connects
+	// over plain redis:// to a container on its own private Docker
+	// network, which is already a trusted path. But that same plaintext
+	// scheme is also what the documented "external Redis" option uses —
+	// there the connection (and the Redis password embedded in the URL)
+	// travels over whatever network sits between this container and that
+	// host. validate() below only checks the URL is well-formed; this
+	// warns at the point the operator can actually see it.
+	redisURL := getenv("REDIS_URL", "")
+	if u, err := url.Parse(redisURL); redisURL != "" && err == nil && u.Scheme == "redis" {
+		logger.Warn("REDIS_URL uses redis:// (plaintext) — the Redis password, session data, usernames and " +
+			"client IPs travel unencrypted between this container and Redis. Use rediss:// unless this " +
+			"connection stays on a network you already trust, such as the bundled compose stack's private " +
+			"Docker network")
+	}
 	return config{
 		listen:            getenv("LISTEN_ADDR", ":4181"),
 		authHost:          authHost,
@@ -282,7 +305,7 @@ func loadConfig(logger *slog.Logger) config {
 		smtpURL:           getenv("SMTP_URL", ""),
 		smtpFrom:          getenv("SMTP_FROM", "forward-auth@"+authHost),
 		smtpAllowInsecure: getenv("SMTP_ALLOW_INSECURE", "false") == "true",
-		redisURL:          getenv("REDIS_URL", ""),
+		redisURL:          redisURL,
 		pasetoKey:         pasetoKey,
 		pasetoKeySet:      pasetoKeySet,
 		oldPasetoKeys:     oldPasetoKeys,
@@ -364,6 +387,11 @@ func (c config) validate() error {
 	if c.ssoURL != "" {
 		if u, err := url.Parse(c.ssoURL); err != nil || u.Scheme != "https" || u.Hostname() == "" {
 			problems = append(problems, "SSO_URL must be https:// with a host")
+		}
+	}
+	if c.redisURL != "" {
+		if u, err := url.Parse(c.redisURL); err != nil || (u.Scheme != "redis" && u.Scheme != "rediss") || u.Hostname() == "" {
+			problems = append(problems, "REDIS_URL must be redis:// or rediss:// with a host")
 		}
 	}
 	if c.magicLink && c.smtpURL == "" {
