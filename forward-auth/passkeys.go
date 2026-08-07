@@ -11,8 +11,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
+
+// requireUserVerification is applied to every registration and login
+// ceremony. Without it, an authenticator with no PIN/biometric configured
+// (a common real-world state for roaming FIDO2 keys) can register and sign
+// in with mere possession, no proof the presenter is the enrolled user —
+// and PASSWORDLESS=true makes a passkey the *sole* factor, so that gap
+// would mean a stolen-but-unlocked security key alone is enough.
+var requireUserVerification = protocol.VerificationRequired
 
 type passkeyCeremony struct {
 	Kind, User, SID, IP, Redirect, Name string
@@ -87,7 +96,9 @@ func (s *server) passkeyRegisterBegin(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, "name is too long")
 		return
 	}
-	options, data, err := s.wa.BeginRegistration(u)
+	options, data, err := s.wa.BeginRegistration(u, webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
+		UserVerification: requireUserVerification,
+	}))
 	if err != nil {
 		s.log.Error("begin passkey registration", "error", err)
 		jsonErr(w, "could not start passkey registration")
@@ -169,7 +180,7 @@ func (s *server) passkeyLoginBegin(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, "passkey sign-in unavailable")
 		return
 	}
-	options, data, err := s.wa.BeginLogin(u)
+	options, data, err := s.wa.BeginLogin(u, webauthn.WithUserVerification(requireUserVerification))
 	if err != nil {
 		jsonErr(w, "passkey sign-in unavailable")
 		return
@@ -209,6 +220,9 @@ func (s *server) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		jsonErr(w, "passkey sign-in failed")
+		return
+	}
+	if s.rejectClonedPasskey(w, r, ip, c.User, u.Username, cred) {
 		return
 	}
 	previousIP := u.LastIP
@@ -254,6 +268,31 @@ func (s *server) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 		redirect = pending
 	}
 	jsonOut(w, http.StatusOK, map[string]string{"redirect": redirect})
+}
+
+// rejectClonedPasskey reports and responds to a clone-warning signal: the
+// authenticator's signature counter did not advance since its last use —
+// WebAuthn §7.2 step 17's indication that this credential's key material
+// may have been duplicated (a cloned FIDO2 token, or malware that
+// exfiltrated a synced credential). FinishLogin returns a nil error for
+// this case (the assertion itself verified correctly), so it must be
+// checked explicitly: reject the login rather than issuing a session
+// indistinguishable from a normal one, and make sure it's visible to the
+// operator both in the audit log and as a direct notification, since —
+// unlike a wrong password — the legitimate owner has no other way to
+// notice. Returns true if it rejected (and already wrote a response).
+func (s *server) rejectClonedPasskey(w http.ResponseWriter, r *http.Request, ip, ceremonyUser, username string, cred *webauthn.Credential) bool {
+	if !cred.Authenticator.CloneWarning {
+		return false
+	}
+	s.audit("passkey_login_clone_warning", ip, username, r)
+	s.ntf.send("passkey_login_clone_warning", username, ip, s.cfg.authHost,
+		"authenticator sign counter did not advance — possible cloned credential")
+	if !s.passkeyThrottleOr503(w, r, ip, ceremonyUser, "clone_warning") {
+		return true
+	}
+	jsonErr(w, "passkey sign-in failed")
+	return true
 }
 
 func (s *server) passkeyDelete(w http.ResponseWriter, r *http.Request) {

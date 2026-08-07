@@ -436,6 +436,22 @@ func (st *userStore) adminCount() int {
 	return n
 }
 
+// hasEnabledAdminWithPasskey reports whether at least one enabled
+// administrator has a registered passkey. Used to guard PASSWORDLESS=true:
+// enabling it with no such admin would disable password login and recovery
+// while passkey enrollment itself requires an authenticated session,
+// permanently locking every administrator out.
+func (st *userStore) hasEnabledAdminWithPasskey() bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	for _, u := range st.users {
+		if u.Role == roleAdmin && !u.Disabled && len(u.Passkeys) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // mutate runs fn on the named user under the lock and persists the store if
 // fn returns true.
 func (st *userStore) mutate(name string, fn func(*User) bool) error {
