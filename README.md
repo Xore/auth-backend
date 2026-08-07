@@ -277,7 +277,7 @@ new key and retain the active key as the previous key for the transition.
 | `SMTP_FROM` | `forward-auth@<AUTH_HOST>` | Sender address for recovery mail |
 | `SMTP_ALLOW_INSECURE` | `false` | **Dev only**: permit `smtp://` without STARTTLS |
 | `REDIS_PASSWORD` | *(required by Compose)* | Password for the bundled private Redis service; generate 64 safe hex characters with `openssl rand -hex 32` |
-| `REDIS_URL` | bundled Redis | `redis://[:password@]host:6379/0` — override to use an external Redis throttle + session backend |
+| `REDIS_URL` | bundled Redis | `redis://[:password@]host:6379/0` — override to use an external Redis throttle + session backend. Use `rediss://` (TLS) unless the connection stays on a network you already trust the way the bundled compose stack's private Docker network is; plain `redis://` to a remote host sends the password, session data and client IPs in cleartext |
 | `ORG_ID` | *(empty)* | Organization label on the admin System pane |
 | `AUTH_RESET_CONFIRM` | *(empty)* | Confirmation flag for the `auth-credentials-reset` maintenance profile |
 

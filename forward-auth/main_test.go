@@ -520,6 +520,47 @@ func TestConfigRejectsShortIntrospectionToken(t *testing.T) {
 	}
 }
 
+// REDIS_URL had no validation at all (#50), unlike every other
+// network-destination setting (WEBHOOK_URL, SMTP_URL, SSO_URL) — any
+// scheme or a missing host reached redis.ParseURL unchecked.
+func TestConfigValidatesRedisURL(t *testing.T) {
+	c := testConfig(t)
+	c.redisURL = "not a url with spaces and no scheme"
+	if err := c.validate(); err == nil || !strings.Contains(err.Error(), "REDIS_URL") {
+		t.Fatalf("malformed REDIS_URL was not rejected: %v", err)
+	}
+
+	c = testConfig(t)
+	c.redisURL = "http://redis.example.com:6379/0"
+	if err := c.validate(); err == nil || !strings.Contains(err.Error(), "REDIS_URL") {
+		t.Fatalf("non-redis scheme was not rejected: %v", err)
+	}
+
+	c = testConfig(t)
+	c.redisURL = "redis://"
+	if err := c.validate(); err == nil || !strings.Contains(err.Error(), "REDIS_URL") {
+		t.Fatalf("REDIS_URL with no host was not rejected: %v", err)
+	}
+
+	for _, valid := range []string{"redis://:pw@auth-redis:6379/0", "rediss://:pw@redis.example.com:6380/0"} {
+		c = testConfig(t)
+		c.pasetoKeySet = true // isolate this assertion from the unrelated PASETO_KEY problem below
+		c.redisURL = valid
+		if err := c.validate(); err != nil {
+			t.Fatalf("valid REDIS_URL %q rejected: %v", valid, err)
+		}
+	}
+
+	// unset is fine — memory/file-backed throttle and sessions are the
+	// default backend.
+	c = testConfig(t)
+	c.pasetoKeySet = true
+	c.redisURL = ""
+	if err := c.validate(); err != nil {
+		t.Fatalf("empty REDIS_URL rejected: %v", err)
+	}
+}
+
 func TestPASETORoundTrip(t *testing.T) {
 	c := testConfig(t)
 	original := sessionClaims{user: "alice", gen: 3, sid: "abcdef123456", flags: "c", exp: time.Now().Add(time.Hour).Unix()}
