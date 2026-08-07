@@ -9,6 +9,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -115,6 +116,7 @@ func (s *server) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = cl
+	secHeaders(w, nonce())
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -171,6 +173,7 @@ func (s *server) adminAction(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	secHeaders(w, nonce())
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -209,10 +212,11 @@ func (s *server) adminAction(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, http.StatusOK, out)
 	}
 
-	// guards for actions that could lock the panel out entirely
+	// self is checked up front (it depends only on the request/session, not
+	// store state that could change concurrently); the last-admin guard
+	// below runs atomically with its mutation instead — see
+	// mutateAdminGuarded/deleteAdminGuarded.
 	self := req.Username == actor.Username
-	target := s.users.get(req.Username)
-	lastAdmin := target != nil && target.Role == roleAdmin && !target.Disabled && s.users.adminCount() <= 1
 
 	switch req.Action {
 	case "disable":
@@ -220,12 +224,20 @@ func (s *server) adminAction(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, "cannot disable yourself")
 			return
 		}
-		if lastAdmin {
-			jsonErr(w, "cannot disable the last admin")
-			return
-		}
-		if err := s.users.mutate(req.Username, func(u *User) bool { u.Disabled = true; u.Gen++; u.DeviceGen++; return true }); err != nil {
-			jsonErr(w, err.Error())
+		if err := s.users.mutateAdminGuarded(req.Username, func(u *User, otherAdmins int) error {
+			if u.Role == roleAdmin && !u.Disabled && otherAdmins == 0 {
+				return errLastAdmin
+			}
+			u.Disabled = true
+			u.Gen++
+			u.DeviceGen++
+			return nil
+		}); err != nil {
+			if errors.Is(err, errLastAdmin) {
+				jsonErr(w, "cannot disable the last admin")
+			} else {
+				jsonErr(w, err.Error())
+			}
 			return
 		}
 		done(nil)
@@ -240,12 +252,12 @@ func (s *server) adminAction(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, "cannot delete yourself")
 			return
 		}
-		if lastAdmin {
-			jsonErr(w, "cannot delete the last admin")
-			return
-		}
-		if err := s.users.delete(req.Username); err != nil {
-			jsonErr(w, err.Error())
+		if err := s.users.deleteAdminGuarded(req.Username); err != nil {
+			if errors.Is(err, errLastAdmin) {
+				jsonErr(w, "cannot delete the last admin")
+			} else {
+				jsonErr(w, err.Error())
+			}
 			return
 		}
 		done(nil)
@@ -295,12 +307,18 @@ func (s *server) adminAction(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, "cannot demote yourself")
 			return
 		}
-		if lastAdmin && req.Role != roleAdmin {
-			jsonErr(w, "cannot demote the last admin")
-			return
-		}
-		if err := s.users.mutate(req.Username, func(u *User) bool { u.Role = req.Role; return true }); err != nil {
-			jsonErr(w, err.Error())
+		if err := s.users.mutateAdminGuarded(req.Username, func(u *User, otherAdmins int) error {
+			if u.Role == roleAdmin && !u.Disabled && otherAdmins == 0 && req.Role != roleAdmin {
+				return errLastAdmin
+			}
+			u.Role = req.Role
+			return nil
+		}); err != nil {
+			if errors.Is(err, errLastAdmin) {
+				jsonErr(w, "cannot demote the last admin")
+			} else {
+				jsonErr(w, err.Error())
+			}
 			return
 		}
 		done(nil)
@@ -743,6 +761,7 @@ func (s *server) adminRevokeSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	secHeaders(w, nonce())
 	sid := r.PathValue("sid")
 	if sid == "" {
 		jsonErr(w, "sid required")

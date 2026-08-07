@@ -4,12 +4,14 @@ package main
 // email, set_email action, normalization and validation.
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -133,5 +135,138 @@ func TestAdminSecurityActionsMutateAndInvalidate(t *testing.T) {
 	afterDisable := st.get("target")
 	if !afterDisable.Disabled || afterDisable.Gen != 8 || afterDisable.DeviceGen != 11 {
 		t.Fatalf("disable did not block user and invalidate sessions: %#v", afterDisable)
+	}
+}
+
+// mutateAdminGuarded/deleteAdminGuarded must refuse to act on the sole
+// enabled admin (#43). Exercised directly against userStore rather than
+// through adminAction: the HTTP handler's separate "cannot act on yourself"
+// check means a single actor can never legitimately reach the
+// last-admin-via-a-different-target case in a purely sequential request —
+// this guard exists specifically for the concurrent case (see the test
+// below), but its refusal behavior in isolation is worth pinning directly.
+func TestMutateAdminGuardedRefusesSoleAdmin(t *testing.T) {
+	st := newUserStore(filepath.Join(t.TempDir(), "users.json"))
+	if _, err := st.bootstrap("solo", "a-long-test-password", ""); err != nil {
+		t.Fatal(err)
+	}
+	err := st.mutateAdminGuarded("solo", func(u *User, otherAdmins int) error {
+		if u.Role == roleAdmin && !u.Disabled && otherAdmins == 0 {
+			return errLastAdmin
+		}
+		u.Disabled = true
+		return nil
+	})
+	if !errors.Is(err, errLastAdmin) {
+		t.Fatalf("err = %v, want errLastAdmin", err)
+	}
+	if st.get("solo").Disabled {
+		t.Fatal("sole admin was disabled despite the guard refusing")
+	}
+}
+
+func TestDeleteAdminGuardedRefusesSoleAdmin(t *testing.T) {
+	st := newUserStore(filepath.Join(t.TempDir(), "users.json"))
+	if _, err := st.bootstrap("solo", "a-long-test-password", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.deleteAdminGuarded("solo"); !errors.Is(err, errLastAdmin) {
+		t.Fatalf("err = %v, want errLastAdmin", err)
+	}
+	if st.get("solo") == nil {
+		t.Fatal("sole admin was deleted despite the guard refusing")
+	}
+}
+
+// The actual bug: two enabled admins, each disabling the OTHER
+// concurrently. The old code computed adminCount() and the target's state
+// as two separate, independently-locked reads before its mutation — so
+// both requests could each see "the other admin is still enabled" and both
+// proceed, leaving zero enabled admins. mutateAdminGuarded computes
+// otherAdmins under the same lock hold as the mutation itself, so whichever
+// request's mutation actually lands first is reflected in the other's
+// count — never both.
+func TestMutateAdminGuardedConcurrentMutualDisableLeavesOneAdmin(t *testing.T) {
+	st := newUserStore(filepath.Join(t.TempDir(), "users.json"))
+	if _, err := st.bootstrap("a", "a-long-test-password", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.create(&User{Username: "b", Hash: st.get("a").Hash, Role: roleAdmin, Gen: 1, DeviceGen: 1, Created: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+
+	disable := func(name string) error {
+		return st.mutateAdminGuarded(name, func(u *User, otherAdmins int) error {
+			if u.Role == roleAdmin && !u.Disabled && otherAdmins == 0 {
+				return errLastAdmin
+			}
+			u.Disabled = true
+			return nil
+		})
+	}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	wg.Add(2)
+	go func() { defer wg.Done(); <-start; _ = disable("a") }()
+	go func() { defer wg.Done(); <-start; _ = disable("b") }()
+	close(start)
+	wg.Wait()
+
+	enabled := 0
+	for _, name := range []string{"a", "b"} {
+		if !st.get(name).Disabled {
+			enabled++
+		}
+	}
+	if enabled == 0 {
+		t.Fatal("both admins were disabled concurrently — zero enabled admins remain")
+	}
+}
+
+// End-to-end version of the same race, through the actual HTTP handler and
+// two distinct admin sessions, each acting on the other.
+func TestAdminActionConcurrentMutualDisableLeavesOneAdmin(t *testing.T) {
+	c := testConfig(t)
+	st := newUserStore(filepath.Join(t.TempDir(), "users.json"))
+	if _, err := st.bootstrap("a", "a-long-test-password", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.create(&User{Username: "b", Hash: st.get("a").Hash, Role: roleAdmin, Gen: 1, DeviceGen: 1, Created: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s := &server{
+		cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c),
+		aud: newAuditor("", 20), log: logger, ntf: newNotifier("", "raw", logger),
+	}
+
+	disableOther := func(actor, target string) {
+		u := st.get(actor)
+		cl := sessionClaims{user: actor, gen: u.Gen, sid: actor + "-sid", exp: time.Now().Add(time.Hour).Unix()}
+		body := `{"action":"disable","username":"` + target + `"}`
+		r := httptest.NewRequest(http.MethodPost, "http://auth/_auth/admin/api/action", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.AddCookie(&http.Cookie{Name: c.cookieName, Value: mustIssuePASETO(t, c, cl)})
+		r.Header.Set("X-Csrf", c.csrfToken(cl.sid))
+		s.adminAction(httptest.NewRecorder(), r)
+	}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	wg.Add(2)
+	go func() { defer wg.Done(); <-start; disableOther("a", "b") }()
+	go func() { defer wg.Done(); <-start; disableOther("b", "a") }()
+	close(start)
+	wg.Wait()
+
+	enabled := 0
+	for _, name := range []string{"a", "b"} {
+		if !st.get(name).Disabled {
+			enabled++
+		}
+	}
+	if enabled == 0 {
+		t.Fatal("both admins were disabled concurrently via adminAction — zero enabled admins remain")
 	}
 }

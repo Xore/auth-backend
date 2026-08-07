@@ -18,6 +18,7 @@ func (s *server) handleMySessions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	secHeaders(w, nonce())
 	sessions := s.reg.forUser(cl.user)
 	currentSID := cl.sid
 	type mySession struct {
@@ -47,6 +48,7 @@ func (s *server) handleTrustedDevices(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	secHeaders(w, nonce())
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte("[]"))
 }
