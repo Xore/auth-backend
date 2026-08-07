@@ -63,7 +63,7 @@ func main() {
 	if cfg.smtpAllowInsecure && cfg.smtpURL != "" {
 		log.Warn("SMTP_ALLOW_INSECURE=true — recovery mail may be sent without TLS; development only")
 	}
-	aud := newAuditor(cfg.auditLog, cfg.ringCap, cfg.secret)
+	aud := newAuditor(cfg.auditLog, cfg.ringCap, append([][]byte{cfg.secret}, cfg.oldSecrets...)...)
 
 	users := newUserStore(cfg.usersFile)
 	if err := users.load(); err != nil {

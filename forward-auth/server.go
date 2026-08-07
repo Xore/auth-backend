@@ -338,9 +338,7 @@ func (s *server) awaitShutdown(srv *http.Server, throttlePath string) {
 			s.log.Error("persist throttle state", "error", err)
 		}
 	}
-	if s.aud.file != nil {
-		if err := s.aud.file.Close(); err != nil {
-			s.log.Error("audit log close", "error", err)
-		}
+	if err := s.aud.Close(); err != nil {
+		s.log.Error("audit log close", "error", err)
 	}
 }
