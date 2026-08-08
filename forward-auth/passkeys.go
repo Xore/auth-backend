@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-webauthn/webauthn/metadata"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
@@ -22,6 +23,17 @@ import (
 // and PASSWORDLESS=true makes a passkey the *sole* factor, so that gap
 // would mean a stolen-but-unlocked security key alone is enough.
 var requireUserVerification = protocol.VerificationRequired
+
+// attestationSatisfiesPolicy reports whether a just-completed registration's
+// attestation meets WEBAUTHN_REQUIRE_ATTESTATION (#64). go-webauthn's own
+// FIDO Metadata Service validation only runs when the authenticator actually
+// provided an attestation statement -- an authenticator that returns
+// AttestationFormatNone (no attestation conveyed) skips that check entirely
+// rather than failing it, so "require attestation" means rejecting that case
+// ourselves here, not just wiring MDS in and assuming it's covered.
+func attestationSatisfiesPolicy(require bool, attestationType string) bool {
+	return !require || attestationType != string(metadata.None)
+}
 
 type passkeyCeremony struct {
 	Kind, User, SID, IP, Redirect, Name string
@@ -125,6 +137,11 @@ func (s *server) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.audit("passkey_register_fail", s.clientIP(r), u.Username, r)
 		jsonErr(w, "passkey verification failed")
+		return
+	}
+	if !attestationSatisfiesPolicy(s.cfg.webauthnRequireAttestation, cred.AttestationType) {
+		s.audit("passkey_register_fail", s.clientIP(r), u.Username, r)
+		jsonErr(w, "this deployment requires an attestation-capable authenticator for passkey registration")
 		return
 	}
 	err = s.users.mutate(u.Username, func(current *User) bool {

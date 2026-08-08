@@ -83,6 +83,11 @@ sequenceDiagram
   (persisted across restarts); one-time backup codes
 - WebAuthn/passkeys: register, delete and passwordless sign-in;
   `PASSWORDLESS=true` disables the password path entirely
+- Optional `WEBAUTHN_REQUIRE_ATTESTATION`: verify passkey registrations
+  against the FIDO Metadata Service trust store (known authenticator
+  models, certificate chains, revocation/compromise status), rejecting
+  authenticators that provide no attestation or aren't recognized. Off by
+  default; only gates new registrations, existing passkeys are unaffected
 - Password policy: 15+ characters (72-byte cap), NCSC top-100k breach-list
   rejection on every change, reuse of the current or the last
   `PASSWORD_HISTORY_COUNT` (default 5) passwords rejected
@@ -263,6 +268,7 @@ new key and retain the active key as the previous key for the transition.
 | `TOTP_SECRET` | *(empty)* | Optional bootstrap TOTP secret for the initial admin |
 | `TOTP_ISSUER` | `AUTH_HOST` | Issuer name shown in authenticator apps |
 | `REQUIRE_TOTP` | `true` | Force accounts without TOTP through enrollment |
+| `WEBAUTHN_REQUIRE_ATTESTATION` | `false` | Verify new passkey registrations against the FIDO Metadata Service trust store; rejects unattested/unrecognized authenticators. Needs outbound HTTPS to `mds.fidoalliance.org` and a writable cache file alongside `USERS_FILE` |
 | `PASSWORDLESS` | `false` | Passkey-only mode: password login and email recovery are disabled |
 | `MAGIC_LINK` | `false` | Email magic-link sign-in at `/_auth/magic`; requires `SMTP_URL` (startup fails without it) |
 | `TRUST_DEVICE_DAYS` | `0` | Days a device skips re-challenging TOTP (0 = always challenge) |
@@ -376,6 +382,7 @@ working if their username is itself an email address.
 | Backend outage | fail closed: 503 on auth endpoints, unverifiable sessions rejected, startup connectivity checks |
 | SMTP downgrade | STARTTLS required for `smtp://`, TLS 1.2+ for `smtps://`, explicit dev-only plaintext opt-in |
 | SSRF via `WEBHOOK_URL` | dial-time IP check (private/loopback/link-local/unspecified rejected) pinned to the exact resolved address, not just a config-time hostname check — closes the DNS-rebinding gap a check-then-dial approach leaves open |
+| Rogue/virtual passkey authenticators | optional `WEBAUTHN_REQUIRE_ATTESTATION` verifies registration attestation against the FIDO Metadata Service trust store and rejects authenticators that provide none |
 | Forensics | HMAC-chained (tamper-evident) JSON audit log + ring buffer, admin audit view, webhook alerts, token-gated Prometheus metrics |
 
 Real client IP is read from `CF-Connecting-IP` (Cloudflare) →
