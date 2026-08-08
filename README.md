@@ -84,7 +84,8 @@ sequenceDiagram
 - WebAuthn/passkeys: register, delete and passwordless sign-in;
   `PASSWORDLESS=true` disables the password path entirely
 - Password policy: 15+ characters (72-byte cap), NCSC top-100k breach-list
-  rejection on every change
+  rejection on every change, reuse of the current or the last
+  `PASSWORD_HISTORY_COUNT` (default 5) passwords rejected
 - Optional per-user **Email** field for self-service recovery (see below)
 - Per-user allowed-hosts lists — a session only authorizes the
   `X-Forwarded-Host`s the user may access
@@ -265,6 +266,7 @@ new key and retain the active key as the previous key for the transition.
 | `IDLE_TIMEOUT_MINUTES` | `60` | Revoke sessions with no activity for this long; 0 disables |
 | `MAX_ATTEMPTS` | `5` | Failed logins before lockout |
 | `LOCKOUT_MINUTES` | `15` | Base lockout duration (doubles each further burst, capped at 24h) |
+| `PASSWORD_HISTORY_COUNT` | `5` | Previous passwords (Argon2id hashes, not plaintext) a change/reset may not reuse; 0 disables the check and clears retained history |
 | `MIN_DWELL_SECONDS` | `2` | Reject logins submitted faster than a human |
 | `FORM_TTL_MINUTES` | `15` | Login form token lifetime |
 | `COOKIE_SECURE` | `true` | Require HTTPS for the session cookie |
@@ -348,6 +350,7 @@ working if their username is itself an email address.
 | Threat | Defence |
 |---|---|
 | Password guessing | per-IP **and** per-user lockout after `MAX_ATTEMPTS`, exponential backoff capped at 24h, durable across restarts |
+| Password reuse | current password and the last `PASSWORD_HISTORY_COUNT` retired ones rejected on change/reset (Argon2id hashes retained, never plaintext) |
 | Credential spraying | pair with a Traefik rate-limit middleware on the login router (8 req / 10s per IP is a reasonable start) |
 | Timing attacks / enumeration | constant-time compares, dummy-hash burn for unknown users, one generic failure message, identical recovery responses |
 | CSRF | signed form token on every public POST; per-session CSRF token on the admin API |

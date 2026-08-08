@@ -269,6 +269,11 @@ func (s *server) adminAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.users.mutate(req.Username, func(u *User) bool {
+			// #63: recorded, not checked -- temp is server-generated random,
+			// a reuse collision is not realistically reachable, so there is
+			// no rejection path here. Still recorded so a later self-service
+			// change can't reuse this temp password once it's been retired.
+			recordPasswordHistory(u, u.Hash, s.cfg.passwordHistory)
 			u.Hash = hash
 			u.MustChange = true
 			u.Gen++

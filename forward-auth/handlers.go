@@ -609,8 +609,16 @@ func (s *server) password(w http.ResponseWriter, r *http.Request) {
 		s.renderPassword(w, cl.has("c"), "Internal error — try again.", cl.sid, n)
 		return
 	}
+	// #63: checked under the same lock as the write, against the live
+	// record -- not a separate pre-check against a possibly-stale snapshot.
+	reused := false
 	// bump the generation: a password change invalidates every other session
 	if err := s.users.mutate(u.Username, func(u *User) bool {
+		if s.cfg.passwordHistory > 0 && passwordWasUsedBefore(newPW, u) {
+			reused = true
+			return false
+		}
+		recordPasswordHistory(u, u.Hash, s.cfg.passwordHistory)
 		u.Hash = hash
 		u.MustChange = false
 		u.Gen++
@@ -619,6 +627,10 @@ func (s *server) password(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		s.log.Error("persist password change", "user", u.Username, "error", err)
 		http.Error(w, "authentication storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if reused {
+		s.renderPassword(w, cl.has("c"), "That matches a recent password — choose a different one.", cl.sid, n)
 		return
 	}
 	ip := s.clientIP(r)
