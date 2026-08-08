@@ -486,6 +486,36 @@ func (st *userStore) mutateIf(name string, fn func(*User) bool) (applied bool, e
 	return true, nil
 }
 
+// mutateAll runs fn on every user under a single hold of the store lock,
+// persisting once at the end rather than once per user -- #66's global
+// "revoke every session now" admin action needs every user's Gen bumped
+// atomically with respect to any concurrent per-user mutation (a login
+// completing mid-sweep must not read a Gen this pass was about to bump but
+// hadn't yet), which calling mutate() in a loop (lock/unlock per user)
+// would not guarantee. Rolls back to the pre-mutation snapshot on save
+// failure, the same all-or-nothing contract mutateIf gives a single user.
+func (st *userStore) mutateAll(fn func(*User) bool) (changed int, err error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	before := make(map[string]*User, len(st.users))
+	for name, u := range st.users {
+		before[name] = cloneUser(u)
+	}
+	for _, u := range st.users {
+		if fn(u) {
+			changed++
+		}
+	}
+	if changed == 0 {
+		return 0, nil
+	}
+	if err := st.saveLocked(); err != nil {
+		st.users = before
+		return 0, err
+	}
+	return changed, nil
+}
+
 // mutateAdminGuarded runs fn on the named user under the store lock,
 // passing the count of *other* enabled administrators computed under that
 // same lock — so fn can atomically refuse an action that would leave zero

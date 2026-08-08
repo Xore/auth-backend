@@ -298,6 +298,23 @@ func (s *server) adminAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		done(nil)
+	case "revoke_all":
+		// #66: a single action to force every user, across every device, to
+		// re-authenticate right now -- distinct from logout_user (one
+		// account) and from a PASETO_KEY rotation (an infrastructure/config
+		// change with its own deploy cycle). Same mechanism as logout_user,
+		// applied to every user under one lock (mutateAll) so the sweep is
+		// atomic with respect to concurrent per-user mutations.
+		changed, err := s.users.mutateAll(func(u *User) bool { u.Gen++; u.DeviceGen++; return true })
+		if err != nil {
+			jsonErr(w, err.Error())
+			return
+		}
+		s.audit("admin_revoke_all", ip, actor.Username, r)
+		s.ntf.send("admin_revoke_all", actor.Username, ip, s.cfg.authHost,
+			fmt.Sprintf("%d user(s) force-logged-out", changed))
+		jsonOut(w, http.StatusOK, map[string]string{"ok": "1", "changed": strconv.Itoa(changed)})
+		return
 	case "set_role":
 		if req.Role != roleAdmin && req.Role != roleUser {
 			jsonErr(w, "role must be admin or user")
