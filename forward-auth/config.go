@@ -24,49 +24,55 @@ import (
 )
 
 type config struct {
-	listen            string
-	authHost          string
-	cookieName        string
-	cookieDom         string
-	secret            []byte
-	oldSecrets        [][]byte
-	username          string // bootstrap only
-	password          string // bootstrap only (plaintext or bcrypt hash)
-	totpSecret        string // bootstrap only
-	totpIssuer        string
-	usersFile         string
-	requireTOTP       bool
-	passwordless      bool // PASSWORDLESS=true: passkey-only sign-in
-	magicLink         bool // MAGIC_LINK=true: email magic-link sign-in (needs SMTP_URL)
-	trustDevDays      int
-	ttl               time.Duration
-	idleTimeout       time.Duration
-	maxAttempts       int
-	permaLockCycles   int // #62: 0 disables; escalate to admin-unlock-only after this many lockout cycles
-	passwordHistory   int
-	lockout           time.Duration
-	minDwell          time.Duration
-	formTTL           time.Duration
-	secure            bool
-	auditLog          string
-	ringCap           int
-	webhookURL        string
-	webhookProvider   string
-	metricsToken      string
-	introspectToken   string
-	trustedNets       []*net.IPNet
-	maxBodyBytes      int64
-	orgID             string
-	ssoURL            string
-	frameAncestors    []string // APP_FRAME_ANCESTORS: https origins allowed to frame /auth/app
-	appEmbedDomain    string   // APP_EMBED_DOMAIN: base domain (+ any subdomain) allowed to iframe /auth/app as a non-admin
-	smtpURL           string
-	smtpFrom          string
-	smtpAllowInsecure bool // dev-only: permit smtp:// without STARTTLS
-	redisURL          string
-	pasetoKey         pasetov4.LocalKey // XChaCha20 + BLAKE2b key for PASETO v4.local session tokens
-	pasetoKeySet      bool              // true when PASETO_KEY was set explicitly
-	oldPasetoKeys     []pasetov4.LocalKey
+	listen          string
+	authHost        string
+	cookieName      string
+	cookieDom       string
+	secret          []byte
+	oldSecrets      [][]byte
+	username        string // bootstrap only
+	password        string // bootstrap only (plaintext or bcrypt hash)
+	totpSecret      string // bootstrap only
+	totpIssuer      string
+	usersFile       string
+	requireTOTP     bool
+	passwordless    bool // PASSWORDLESS=true: passkey-only sign-in
+	magicLink       bool // MAGIC_LINK=true: email magic-link sign-in (needs SMTP_URL)
+	trustDevDays    int
+	ttl             time.Duration
+	idleTimeout     time.Duration
+	maxAttempts     int
+	permaLockCycles int // #62: 0 disables; escalate to admin-unlock-only after this many lockout cycles
+	passwordHistory int
+	// #68: distributed-credential-stuffing alert. stuffingMinFailures<=0
+	// disables the whole check (default).
+	stuffingWindow      time.Duration
+	stuffingCooldown    time.Duration
+	stuffingMinFailures int
+	stuffingMinUsers    int
+	lockout             time.Duration
+	minDwell            time.Duration
+	formTTL             time.Duration
+	secure              bool
+	auditLog            string
+	ringCap             int
+	webhookURL          string
+	webhookProvider     string
+	metricsToken        string
+	introspectToken     string
+	trustedNets         []*net.IPNet
+	maxBodyBytes        int64
+	orgID               string
+	ssoURL              string
+	frameAncestors      []string // APP_FRAME_ANCESTORS: https origins allowed to frame /auth/app
+	appEmbedDomain      string   // APP_EMBED_DOMAIN: base domain (+ any subdomain) allowed to iframe /auth/app as a non-admin
+	smtpURL             string
+	smtpFrom            string
+	smtpAllowInsecure   bool // dev-only: permit smtp:// without STARTTLS
+	redisURL            string
+	pasetoKey           pasetov4.LocalKey // XChaCha20 + BLAKE2b key for PASETO v4.local session tokens
+	pasetoKeySet        bool              // true when PASETO_KEY was set explicitly
+	oldPasetoKeys       []pasetov4.LocalKey
 }
 
 func getenv(k, def string) string {
@@ -270,49 +276,53 @@ func loadConfig(logger *slog.Logger) config {
 			"Docker network")
 	}
 	return config{
-		listen:            getenv("LISTEN_ADDR", ":4181"),
-		authHost:          authHost,
-		cookieName:        getenv("COOKIE_NAME", "xore_sso"),
-		cookieDom:         getenv("COOKIE_DOMAIN", ""),
-		secret:            secret,
-		oldSecrets:        oldSecrets,
-		username:          requireEnv("AUTH_USERNAME"),
-		password:          requireEnvFile("AUTH_PASSWORD"),
-		totpSecret:        normalizeB32(getenvFile("TOTP_SECRET", "")),
-		totpIssuer:        getenv("TOTP_ISSUER", authHost),
-		usersFile:         getenv("USERS_FILE", "/data/users.json"),
-		requireTOTP:       getenv("REQUIRE_TOTP", "true") != "false",
-		passwordless:      getenv("PASSWORDLESS", "false") == "true",
-		magicLink:         getenv("MAGIC_LINK", "false") == "true",
-		trustDevDays:      atoi(os.Getenv("TRUST_DEVICE_DAYS"), 0),
-		ttl:               time.Duration(atoi(os.Getenv("SESSION_TTL_HOURS"), 12)) * time.Hour,
-		idleTimeout:       time.Duration(atoi(os.Getenv("IDLE_TIMEOUT_MINUTES"), 60)) * time.Minute,
-		maxAttempts:       atoi(os.Getenv("MAX_ATTEMPTS"), 5),
-		permaLockCycles:   atoi(os.Getenv("PERMANENT_LOCKOUT_AFTER_CYCLES"), 0),
-		passwordHistory:   atoi(os.Getenv("PASSWORD_HISTORY_COUNT"), 5),
-		lockout:           time.Duration(atoi(os.Getenv("LOCKOUT_MINUTES"), 15)) * time.Minute,
-		minDwell:          time.Duration(atoi(os.Getenv("MIN_DWELL_SECONDS"), 2)) * time.Second,
-		formTTL:           time.Duration(atoi(os.Getenv("FORM_TTL_MINUTES"), 15)) * time.Minute,
-		secure:            getenv("COOKIE_SECURE", "true") != "false",
-		auditLog:          getenv("AUDIT_LOG", ""),
-		ringCap:           atoi(os.Getenv("AUDIT_RING"), 500),
-		webhookURL:        getenv("WEBHOOK_URL", ""),
-		webhookProvider:   getenv("WEBHOOK_PROVIDER", "raw"),
-		metricsToken:      getenvFile("METRICS_TOKEN", ""),
-		introspectToken:   getenvFile("AUTH_INTROSPECTION_TOKEN", ""),
-		trustedNets:       parseCIDRs(getenv("TRUSTED_PROXIES", defaultTrustedProxies), logger),
-		maxBodyBytes:      int64(atoi(os.Getenv("MAX_BODY_KB"), 64)) * 1024,
-		orgID:             getenv("ORG_ID", ""),
-		ssoURL:            getenv("SSO_URL", ""),
-		frameAncestors:    parseFrameAncestors(getenv("APP_FRAME_ANCESTORS", ""), logger),
-		appEmbedDomain:    parseEmbedDomain(getenv("APP_EMBED_DOMAIN", ""), logger),
-		smtpURL:           getenv("SMTP_URL", ""),
-		smtpFrom:          getenv("SMTP_FROM", "forward-auth@"+authHost),
-		smtpAllowInsecure: getenv("SMTP_ALLOW_INSECURE", "false") == "true",
-		redisURL:          redisURL,
-		pasetoKey:         pasetoKey,
-		pasetoKeySet:      pasetoKeySet,
-		oldPasetoKeys:     oldPasetoKeys,
+		listen:              getenv("LISTEN_ADDR", ":4181"),
+		authHost:            authHost,
+		cookieName:          getenv("COOKIE_NAME", "xore_sso"),
+		cookieDom:           getenv("COOKIE_DOMAIN", ""),
+		secret:              secret,
+		oldSecrets:          oldSecrets,
+		username:            requireEnv("AUTH_USERNAME"),
+		password:            requireEnvFile("AUTH_PASSWORD"),
+		totpSecret:          normalizeB32(getenvFile("TOTP_SECRET", "")),
+		totpIssuer:          getenv("TOTP_ISSUER", authHost),
+		usersFile:           getenv("USERS_FILE", "/data/users.json"),
+		requireTOTP:         getenv("REQUIRE_TOTP", "true") != "false",
+		passwordless:        getenv("PASSWORDLESS", "false") == "true",
+		magicLink:           getenv("MAGIC_LINK", "false") == "true",
+		trustDevDays:        atoi(os.Getenv("TRUST_DEVICE_DAYS"), 0),
+		ttl:                 time.Duration(atoi(os.Getenv("SESSION_TTL_HOURS"), 12)) * time.Hour,
+		idleTimeout:         time.Duration(atoi(os.Getenv("IDLE_TIMEOUT_MINUTES"), 60)) * time.Minute,
+		maxAttempts:         atoi(os.Getenv("MAX_ATTEMPTS"), 5),
+		permaLockCycles:     atoi(os.Getenv("PERMANENT_LOCKOUT_AFTER_CYCLES"), 0),
+		passwordHistory:     atoi(os.Getenv("PASSWORD_HISTORY_COUNT"), 5),
+		stuffingWindow:      time.Duration(atoi(os.Getenv("STUFFING_ALERT_WINDOW_MINUTES"), 10)) * time.Minute,
+		stuffingCooldown:    time.Duration(atoi(os.Getenv("STUFFING_ALERT_COOLDOWN_MINUTES"), 15)) * time.Minute,
+		stuffingMinFailures: atoi(os.Getenv("STUFFING_ALERT_MIN_FAILURES"), 0),
+		stuffingMinUsers:    atoi(os.Getenv("STUFFING_ALERT_MIN_USERS"), 10),
+		lockout:             time.Duration(atoi(os.Getenv("LOCKOUT_MINUTES"), 15)) * time.Minute,
+		minDwell:            time.Duration(atoi(os.Getenv("MIN_DWELL_SECONDS"), 2)) * time.Second,
+		formTTL:             time.Duration(atoi(os.Getenv("FORM_TTL_MINUTES"), 15)) * time.Minute,
+		secure:              getenv("COOKIE_SECURE", "true") != "false",
+		auditLog:            getenv("AUDIT_LOG", ""),
+		ringCap:             atoi(os.Getenv("AUDIT_RING"), 500),
+		webhookURL:          getenv("WEBHOOK_URL", ""),
+		webhookProvider:     getenv("WEBHOOK_PROVIDER", "raw"),
+		metricsToken:        getenvFile("METRICS_TOKEN", ""),
+		introspectToken:     getenvFile("AUTH_INTROSPECTION_TOKEN", ""),
+		trustedNets:         parseCIDRs(getenv("TRUSTED_PROXIES", defaultTrustedProxies), logger),
+		maxBodyBytes:        int64(atoi(os.Getenv("MAX_BODY_KB"), 64)) * 1024,
+		orgID:               getenv("ORG_ID", ""),
+		ssoURL:              getenv("SSO_URL", ""),
+		frameAncestors:      parseFrameAncestors(getenv("APP_FRAME_ANCESTORS", ""), logger),
+		appEmbedDomain:      parseEmbedDomain(getenv("APP_EMBED_DOMAIN", ""), logger),
+		smtpURL:             getenv("SMTP_URL", ""),
+		smtpFrom:            getenv("SMTP_FROM", "forward-auth@"+authHost),
+		smtpAllowInsecure:   getenv("SMTP_ALLOW_INSECURE", "false") == "true",
+		redisURL:            redisURL,
+		pasetoKey:           pasetoKey,
+		pasetoKeySet:        pasetoKeySet,
+		oldPasetoKeys:       oldPasetoKeys,
 	}
 }
 
@@ -369,6 +379,20 @@ func (c config) validate() error {
 	}
 	if c.lockout <= 0 {
 		problems = append(problems, "LOCKOUT_MINUTES must be positive")
+	}
+	if c.stuffingMinFailures < 0 {
+		problems = append(problems, "STUFFING_ALERT_MIN_FAILURES must not be negative — 0 disables the check")
+	}
+	if c.stuffingMinFailures > 0 {
+		if c.stuffingWindow <= 0 {
+			problems = append(problems, "STUFFING_ALERT_WINDOW_MINUTES must be positive when STUFFING_ALERT_MIN_FAILURES is set")
+		}
+		if c.stuffingCooldown <= 0 {
+			problems = append(problems, "STUFFING_ALERT_COOLDOWN_MINUTES must be positive when STUFFING_ALERT_MIN_FAILURES is set")
+		}
+		if c.stuffingMinUsers < 1 {
+			problems = append(problems, "STUFFING_ALERT_MIN_USERS must be at least 1 when STUFFING_ALERT_MIN_FAILURES is set")
+		}
 	}
 	if c.minDwell < 0 || c.formTTL <= c.minDwell {
 		problems = append(problems, "form TTL must exceed non-negative dwell time")

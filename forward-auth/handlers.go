@@ -681,6 +681,19 @@ func (s *server) audit(event, ip, user string, r *http.Request) {
 		Time: time.Now().UTC(), Event: event, IP: ip, User: user,
 		UA: r.UserAgent(), Host: host,
 	})
+	// #68: every login failure feeds the global stuffing detector, whether
+	// or not it's configured on (nil-checked, not relying on
+	// failThreshold<=0 alone — many tests construct a bare &server{} with
+	// no stuffing field at all, and record() is a method on *stuffingDetector,
+	// which panics on a nil receiver's own mutex the same as any other nil
+	// pointer would). login_fail is the one event class this applies to —
+	// see fail()/failAfterReserve(), the only two callers that audit it.
+	if s.stuffing != nil && strings.HasPrefix(event, "login_fail") {
+		if alert, fails, users := s.stuffing.record(user); alert {
+			s.ntf.send("credential_stuffing_suspected", "", ip, s.cfg.authHost,
+				fmt.Sprintf("%d failed logins across %d distinct usernames in the configured window", fails, users))
+		}
+	}
 }
 
 // metrics exposes Prometheus text-format counters, gated by METRICS_TOKEN

@@ -112,6 +112,10 @@ func main() {
 		startedAt:    time.Now(),
 		recoverLimit: rateLimiter{max: 3, window: time.Hour, maxKeys: rateLimiterMaxKeys},
 		magicLimit:   rateLimiter{max: 3, window: time.Hour, maxKeys: rateLimiterMaxKeys},
+		// #68: always constructed; disabled state lives inside it
+		// (stuffingMinFailures<=0), matching the rest of this codebase's
+		// opt-in-hardening-controls-are-internally-gated convention.
+		stuffing: newStuffingDetector(cfg.stuffingWindow, cfg.stuffingCooldown, cfg.stuffingMinFailures, cfg.stuffingMinUsers),
 	}
 	wa, err := webauthn.New(&webauthn.Config{
 		RPDisplayName: cfg.totpIssuer,
