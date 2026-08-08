@@ -7,6 +7,9 @@ Use these documents for current operation and development:
 - [`THEME-GUIDE.md`](THEME-GUIDE.md) — shared-theme integration, update, and
   validation rules.
 - [`BACKLOG.md`](BACKLOG.md) — features deliberately deferred by the owner.
+- [`SESSION-TOKEN-BINDING-DESIGN.md`](SESSION-TOKEN-BINDING-DESIGN.md) — decided
+  direction (DPoP-style proof-of-possession) for binding session cookies to a
+  client-held key; design only, not yet implemented.
 
 Completed implementation plans, assessments, and migration guides are retained
 under [`archive/`](archive/README.md). They describe historical decisions and
