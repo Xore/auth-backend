@@ -181,6 +181,14 @@ type User struct {
 	DeviceGen     int                 `json:"device_gen,omitempty"`
 	MagicSeq      int                 `json:"magic_seq,omitempty"` // magic-link single-use counter
 	History       []loginRecord       `json:"history,omitempty"`   // recent successful logins, for risk scoring
+	// PasswordHistory holds the Argon2id hashes of the user's most recent
+	// PREVIOUS passwords (the current password is Hash, not duplicated
+	// here), newest first, capped at config's passwordHistoryCount (#63).
+	// Always Argon2id regardless of what Hash itself currently is: every
+	// entry was written by hashPassword at the moment it stopped being the
+	// live password, and hashPassword only ever produces Argon2id -- a
+	// legacy bcrypt Hash (pre-upgrade) never ends up here.
+	PasswordHistory []string `json:"password_history,omitempty"`
 }
 
 // loginRecord is one successful sign-in, kept (capped) for risk-based
@@ -773,6 +781,48 @@ func validatePassword(pw string) error {
 		return fmt.Errorf("must not exceed %d bytes when UTF-8 encoded", maxPasswordBytes)
 	}
 	return nil
+}
+
+// passwordWasUsedBefore reports whether pw matches the user's current
+// password or any retained previous one (#63). Checked against Hash with
+// the same bcrypt-or-Argon2id awareness checkPassword uses (Hash can still
+// be a legacy bcrypt hash for a user who hasn't logged in since the
+// Argon2id upgrade shipped); PasswordHistory entries are always Argon2id
+// (see the field's own doc comment), so those go straight to
+// verifyArgon2id. Every comparison runs regardless of an early match --
+// short-circuiting on the first hit would make how many prior passwords
+// exist observable via timing, the same reasoning this codebase's other
+// constant-time credential checks already document.
+func passwordWasUsedBefore(pw string, u *User) bool {
+	found := false
+	if looksLikeBcrypt(u.Hash) {
+		if bcrypt.CompareHashAndPassword([]byte(u.Hash), []byte(pw)) == nil {
+			found = true
+		}
+	} else if ok, _ := verifyArgon2id(pw, u.Hash); ok {
+		found = true
+	}
+	for _, h := range u.PasswordHistory {
+		if ok, _ := verifyArgon2id(pw, h); ok {
+			found = true
+		}
+	}
+	return found
+}
+
+// recordPasswordHistory prepends the hash a password change is about to
+// replace (not the new one) and trims to keep. keep<=0 clears/disables
+// history entirely -- an operator turning PASSWORD_HISTORY_COUNT off is
+// choosing not to retain this data, not just to stop checking it.
+func recordPasswordHistory(u *User, replacedHash string, keep int) {
+	if keep <= 0 {
+		u.PasswordHistory = nil
+		return
+	}
+	u.PasswordHistory = append([]string{replacedHash}, u.PasswordHistory...)
+	if len(u.PasswordHistory) > keep {
+		u.PasswordHistory = u.PasswordHistory[:keep]
+	}
 }
 
 // --- Argon2id password hashing (PHC format) ----------------------------------

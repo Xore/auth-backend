@@ -451,10 +451,19 @@ func (s *server) recoverReset(w http.ResponseWriter, r *http.Request, n string) 
 	// Consume under the store lock: re-verify the fingerprint against the
 	// live record and apply the new hash in the same critical section.
 	// Bumping the generations invalidates every session and device cookie.
+	// #63: reused is a separate signal from applied -- a reused-password
+	// rejection must not show "link invalid or expired", which would be
+	// actively misleading (the link is fine; the chosen password isn't).
+	reused := false
 	applied, err := s.users.mutateIf(username, func(u *User) bool {
 		if u.Disabled || fp != s.cfg.recoveryFP(u) {
 			return false
 		}
+		if s.cfg.passwordHistory > 0 && passwordWasUsedBefore(newPW, u) {
+			reused = true
+			return false
+		}
+		recordPasswordHistory(u, u.Hash, s.cfg.passwordHistory)
 		u.Hash = hash
 		u.MustChange = false
 		u.Gen++
@@ -466,6 +475,10 @@ func (s *server) recoverReset(w http.ResponseWriter, r *http.Request, n string) 
 	} else if err != nil {
 		s.log.Error("persist password recovery", "user", sanitizeLogField(username), "error", err)
 		http.Error(w, "authentication storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if reused {
+		s.renderRecoverReset(w, tok, "That matches a recent password — choose a different one.", n)
 		return
 	}
 	if !applied {

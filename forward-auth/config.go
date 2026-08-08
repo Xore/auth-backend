@@ -42,6 +42,7 @@ type config struct {
 	ttl               time.Duration
 	idleTimeout       time.Duration
 	maxAttempts       int
+	passwordHistory   int
 	lockout           time.Duration
 	minDwell          time.Duration
 	formTTL           time.Duration
@@ -286,6 +287,7 @@ func loadConfig(logger *slog.Logger) config {
 		ttl:               time.Duration(atoi(os.Getenv("SESSION_TTL_HOURS"), 12)) * time.Hour,
 		idleTimeout:       time.Duration(atoi(os.Getenv("IDLE_TIMEOUT_MINUTES"), 60)) * time.Minute,
 		maxAttempts:       atoi(os.Getenv("MAX_ATTEMPTS"), 5),
+		passwordHistory:   atoi(os.Getenv("PASSWORD_HISTORY_COUNT"), 5),
 		lockout:           time.Duration(atoi(os.Getenv("LOCKOUT_MINUTES"), 15)) * time.Minute,
 		minDwell:          time.Duration(atoi(os.Getenv("MIN_DWELL_SECONDS"), 2)) * time.Second,
 		formTTL:           time.Duration(atoi(os.Getenv("FORM_TTL_MINUTES"), 15)) * time.Minute,
@@ -347,6 +349,9 @@ func (c config) validate() error {
 	}
 	if c.maxAttempts < 1 {
 		problems = append(problems, "MAX_ATTEMPTS must be positive")
+	}
+	if c.passwordHistory < 0 {
+		problems = append(problems, "PASSWORD_HISTORY_COUNT must not be negative — 0 disables the check")
 	}
 	if c.lockout <= 0 {
 		problems = append(problems, "LOCKOUT_MINUTES must be positive")
