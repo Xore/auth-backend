@@ -12,13 +12,26 @@ package main
 //	gotify — {"title":…,"message":…,"priority":…}
 //
 // Failures are logged and never block the request path.
+//
+// WEBHOOK_URL is admin-configured, not user input, but that alone doesn't
+// close the SSRF vector: an admin panel is itself a target (a compromised
+// admin session, browser extension, or supply-chain-compromised dependency
+// could set this without the operator noticing), and config-time validation
+// (webhookURL's own scheme/hostname check in config.go) can't catch a host
+// that resolves to a private/loopback/link-local address, whether that's
+// deliberate or via DNS rebinding after the fact. safeDialContext below
+// enforces this at actual dial time, pinning the connection to the specific
+// IP it validated so there's no window between "checked" and "connected"
+// for a second DNS answer to slip in.
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -104,7 +117,46 @@ func newNotifier(url, provider string, log *slog.Logger) *notifier {
 	if provider == "" {
 		provider = "raw"
 	}
-	return &notifier{url: url, provider: provider, log: log, c: &http.Client{Timeout: 5 * time.Second}, sem: make(chan struct{}, 8)}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = safeDialContext(&net.Dialer{Timeout: 5 * time.Second})
+	return &notifier{url: url, provider: provider, log: log, c: &http.Client{Timeout: 5 * time.Second, Transport: transport}, sem: make(chan struct{}, 8)}
+}
+
+// disallowedWebhookIP reports whether ip must never be dialed for an
+// outbound webhook: loopback, RFC1918/link-local/private ranges, and the
+// unspecified address. This is deliberately the same class of check
+// net.IP's own IsPrivate/IsLoopback/IsLinkLocalUnicast/IsLinkLocalMulticast
+// already provide, not a hand-rolled CIDR list -- fewer places to get a
+// range wrong.
+func disallowedWebhookIP(ip net.IP) bool {
+	return ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()
+}
+
+// safeDialContext wraps base so every connection this client makes resolves
+// its own host, picks the first IP that isn't disallowedWebhookIP, and dials
+// that exact IP -- not the hostname. Resolving and dialing as one atomic
+// step (rather than "validate the URL, then let the transport resolve and
+// dial separately") closes the DNS-rebinding gap: nothing this function does
+// leaves a window where a second DNS answer, different from the one that was
+// checked, gets used for the actual connection.
+func safeDialContext(base *net.Dialer) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, err
+		}
+		ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+		if err != nil {
+			return nil, err
+		}
+		for _, ip := range ips {
+			if disallowedWebhookIP(ip) {
+				continue
+			}
+			return base.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		}
+		return nil, fmt.Errorf("webhook: %s resolves only to disallowed (private/loopback/link-local) addresses", host)
+	}
 }
 
 func (n *notifier) send(event, user, ip, host, detail string) {
