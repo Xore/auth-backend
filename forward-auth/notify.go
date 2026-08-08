@@ -41,7 +41,7 @@ type webhookPayload struct {
 // critical, abuse signals are warnings, everything else is informational.
 func severityFor(event string) string {
 	switch {
-	case event == "backup_code_used" || event == "enroll_ok":
+	case event == "backup_code_used" || event == "enroll_ok" || event == "admin_revoke_all":
 		return "critical"
 	case event == "locked_out" || event == "bad_backup_code" || strings.HasPrefix(event, "login_fail"):
 		return "warn"

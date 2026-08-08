@@ -110,6 +110,11 @@ sequenceDiagram
   create users (temporary password + forced change), disable/enable,
   delete, reset password/TOTP/passkeys, set role, hosts and email,
   lockout unlock, session revocation
+- Emergency **"Revoke all sessions"** action (System tab): force every
+  user, on every device, to re-authenticate immediately — for incident
+  response, distinct from a single user's "log out everywhere" and from
+  a `PASETO_KEY` rotation (an infrastructure change with its own deploy
+  cycle)
 - Live audit log (ring buffer + optional JSONL file), active-session and
   lockout views, system info pane
 - Webhook alerts (`raw`, `slack`, `ntfy`, `gotify`) with severity mapping

@@ -138,6 +138,77 @@ func TestAdminSecurityActionsMutateAndInvalidate(t *testing.T) {
 	}
 }
 
+// #66: revoke_all must bump every user's Gen/DeviceGen in one action,
+// including users the request itself doesn't name (unlike every other
+// action here, which targets req.Username) -- the whole point is a
+// single admin click force-logs-out everyone, not just one account.
+func TestAdminRevokeAllSessions(t *testing.T) {
+	c := testConfig(t)
+	st := newUserStore(filepath.Join(t.TempDir(), "users.json"))
+	if _, err := st.bootstrap("admin", "a-long-test-password", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"alice", "bob"} {
+		hash, err := hashPassword(name + "-original-password")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.create(&User{Username: name, Hash: hash, Role: roleUser, Gen: 1, DeviceGen: 2, Created: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s := &server{
+		cfg: c, users: st, reg: newSessionRegistry(time.Hour), tr: newThrottle(c),
+		aud: newAuditor("", 20), log: logger, ntf: newNotifier("", "raw", logger),
+	}
+
+	admin := st.get("admin")
+	cl := sessionClaims{user: "admin", gen: admin.Gen, sid: "adminsid", exp: time.Now().Add(time.Hour).Unix()}
+	r := httptest.NewRequest(http.MethodPost, "http://auth/_auth/admin/api/action", strings.NewReader(`{"action":"revoke_all"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.AddCookie(&http.Cookie{Name: c.cookieName, Value: mustIssuePASETO(t, c, cl)})
+	r.Header.Set("X-Csrf", c.csrfToken(cl.sid))
+	w := httptest.NewRecorder()
+	s.adminAction(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("revoke_all: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"changed":"3"`) {
+		t.Fatalf("revoke_all response missing changed count for all 3 users: %s", w.Body.String())
+	}
+
+	if got := st.get("admin"); got.Gen != admin.Gen+1 || got.DeviceGen != admin.DeviceGen+1 {
+		t.Fatalf("admin not bumped: Gen=%d DeviceGen=%d", got.Gen, got.DeviceGen)
+	}
+	if got := st.get("alice"); got.Gen != 2 || got.DeviceGen != 3 {
+		t.Fatalf("alice not bumped: Gen=%d DeviceGen=%d", got.Gen, got.DeviceGen)
+	}
+	if got := st.get("bob"); got.Gen != 2 || got.DeviceGen != 3 {
+		t.Fatalf("bob not bumped: Gen=%d DeviceGen=%d", got.Gen, got.DeviceGen)
+	}
+
+	// revoke_all unconditionally bumps every user on every call (unlike a
+	// hypothetical idempotent action) -- calling it twice in a row must
+	// genuinely revoke sessions twice, including the caller's own,
+	// mid-request. This exercises that the handler re-reads the caller's
+	// own fresh Gen for its own response rather than relying on a stale
+	// value from before the sweep.
+	w2 := httptest.NewRecorder()
+	cl2 := sessionClaims{user: "admin", gen: st.get("admin").Gen, sid: "adminsid2", exp: time.Now().Add(time.Hour).Unix()}
+	r2 := httptest.NewRequest(http.MethodPost, "http://auth/_auth/admin/api/action", strings.NewReader(`{"action":"revoke_all"}`))
+	r2.Header.Set("Content-Type", "application/json")
+	r2.AddCookie(&http.Cookie{Name: c.cookieName, Value: mustIssuePASETO(t, c, cl2)})
+	r2.Header.Set("X-Csrf", c.csrfToken(cl2.sid))
+	s.adminAction(w2, r2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("second revoke_all: %d %s", w2.Code, w2.Body.String())
+	}
+	if !strings.Contains(w2.Body.String(), `"changed":"3"`) {
+		t.Fatalf("second revoke_all should still bump all 3 users: %s", w2.Body.String())
+	}
+}
+
 // mutateAdminGuarded/deleteAdminGuarded must refuse to act on the sole
 // enabled admin (#43). Exercised directly against userStore rather than
 // through adminAction: the HTTP handler's separate "cannot act on yourself"

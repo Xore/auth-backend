@@ -268,6 +268,7 @@ function confirmAct(msg, action, extra) {
     reset_totp: ['Reset two-factor authentication for ' + target + '?', 'The TOTP secret and every backup code are deleted. All sessions and trusted devices are invalidated. The user must enroll again when two-factor is required.', 'Reset two-factor'],
     reset_passkeys: ['Remove all passkeys for ' + target + '?', 'Every registered passkey is deleted and all sessions and trusted devices are invalidated. Password sign-in remains available.', 'Reset passkeys'],
     logout_user: ['Log ' + target + ' out everywhere?', 'Every current session and trusted-device token for this user becomes invalid immediately. The user must authenticate again on every device.', 'Log out everywhere'],
+    revoke_all: ['Revoke every active session, right now?', 'Every signed-in user, across every device, is immediately forced to re-authenticate. This is for incident response — a suspected compromise, a leaked signing key, or any situation where you are not sure what is wrong and want everyone re-verified.', 'Revoke all sessions'],
     set_role: [(extra.role === 'admin' ? 'Promote ' : 'Demote ') + target + '?',
       extra.role === 'admin' ? 'This grants full administrator access to users, audit logs, sessions and system configuration.' : 'This removes administrator access immediately. Existing authentication sessions remain signed in as a regular user.',
       extra.role === 'admin' ? 'Promote to admin' : 'Demote to user'],
@@ -291,6 +292,7 @@ function confirmAct(msg, action, extra) {
     copy[2], function () {
       act(action, extra).then(function (j) {
         if (j.temp_password) flash('temp password for ' + esc(extra.username) + ': <b>' + esc(j.temp_password) + '</b><br>shown once — send it over a secure channel');
+        else if (action === 'revoke_all') flash((j.changed || '0') + ' user(s) force-logged-out across every device.');
         else if (doneMsgs[action]) flash(doneMsgs[action]);
       }).catch(function () { /* error already flashed by api() */ });
     });
@@ -792,7 +794,10 @@ var PANE_TEMPLATES = {
         '<span class="card__value" id="sys-passkey-count">–</span></div>' +
       '<div class="card__row"><span class="card__label">Server started</span>' +
         '<span class="card__value" id="sys-started">–</span></div>' +
-    '</div>'
+    '</div>' +
+    '<div class="card"><div class="card__title">Emergency actions</div>' +
+      '<div class="card__desc">For incident response — a suspected compromise, a leaked signing key, or any situation where every signed-in user should re-authenticate immediately.</div>' +
+      '<div class="settings-actions"><button class="btn btn-danger" data-act="revoke_all">Revoke all sessions</button></div></div>'
 };
 
 // ── pane loaders ─────────────────────────────────────────────────────────
@@ -1407,7 +1412,7 @@ document.addEventListener('click', function (e) {
   if (d.ip) extra.ip = d.ip;
   if (d.sid) extra.sid = d.sid;
   if (d.role) extra.role = d.role;
-  var sensitiveActions = ['enable', 'disable', 'delete', 'reset_password', 'reset_totp', 'reset_passkeys', 'logout_user', 'set_role', 'unlock'];
+  var sensitiveActions = ['enable', 'disable', 'delete', 'reset_password', 'reset_totp', 'reset_passkeys', 'logout_user', 'set_role', 'unlock', 'revoke_all'];
   if (d.msg || sensitiveActions.indexOf(d.act) >= 0) { confirmAct(d.msg, d.act, extra); } else { act(d.act, extra); }
 });
 
