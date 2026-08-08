@@ -61,6 +61,19 @@ func riskScore(u *User, ip, ua string, now time.Time) int {
 	return score
 }
 
+// lockoutMessage renders the user-facing rejection for a locked-out login
+// attempt. #62: a permanent (admin-unlock-only) lock has no meaningful
+// "try again in X" — d comes back as throttle.go's permanentLockRetryAfter
+// sentinel, which is deliberately large enough that showing it raw would
+// read as a nonsensical duration rather than the truth (this isn't going
+// to clear on its own).
+func lockoutMessage(d time.Duration) string {
+	if d >= permanentLockRetryAfter {
+		return "Access from this address is blocked. Contact an administrator."
+	}
+	return "Too many attempts. Try again in " + d.Round(time.Second).String() + "."
+}
+
 // --- handlers ---------------------------------------------------------------
 
 func (s *server) verify(w http.ResponseWriter, r *http.Request) {
@@ -173,7 +186,7 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if !allowed {
 		s.audit("locked_out", ip, "", r)
-		s.renderLogin(w, rd, "Too many attempts. Try again in "+d.Round(time.Second).String()+".", n)
+		s.renderLogin(w, rd, lockoutMessage(d), n)
 		return
 	}
 	if allowed, d, err := s.tr.reserve(userKey); err != nil {
@@ -182,7 +195,7 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if !allowed {
 		s.audit("locked_out", ip, "", r)
-		s.renderLogin(w, rd, "Too many attempts. Try again in "+d.Round(time.Second).String()+".", n)
+		s.renderLogin(w, rd, lockoutMessage(d), n)
 		return
 	}
 	if !s.users.checkPassword(username, r.PostForm.Get("password")) {
@@ -355,7 +368,7 @@ func (s *server) totp(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if locked {
 		s.audit("locked_out", ip, user, r)
-		s.renderVerify(w, rd, "Too many attempts. Try again in "+d.Round(time.Second).String()+".", n)
+		s.renderVerify(w, rd, lockoutMessage(d), n)
 		return
 	}
 	if locked, d, err := s.tr.locked("user:" + strings.ToLower(user)); err != nil {
@@ -364,7 +377,7 @@ func (s *server) totp(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if locked {
 		s.audit("locked_out", ip, user, r)
-		s.renderVerify(w, rd, "Too many attempts. Try again in "+d.Round(time.Second).String()+".", n)
+		s.renderVerify(w, rd, lockoutMessage(d), n)
 		return
 	}
 

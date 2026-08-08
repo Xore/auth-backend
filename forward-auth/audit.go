@@ -271,9 +271,10 @@ func (a *auditor) snapshot(n int) auditSnapshot {
 }
 
 type lockedIP struct {
-	IP    string
-	Fails int
-	Until time.Time
+	IP        string
+	Fails     int
+	Until     time.Time
+	Permanent bool `json:",omitempty"` // #62: escalated past the normal 24h-capped backoff — admin unlock only
 }
 
 func (t *throttle) snapshot() []lockedIP {
@@ -283,8 +284,13 @@ func (t *throttle) snapshot() []lockedIP {
 	t.pruneLocked(now)
 	out := []lockedIP{}
 	for ip, e := range t.m {
-		if !strings.HasPrefix(ip, "user:") && e.lockUntil.After(now) {
-			out = append(out, lockedIP{ip, e.fails, e.lockUntil})
+		if strings.HasPrefix(ip, "user:") {
+			continue
+		}
+		if e.permanent {
+			out = append(out, lockedIP{IP: ip, Fails: e.fails, Until: e.lockUntil, Permanent: true})
+		} else if e.lockUntil.After(now) {
+			out = append(out, lockedIP{IP: ip, Fails: e.fails, Until: e.lockUntil})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Fails > out[j].Fails })
