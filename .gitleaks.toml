@@ -1,0 +1,13 @@
+title = "auth-backend gitleaks config"
+
+# Layer on top of gitleaks' default ruleset rather than replacing it --
+# a config file with no [extend] block replaces every built-in rule, which
+# would silently turn off real secret detection repo-wide.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fixed test-fixture password for the local, ephemeral Playwright e2e server (forward-auth/e2e/, port 18081 only) -- not a real credential. Needed as a content-based allowlist, not just an inline gitleaks:allow comment, because gitleaks scans historical commit diffs: the commit that first introduced this string (before the gitleaks:allow comment existed) is still in every PR's scanned range."
+regexes = [
+  '''correct-horse-battery-staple-9432''',
+]
