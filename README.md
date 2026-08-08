@@ -355,6 +355,7 @@ working if their username is itself an email address.
 | Recovery token reuse | password-hash fingerprint re-checked under the store lock — atomic single use |
 | Backend outage | fail closed: 503 on auth endpoints, unverifiable sessions rejected, startup connectivity checks |
 | SMTP downgrade | STARTTLS required for `smtp://`, TLS 1.2+ for `smtps://`, explicit dev-only plaintext opt-in |
+| SSRF via `WEBHOOK_URL` | dial-time IP check (private/loopback/link-local/unspecified rejected) pinned to the exact resolved address, not just a config-time hostname check — closes the DNS-rebinding gap a check-then-dial approach leaves open |
 | Forensics | HMAC-chained (tamper-evident) JSON audit log + ring buffer, admin audit view, webhook alerts, token-gated Prometheus metrics |
 
 Real client IP is read from `CF-Connecting-IP` (Cloudflare) →
