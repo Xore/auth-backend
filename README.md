@@ -399,6 +399,7 @@ CodeQL, secret scanning and workflow linting (actionlint + zizmor).
 
 - [docs/README.md](docs/README.md) — documentation index
 - [docs/CREDENTIAL-RECOVERY.md](docs/CREDENTIAL-RECOVERY.md) — break-glass recovery runbook
+- [docs/SIEM-INTEGRATION.md](docs/SIEM-INTEGRATION.md) — shipping the audit log to an external SIEM
 - [docs/THEME-GUIDE.md](docs/THEME-GUIDE.md) — shared-theme integration
 - [docs/BACKLOG.md](docs/BACKLOG.md) — deliberately deferred work
 
