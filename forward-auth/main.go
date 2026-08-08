@@ -42,6 +42,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/go-webauthn/webauthn/metadata/providers/cached"
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
@@ -117,11 +119,32 @@ func main() {
 		// opt-in-hardening-controls-are-internally-gated convention.
 		stuffing: newStuffingDetector(cfg.stuffingWindow, cfg.stuffingCooldown, cfg.stuffingMinFailures, cfg.stuffingMinUsers),
 	}
-	wa, err := webauthn.New(&webauthn.Config{
+	waConfig := &webauthn.Config{
 		RPDisplayName: cfg.totpIssuer,
 		RPID:          cfg.authHost,
 		RPOrigins:     []string{"https://" + cfg.authHost},
-	})
+	}
+	if cfg.webauthnRequireAttestation {
+		// #64: request attestation from the authenticator and verify it
+		// against the FIDO Metadata Service trust store (known authenticator
+		// models, their certificate chains, and revocation/compromise
+		// status) instead of accepting any authenticator that merely speaks
+		// the WebAuthn protocol correctly. The cache file persists across
+		// restarts, so a live fetch from mds.fidoalliance.org is only
+		// needed once and again whenever the cached blob's own NextUpdate
+		// expires -- not on every boot.
+		mdsPath := filepath.Join(filepath.Dir(cfg.usersFile), "webauthn-mds-cache.jwt")
+		mds, err := cached.New(cached.WithPath(mdsPath), cached.WithClient(&http.Client{Timeout: 30 * time.Second}))
+		if err != nil {
+			log.Error("WEBAUTHN_REQUIRE_ATTESTATION=true but the FIDO Metadata Service blob could not be "+
+				"fetched or read from its cache — refusing to start rather than silently accepting "+
+				"unverified attestation", "path", mdsPath, "error", err)
+			os.Exit(2)
+		}
+		waConfig.MDS = mds
+		waConfig.AttestationPreference = protocol.PreferDirectAttestation
+	}
+	wa, err := webauthn.New(waConfig)
 	if err != nil {
 		log.Error("initialize passkeys", "error", err)
 		os.Exit(2)
@@ -136,7 +159,8 @@ func main() {
 	log.Info("forward-auth starting",
 		"listen", cfg.listen, "auth_host", cfg.authHost,
 		"cookie_domain", cfg.cookieDom, "users", users.count(),
-		"require_totp", cfg.requireTOTP, "trust_device_days", cfg.trustDevDays,
+		"require_totp", cfg.requireTOTP, "webauthn_require_attestation", cfg.webauthnRequireAttestation,
+		"trust_device_days", cfg.trustDevDays,
 		"secret_fp", hex.EncodeToString(sum[:4]),
 		"audit_log", cfg.auditLog, "audit_ring", cfg.ringCap,
 		"webhook", cfg.webhookURL != "", "metrics", cfg.metricsToken != "")
