@@ -33,6 +33,11 @@ type server struct {
 	startedAt    time.Time
 	recoverLimit rateLimiter
 	magicLimit   rateLimiter
+	// stuffing (#68) is always constructed in main(); disabled state lives
+	// inside it (failThreshold<=0), not as a nil server field — the nil
+	// check in audit() exists only for tests that build a bare &server{}
+	// literal without setting this, not as this codebase's own on/off switch.
+	stuffing *stuffingDetector
 }
 
 // clientIP returns the real client address. Forwarded headers are only
