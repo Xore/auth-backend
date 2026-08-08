@@ -99,10 +99,15 @@ sequenceDiagram
 - Idle-timeout enforcement (`IDLE_TIMEOUT_MINUTES`); absolute TTL
   (`SESSION_TTL_HOURS`)
 - Trusted devices (`TRUST_DEVICE_DAYS`) skip the TOTP challenge —
-  overridden by risk-based authentication
+  overridden by risk-based authentication and per-host policy
 - **Risk-based authentication**: unseen /24 (IPv4) or /64 (IPv6) subnet,
   user-agent or hour-of-day scores the login; above threshold the second
   factor is demanded even on trusted devices
+- **Per-host minimum assurance**: a per-user list of hosts that always
+  demand a fresh TOTP challenge regardless of trusted-device state,
+  independent of (and in addition to) the risk score above — e.g. an
+  admin panel that should never skip the second factor even from a
+  long-trusted, low-risk device
 - "My sessions" / trusted-device self-service pages
 
 **Admin**
@@ -350,7 +355,7 @@ working if their username is itself an email address.
 | Stolen/forged cookie | PASETO v4.local authenticated encryption + expiry; generation counters kill all sessions on password/admin reset |
 | Session theft | `HttpOnly` + `Secure` + `SameSite=Lax`, short TTL, idle timeout, per-session revocation |
 | Open redirect | post-login redirect must be `https://…<COOKIE_DOMAIN>` |
-| Weak single factor | TOTP + backup codes, passkeys, `REQUIRE_TOTP`, risk-based step-up |
+| Weak single factor | TOTP + backup codes, passkeys, `REQUIRE_TOTP`, risk-based step-up, per-host minimum assurance |
 | Token replay (TOTP) | each 30 s step accepted once; last-step persisted |
 | Recovery token reuse | password-hash fingerprint re-checked under the store lock — atomic single use |
 | Backend outage | fail closed: 503 on auth endpoints, unverifiable sessions rejected, startup connectivity checks |

@@ -83,6 +83,10 @@
           <label class="form-label" for="ue-hosts">Allowed hosts <span class="card__value">— blank = all</span></label>
           <input class="form-input" id="ue-hosts" placeholder="grafana.example.com, *.media.example.com">
         </div>
+        <div class="settings-field">
+          <label class="form-label" for="ue-totp-hosts">Always require TOTP for <span class="card__value">— blank = none; additive to the risk-based step-up, never skipped for these hosts even on a trusted device</span></label>
+          <input class="form-input" id="ue-totp-hosts" placeholder="admin.example.com">
+        </div>
       </div>
 
       <div class="user-edit-section">
@@ -447,6 +451,7 @@ function openUserEditModal(username) {
   document.getElementById('ue-email').value = u.email || '';
   document.getElementById('ue-role').value = u.role;
   document.getElementById('ue-hosts').value = (u.allowed_hosts || []).join(', ');
+  document.getElementById('ue-totp-hosts').value = (u.require_totp_hosts || []).join(', ');
   document.getElementById('ue-perm-new').value = '';
   populatePermHostSelect(u, null);
   document.getElementById('ue-security-actions').innerHTML = renderSecurityButtons(u);
@@ -529,6 +534,9 @@ function saveUserEditModal() {
 
   var hosts = document.getElementById('ue-hosts').value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
   if (hosts.slice().sort().join(',') !== (u.allowed_hosts || []).slice().sort().join(',')) jobs.push(['set_hosts', {hosts: hosts}]);
+
+  var totpHosts = document.getElementById('ue-totp-hosts').value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+  if (totpHosts.slice().sort().join(',') !== (u.require_totp_hosts || []).slice().sort().join(',')) jobs.push(['set_require_totp_hosts', {require_totp_hosts: totpHosts}]);
 
   var permHost = currentPermHost();
   if (permHost) {

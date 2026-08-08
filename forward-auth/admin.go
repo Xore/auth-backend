@@ -59,21 +59,22 @@ func jsonErr(w http.ResponseWriter, msg string) {
 
 // adminUserView is a User with secrets stripped for the panel.
 type adminUserView struct {
-	Username     string              `json:"username"`
-	DisplayName  string              `json:"display_name"`
-	Description  string              `json:"description"`
-	Role         string              `json:"role"`
-	Email        string              `json:"email"`
-	Disabled     bool                `json:"disabled"`
-	MustChange   bool                `json:"must_change"`
-	TOTPEnrolled bool                `json:"totp_enrolled"`
-	BackupCodes  int                 `json:"backup_codes"`
-	AllowedHosts []string            `json:"allowed_hosts"`
-	Permissions  map[string][]string `json:"permissions"`
-	Created      time.Time           `json:"created"`
-	LastLogin    time.Time           `json:"last_login"`
-	LastIP       string              `json:"last_ip"`
-	Passkeys     int                 `json:"passkeys"`
+	Username         string              `json:"username"`
+	DisplayName      string              `json:"display_name"`
+	Description      string              `json:"description"`
+	Role             string              `json:"role"`
+	Email            string              `json:"email"`
+	Disabled         bool                `json:"disabled"`
+	MustChange       bool                `json:"must_change"`
+	TOTPEnrolled     bool                `json:"totp_enrolled"`
+	BackupCodes      int                 `json:"backup_codes"`
+	AllowedHosts     []string            `json:"allowed_hosts"`
+	RequireTOTPHosts []string            `json:"require_totp_hosts"`
+	Permissions      map[string][]string `json:"permissions"`
+	Created          time.Time           `json:"created"`
+	LastLogin        time.Time           `json:"last_login"`
+	LastIP           string              `json:"last_ip"`
+	Passkeys         int                 `json:"passkeys"`
 }
 
 func (s *server) adminState(w http.ResponseWriter, r *http.Request) {
@@ -89,6 +90,10 @@ func (s *server) adminState(w http.ResponseWriter, r *http.Request) {
 		if hosts == nil {
 			hosts = []string{}
 		}
+		totpHosts := u.RequireTOTPHosts
+		if totpHosts == nil {
+			totpHosts = []string{}
+		}
 		perms := u.Permissions
 		if perms == nil {
 			perms = map[string][]string{}
@@ -97,7 +102,7 @@ func (s *server) adminState(w http.ResponseWriter, r *http.Request) {
 			Username: u.Username, DisplayName: u.DisplayName, Description: u.Description,
 			Role: u.Role, Email: u.Email, Disabled: u.Disabled,
 			MustChange: u.MustChange, TOTPEnrolled: u.TOTPSecret != "",
-			BackupCodes: len(u.BackupCodes), AllowedHosts: hosts, Permissions: perms,
+			BackupCodes: len(u.BackupCodes), AllowedHosts: hosts, RequireTOTPHosts: totpHosts, Permissions: perms,
 			Created: u.Created, LastLogin: u.LastLogin, LastIP: u.LastIP,
 			Passkeys: len(u.Passkeys),
 		})
@@ -179,18 +184,19 @@ func (s *server) adminAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Action      string   `json:"action"`
-		Username    string   `json:"username"`
-		Role        string   `json:"role"`
-		Email       string   `json:"email"`
-		Hosts       []string `json:"hosts"`
-		IP          string   `json:"ip"`
-		SID         string   `json:"sid"`
-		NewUsername string   `json:"new_username"`
-		DisplayName string   `json:"display_name"`
-		Description string   `json:"description"`
-		Host        string   `json:"host"`
-		Permissions []string `json:"permissions"`
+		Action           string   `json:"action"`
+		Username         string   `json:"username"`
+		Role             string   `json:"role"`
+		Email            string   `json:"email"`
+		Hosts            []string `json:"hosts"`
+		RequireTOTPHosts []string `json:"require_totp_hosts"`
+		IP               string   `json:"ip"`
+		SID              string   `json:"sid"`
+		NewUsername      string   `json:"new_username"`
+		DisplayName      string   `json:"display_name"`
+		Description      string   `json:"description"`
+		Host             string   `json:"host"`
+		Permissions      []string `json:"permissions"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.maxBodyBytes)
 	dec := json.NewDecoder(r.Body)
@@ -324,6 +330,17 @@ func (s *server) adminAction(w http.ResponseWriter, r *http.Request) {
 		done(nil)
 	case "set_hosts":
 		if err := s.users.mutate(req.Username, func(u *User) bool { u.AllowedHosts = req.Hosts; return true }); err != nil {
+			jsonErr(w, err.Error())
+			return
+		}
+		done(nil)
+	case "set_require_totp_hosts":
+		// #67: no TOTPSecret requirement enforced here -- setting this for a
+		// password-only or passkey-only user is a harmless no-op (the login
+		// path's own `u.TOTPSecret != ""` guard already covers that), not
+		// worth refusing and adding friction to a config an admin might
+		// reasonably set in advance of enrollment.
+		if err := s.users.mutate(req.Username, func(u *User) bool { u.RequireTOTPHosts = req.RequireTOTPHosts; return true }); err != nil {
 			jsonErr(w, err.Error())
 			return
 		}
