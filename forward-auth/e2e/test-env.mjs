@@ -5,6 +5,6 @@
 export const PORT = 18081;
 export const BASE_URL = `http://127.0.0.1:${PORT}`;
 export const TEST_USERNAME = "admin";
-export const TEST_PASSWORD = "correct-horse-battery-staple-9432";
+export const TEST_PASSWORD = "correct-horse-battery-staple-9432"; // gitleaks:allow -- fixed test-fixture password for the local e2e server only, not a real credential
 // RFC 4648 base32, 20 bytes -- picked once, fixed, not a real secret.
 export const TEST_TOTP_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";

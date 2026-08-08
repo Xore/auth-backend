@@ -17,7 +17,7 @@ const path = require("node:path");
 const PORT = 18081;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const TEST_USERNAME = "admin";
-const TEST_PASSWORD = "correct-horse-battery-staple-9432";
+const TEST_PASSWORD = "correct-horse-battery-staple-9432"; // gitleaks:allow -- fixed test-fixture password for the local e2e server only, not a real credential
 const TEST_TOTP_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
 
 const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
