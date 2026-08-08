@@ -42,6 +42,7 @@ type config struct {
 	ttl               time.Duration
 	idleTimeout       time.Duration
 	maxAttempts       int
+	permaLockCycles   int // #62: 0 disables; escalate to admin-unlock-only after this many lockout cycles
 	passwordHistory   int
 	lockout           time.Duration
 	minDwell          time.Duration
@@ -287,6 +288,7 @@ func loadConfig(logger *slog.Logger) config {
 		ttl:               time.Duration(atoi(os.Getenv("SESSION_TTL_HOURS"), 12)) * time.Hour,
 		idleTimeout:       time.Duration(atoi(os.Getenv("IDLE_TIMEOUT_MINUTES"), 60)) * time.Minute,
 		maxAttempts:       atoi(os.Getenv("MAX_ATTEMPTS"), 5),
+		permaLockCycles:   atoi(os.Getenv("PERMANENT_LOCKOUT_AFTER_CYCLES"), 0),
 		passwordHistory:   atoi(os.Getenv("PASSWORD_HISTORY_COUNT"), 5),
 		lockout:           time.Duration(atoi(os.Getenv("LOCKOUT_MINUTES"), 15)) * time.Minute,
 		minDwell:          time.Duration(atoi(os.Getenv("MIN_DWELL_SECONDS"), 2)) * time.Second,
@@ -352,6 +354,18 @@ func (c config) validate() error {
 	}
 	if c.passwordHistory < 0 {
 		problems = append(problems, "PASSWORD_HISTORY_COUNT must not be negative — 0 disables the check")
+	}
+	if c.permaLockCycles < 0 {
+		problems = append(problems, "PERMANENT_LOCKOUT_AFTER_CYCLES must not be negative — 0 disables the escalation")
+	}
+	// #62: only the in-memory throttle backend implements cycle-counting
+	// escalation today (throttle.go's entry.cycles) -- the Redis backend
+	// (redis.go) still uses its original Lua-scripted fail/lock logic with
+	// no cycle counter or permanent-lock key. Refusing to start with both
+	// set is a deliberate fail-loud choice over silently no-op'ing the
+	// escalation an operator explicitly asked for.
+	if c.permaLockCycles > 0 && c.redisURL != "" {
+		problems = append(problems, "PERMANENT_LOCKOUT_AFTER_CYCLES is not yet supported together with REDIS_URL — leave it at 0 (disabled) or run without Redis")
 	}
 	if c.lockout <= 0 {
 		problems = append(problems, "LOCKOUT_MINUTES must be positive")

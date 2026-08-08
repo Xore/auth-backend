@@ -1032,9 +1032,12 @@ function loadAdminLogs() {
   var lb = document.getElementById('admin-locked-body');
   if (lb) {
     lb.innerHTML = locked.length ? locked.map(function (l) {
+      var until = l.Permanent
+        ? '<span class="badge badge--red" title="Escalated after repeated lockout cycles — clears only via unlock, never on a timer">permanent</span>'
+        : ts(l.Until);
       return '<tr><td class="cell-mono">' + esc(l.IP) + '</td>' +
         '<td class="cell-mono">' + l.Fails + '</td>' +
-        '<td class="cell-mono">' + ts(l.Until) + '</td>' +
+        '<td class="cell-mono">' + until + '</td>' +
         '<td><button class="btn btn-secondary btn-sm" data-act="unlock" data-ip="' + esc(l.IP) + '">unlock</button></td></tr>';
     }).join('') : '<tr><td colspan="4" class="empty-row">nothing locked out</td></tr>';
   }
