@@ -1,0 +1,104 @@
+:root {
+  color-scheme: dark;
+}
+
+body,
+.login-pf body,
+.pf-v5-c-background-image {
+  background: var(--app-bg);
+  color: var(--text-primary);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.pf-v5-c-login__container {
+  align-items: center;
+  min-height: 100vh;
+  padding: var(--space-xl);
+}
+
+.pf-v5-c-login__main {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-dialog);
+  box-shadow: var(--shadow-dialog);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+.pf-v5-c-login__main-header,
+.pf-v5-c-login__main-body,
+.pf-v5-c-login__main-footer {
+  background: transparent;
+}
+
+.pf-v5-c-title,
+.pf-v5-c-form__label,
+.pf-v5-c-check__label {
+  color: var(--text-primary);
+}
+
+a {
+  color: var(--text-link);
+}
+
+a:hover {
+  color: var(--text-link-hover);
+}
+
+.pf-v5-c-form-control {
+  background: var(--surface-1);
+  border-color: var(--border-strong);
+  border-radius: var(--radius-control);
+  color: var(--text-primary);
+}
+
+.pf-v5-c-form-control:focus-within {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--border-focus) 22%, transparent);
+}
+
+.pf-v5-c-button {
+  border-radius: var(--radius-control);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.pf-v5-c-button.pf-m-primary {
+  background: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.pf-v5-c-button.pf-m-primary:hover,
+.pf-v5-c-button.pf-m-primary:focus-visible {
+  background: var(--accent-hover);
+}
+
+.pf-v5-c-alert.pf-m-danger {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  color: var(--danger-text-on-soft);
+}
+
+#kc-header-wrapper {
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
+
+@media (max-width: 640px) {
+  .pf-v5-c-login__container {
+    padding: var(--space-md);
+  }
+
+  .pf-v5-c-login__main {
+    border-radius: var(--radius-panel);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
