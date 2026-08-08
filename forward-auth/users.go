@@ -168,6 +168,13 @@ type User struct {
 	BackupCodes  []string `json:"backup_codes,omitempty"` // sha256 hex, removed on use
 	Gen          int      `json:"gen"`                    // bump to kill all sessions
 	AllowedHosts []string `json:"allowed_hosts,omitempty"`
+	// RequireTOTPHosts (#67) is additive to AllowedHosts, not a replacement:
+	// same pattern syntax ("*", "*.dom", exact host), but an empty list
+	// means no extra requirement (the opposite default from AllowedHosts'
+	// own empty-means-everything). A host matching here always demands a
+	// fresh TOTP challenge regardless of trusted-device state, on top of
+	// (never instead of) the existing risk-based step-up.
+	RequireTOTPHosts []string `json:"require_totp_hosts,omitempty"`
 	// Permissions carries opaque, consumer-app-defined capability strings
 	// per host, deny-by-default: an absent host key or absent string grants
 	// nothing beyond whatever the coarse Role already gives a consumer.
@@ -217,18 +224,13 @@ func (u *User) WebAuthnCredentials() []webauthn.Credential {
 	return out
 }
 
-// hostAllowed reports whether this user may access the given
-// X-Forwarded-Host. An empty list or "*" means everything; "*.dom" matches
-// any subdomain of dom (but not dom itself); anything else is an exact match.
-func (u *User) hostAllowed(host string) bool {
-	host = normalizeHost(host)
-	if host == "" {
-		return false
-	}
-	if len(u.AllowedHosts) == 0 {
-		return true
-	}
-	for _, pat := range u.AllowedHosts {
+// hostMatchesAny reports whether host matches any of patterns ("*" matches
+// everything, "*.dom" matches any subdomain of dom but not dom itself,
+// anything else is an exact match). The shared core hostAllowed and
+// hostRequiresTOTP (#67) both need — what differs between them is the
+// empty-list default, which each applies on top of this.
+func hostMatchesAny(host string, patterns []string) bool {
+	for _, pat := range patterns {
 		pat = strings.ToLower(strings.TrimSpace(pat))
 		if !strings.HasPrefix(pat, "*.") && pat != "*" {
 			pat = normalizeHost(pat)
@@ -243,6 +245,31 @@ func (u *User) hostAllowed(host string) bool {
 		}
 	}
 	return false
+}
+
+// hostAllowed reports whether this user may access the given
+// X-Forwarded-Host. An empty list means everything is allowed.
+func (u *User) hostAllowed(host string) bool {
+	host = normalizeHost(host)
+	if host == "" {
+		return false
+	}
+	if len(u.AllowedHosts) == 0 {
+		return true
+	}
+	return hostMatchesAny(host, u.AllowedHosts)
+}
+
+// hostRequiresTOTP reports whether host is in this user's RequireTOTPHosts
+// list (#67). Unlike hostAllowed, an empty list means nothing extra is
+// required — this is additive to the existing risk-based step-up, not a
+// second access-control gate with its own default-everything posture.
+func (u *User) hostRequiresTOTP(host string) bool {
+	host = normalizeHost(host)
+	if host == "" || len(u.RequireTOTPHosts) == 0 {
+		return false
+	}
+	return hostMatchesAny(host, u.RequireTOTPHosts)
 }
 
 type userStore struct {

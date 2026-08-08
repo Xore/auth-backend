@@ -221,6 +221,21 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		s.audit("rba_totp_required", ip, username, r)
 		trusted = false
 	}
+	// #67: a per-user, per-host policy that always demands a fresh
+	// challenge regardless of trusted-device state — additive to (checked
+	// independently of, never instead of) the risk score above. rd is
+	// already a fully-qualified https:// URL by the time it reaches here
+	// (safeRedirect either resolves it to one or falls back to
+	// https://authHost/auth/app), so its own Host is the target the user is
+	// actually trying to reach — the same effective signal /_auth/verify's
+	// own X-Forwarded-Host carries on the forwardAuth path, which isn't
+	// present on this direct request to the login page itself.
+	if trusted && u.TOTPSecret != "" {
+		if target, err := url.Parse(rd); err == nil && u.hostRequiresTOTP(target.Host) {
+			s.audit("host_totp_required", ip, username, r)
+			trusted = false
+		}
+	}
 	if u.TOTPSecret != "" && !trusted {
 		// password OK — the second factor happens on the verify page,
 		// gated by a short-lived pending cookie
