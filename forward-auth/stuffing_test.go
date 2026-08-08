@@ -122,3 +122,31 @@ func TestAuditNilStuffingDoesNotPanic(t *testing.T) {
 	r := httptest.NewRequest("POST", "http://auth/_auth/login", nil)
 	s.audit("login_fail:bad_credentials", "203.0.113.1", "someone", r)
 }
+
+// #69: a fired stuffing alert must land in the durable audit trail, not
+// only go out as a transient webhook -- same treatment locked_out already
+// gets, and the only way a SIEM ingesting the JSONL audit log (rather than
+// subscribing to the webhook stream) ever sees this signal at all.
+func TestStuffingAlertIsWrittenToAuditTrail(t *testing.T) {
+	c := testConfig(t)
+	s := &server{
+		cfg: c, aud: newAuditor("", 50), log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		ntf:      newNotifier("", "raw", slog.Default()),
+		stuffing: newStuffingDetector(10*time.Minute, 15*time.Minute, 5, 2),
+	}
+	r := httptest.NewRequest("POST", "http://auth/_auth/login", nil)
+	users := []string{"alice", "bob"}
+	for i := 0; i < 5; i++ {
+		s.audit("login_fail:bad_credentials", "203.0.113.1", users[i%2], r)
+	}
+	snap := s.aud.snapshot(50)
+	found := false
+	for _, e := range snap.Recent {
+		if e.Event == "credential_stuffing_suspected" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("credential_stuffing_suspected not found in audit snapshot: %+v", snap.Recent)
+	}
+}

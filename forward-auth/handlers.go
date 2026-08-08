@@ -690,8 +690,17 @@ func (s *server) audit(event, ip, user string, r *http.Request) {
 	// see fail()/failAfterReserve(), the only two callers that audit it.
 	if s.stuffing != nil && strings.HasPrefix(event, "login_fail") {
 		if alert, fails, users := s.stuffing.record(user); alert {
-			s.ntf.send("credential_stuffing_suspected", "", ip, s.cfg.authHost,
-				fmt.Sprintf("%d failed logins across %d distinct usernames in the configured window", fails, users))
+			detail := fmt.Sprintf("%d failed logins across %d distinct usernames in the configured window", fails, users)
+			s.ntf.send("credential_stuffing_suspected", "", ip, s.cfg.authHost, detail)
+			// Also written to the audit trail, not just fired as a
+			// transient webhook -- same "both, not just the webhook"
+			// treatment locked_out already gets a few lines up the call
+			// stack (fail()/failAfterReserve()), so a SIEM ingesting the
+			// JSONL audit log (not just the webhook stream) still sees
+			// this. "credential_stuffing_suspected" doesn't itself start
+			// with "login_fail", so this recursive call cannot re-enter
+			// the branch above.
+			s.audit("credential_stuffing_suspected", ip, "", r)
 		}
 	}
 }
