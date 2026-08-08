@@ -31,6 +31,8 @@ version changes.
   screen-reader labels, and useful error states.
 - Never hide or weaken the mandatory MFA enrollment flow.
 
-Before merging, test login, first-login TOTP enrollment, recovery codes,
-invalid credentials, password reset, logout, and the admin-host login at mobile
-and desktop widths against APIARY's pinned Keycloak image.
+Before merging, test login, first-login password replacement and TOTP
+enrollment, invalid credentials, password reset, logout, and the admin-host
+login at mobile and desktop widths against APIARY's pinned Keycloak image.
+The pinned runtime does not expose a recovery-code required-action factory;
+account recovery is an administrator-driven credential reset.

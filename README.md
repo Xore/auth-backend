@@ -17,11 +17,8 @@ backups, and Traefik routes are owned by
 APIARY mounts `themes/apiary` read-only into
 `/opt/keycloak/themes/apiary`. No image is built by this repository.
 
-## Archived former implementation
-
-The original pre-Keycloak service is preserved in the archived
-[`Xore/before-keycloak`](https://github.com/Xore/before-keycloak) repository.
-Operational migration drafts are intentionally not retained in this public
-theme repository.
+There is no legacy runtime or fallback deployment. Operational configuration,
+realm policy, secrets, and migration material are intentionally absent from
+this public presentation-only repository.
 
 See [docs/THEME-GUIDE.md](docs/THEME-GUIDE.md) before changing theme assets.
