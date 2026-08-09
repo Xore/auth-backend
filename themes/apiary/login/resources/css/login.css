@@ -122,6 +122,16 @@ html, body, #keycloak-bg {
   letter-spacing: -.025em;
   line-height: 1.15;
 }
+/* login-oauth-grant.ftl (consent) is the only page/state in this realm that
+   puts its own markup (a <p>, plus an optional client-logo <img>) inside
+   #kc-page-title instead of plain text -- template.ftl's own <h1> wraps it
+   either way. Without this, the vendored xore-theme.css's generic
+   `p { color: var(--text-secondary) }` rule wins over the inherited h1
+   color (element selector beats inheritance), rendering the consent title
+   muted instead of matching every other page's title treatment (#106,
+   confirmed live). */
+#kc-page-title p { margin: 0; color: inherit; }
+#kc-page-title img { display: block; max-height: 40px; margin: 0 0 12px; }
 
 .pf-v5-c-form { gap: 16px; }
 .pf-v5-c-form__group { margin: 0 0 16px; }
@@ -161,6 +171,33 @@ html, body, #keycloak-bg {
 .pf-v5-c-button.pf-m-primary { border-color: var(--accent); background: var(--accent); color: var(--text-on-accent); }
 .pf-v5-c-button.pf-m-primary:hover, .pf-v5-c-button.pf-m-primary:focus-visible { border-color: var(--accent-hover); background: var(--accent-hover); }
 .pf-v5-c-button.pf-m-control { border: 1px solid var(--border-strong); background: var(--surface-1); color: var(--text-secondary); }
+/* kcButtonSecondaryClass -- consent's "No", WebAuthn's "Cancel" AIA button,
+   template.ftl's own "Try another way"/"Switch organization" links. Without
+   this, these fall through to keycloak.v2's own PatternFly secondary
+   treatment (a blue outline button unrelated to this theme's palette,
+   #106 -- confirmed live via the consent screen, the only page in the
+   pinned realm that reaches this class without also being gated behind a
+   flow this realm doesn't use).
+   PatternFly's secondary button paints its visible border on a `::after`
+   pseudo-element and reads fill/text color through its own CSS custom
+   properties, not the element's own `border`/`background`/`color` --
+   setting those directly (like the .pf-m-primary rule above, which works
+   because its shorthand `background` happens to stomp the equivalent
+   indirection) is a no-op here. Overriding the actual custom-property
+   chain PatternFly's own vendor CSS reads from is the only thing that
+   visibly changes this button (confirmed live: the plain-property version
+   of this rule rendered with zero visual effect). */
+.pf-v5-c-button.pf-m-secondary {
+  --pf-v5-c-button--m-secondary--BackgroundColor: var(--surface-1);
+  --pf-v5-c-button--m-secondary--Color: var(--text-secondary);
+  --pf-v5-c-button--m-secondary--after--BorderColor: var(--border-strong);
+  --pf-v5-c-button--m-secondary--hover--BackgroundColor: var(--surface-2);
+  --pf-v5-c-button--m-secondary--hover--Color: var(--text-primary);
+  --pf-v5-c-button--m-secondary--hover--after--BorderColor: var(--border-strong);
+  --pf-v5-c-button--m-secondary--focus--BackgroundColor: var(--surface-2);
+  --pf-v5-c-button--m-secondary--focus--Color: var(--text-primary);
+  --pf-v5-c-button--m-secondary--focus--after--BorderColor: var(--border-focus);
+}
 .pf-v5-c-button:active { transform: translateY(1px); }
 
 a { color: var(--text-link); text-underline-offset: 3px; }
@@ -220,6 +257,42 @@ a:hover { color: var(--text-link-hover); }
   letter-spacing: .03em;
   word-break: break-all;
 }
+
+/* select-authenticator.ftl (only reachable through "Try another way" when a
+   user has 2+ applicable credential types -- not enabled in the real
+   realm's browser flow today, see keycloak.lock's own
+   historical_reference_provenance note) and webauthn-authenticate.ftl's own
+   optional multi-credential list share this exact markup
+   (kcSelectAuthListClass etc, theme.properties). keycloak.v2 ships it as a
+   plain white PatternFly data-list with no dark-theme awareness at all --
+   confirmed live: an unstyled card floats on this theme's dark surface with
+   barely-legible muted-on-white headline text (#106). Styled to match this
+   theme's existing list-row idiom (card__row/dropdown__item). The `!important`
+   on kcSelectAuthListItemHeadingClass/-DescriptionClass is required for the
+   same reason #kc-header-wrapper's is: PatternFly's own utility classes
+   (pf-v5-u-color-200 etc, baked into kcSelectAuthListItemSubtitleClass et al)
+   set `color` with a specificity/`!important` this can't otherwise beat. */
+.pf-v5-c-data-list.select-auth-container {
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-panel);
+  background: var(--surface-1);
+}
+.pf-v5-c-data-list__item.pf-m-clickable { border-bottom: 1px solid var(--border-subtle); background: transparent; }
+.pf-v5-c-data-list__item.pf-m-clickable:last-child { border-bottom: 0; }
+.select-auth-box-parent {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.select-auth-box-parent:hover, .select-auth-box-parent:focus-visible { background: var(--surface-2); outline: none; }
+.pf-v5-c-data-list__cell.pf-m-icon { color: var(--text-secondary) !important; }
+.select-auth-box-headline { margin: 0; color: var(--text-primary) !important; font-size: 14px; font-weight: 600; }
+.select-auth-box-desc, .pf-v5-c-data-list__cell.select-auth-box-desc { color: var(--text-secondary) !important; font-size: 12px; }
+.pf-v5-c-data-list__item-action, .pf-v5-c-data-list__item-action .fa-angle-right { color: var(--text-muted) !important; }
 
 #kc-social-providers::before {
   content: "";

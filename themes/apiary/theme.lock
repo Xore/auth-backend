@@ -1,6 +1,6 @@
 repository=https://github.com/Xore/theme
-commit=0f5ff9d3355506ed393b031ccf807f683ab1892a
-date=2026-08-08T19:34:49Z
+commit=f4a739669086ee56aa0690a0cbd8b699fe146df5
+date=2026-08-09T08:31:00+02:00
 source=theme.min.css
 # Local patch (#102): upstream's theme.min.css opens with
 # `@import url("https://fonts.googleapis.com/...")`, pulling the Fira Sans/
@@ -23,5 +23,5 @@ source=theme.min.css
 # actually committed here and what CI's "Verify pinned Xore theme"
 # step checks against -- re-run the same @import-stripping process after
 # any future re-sync from upstream, don't just copy the new file in raw.
-upstream_sha256=8233f2565dc5238b1c44407248b711ddaab1a062a19458ebaf1953fc2859c4e2
-sha256=4eee9451dddf08bb8416a5be1f4daa8e3a18c5715499a090a7dbb9e1eb8327e2
+upstream_sha256=5646a0ad18665d337ff85ada62a5faf98e8ce75c372c38673ce13fca266cff82
+sha256=91eb4c9b275646c93a721309b8687590c026e7b57aa526acd29ed62b1a329c54

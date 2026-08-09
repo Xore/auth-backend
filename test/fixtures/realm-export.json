@@ -14,7 +14,22 @@
   "bruteForceProtected": true,
   "editUsernameAllowed": false,
   "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA256",
+  "otpPolicyInitialCounter": 0,
+  "otpPolicyDigits": 6,
+  "otpPolicyLookAheadWindow": 1,
+  "otpPolicyPeriod": 30,
+  "otpPolicyCodeReusable": false,
   "sslRequired": "none",
+  "smtpServer": {
+    "host": "mailhog",
+    "port": "1025",
+    "from": "no-reply@apiary.test",
+    "fromDisplayName": "APIARY (test)",
+    "auth": "false",
+    "ssl": "false",
+    "starttls": "false"
+  },
   "requiredActions": [
     {
       "alias": "CONFIGURE_TOTP",
@@ -23,6 +38,14 @@
       "enabled": true,
       "defaultAction": true,
       "priority": 10
+    },
+    {
+      "alias": "VERIFY_EMAIL",
+      "name": "Verify Email",
+      "providerId": "VERIFY_EMAIL",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 15
     },
     {
       "alias": "UPDATE_PASSWORD",
@@ -66,8 +89,36 @@
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": false,
       "consentRequired": false,
-      "redirectUris": ["http://127.0.0.1:8180/realms/test-apiary/theme-test-landing*"],
-      "webOrigins": ["http://127.0.0.1:8180"]
+      "redirectUris": ["http://localhost:8180/realms/test-apiary/theme-test-landing*"],
+      "webOrigins": ["http://localhost:8180"],
+      "attributes": {
+        "post.logout.redirect.uris": "+"
+      }
+    },
+    {
+      "clientId": "theme-test-consent-client",
+      "name": "Theme Test Consent Client",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "consentRequired": true,
+      "redirectUris": ["http://localhost:8180/realms/test-apiary/theme-test-landing*"],
+      "webOrigins": ["http://localhost:8180"]
+    },
+    {
+      "clientId": "theme-test-device-client",
+      "name": "Theme Test Device Client",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "consentRequired": false,
+      "attributes": {
+        "oauth2.device.authorization.grant.enabled": "true"
+      }
     }
   ],
   "users": [
@@ -80,6 +131,56 @@
         {"type": "password", "value": "test-password-only", "temporary": false}
       ],
       "requiredActions": ["CONFIGURE_TOTP"]
+    },
+    {
+      "username": "test-user-verify-email",
+      "enabled": true,
+      "email": "test-user-verify-email@example.invalid",
+      "emailVerified": false,
+      "credentials": [
+        {"type": "password", "value": "test-password-only", "temporary": false}
+      ],
+      "requiredActions": ["VERIFY_EMAIL"]
+    },
+    {
+      "username": "test-user-webauthn-register",
+      "enabled": true,
+      "email": "test-user-webauthn-register@example.invalid",
+      "emailVerified": true,
+      "credentials": [
+        {"type": "password", "value": "test-password-only", "temporary": false}
+      ],
+      "requiredActions": ["webauthn-register"]
+    },
+    {
+      "username": "test-user-consent",
+      "enabled": true,
+      "email": "test-user-consent@example.invalid",
+      "emailVerified": true,
+      "credentials": [
+        {"type": "password", "value": "test-password-only", "temporary": false}
+      ],
+      "requiredActions": []
+    },
+    {
+      "username": "test-user-multi-factor",
+      "enabled": true,
+      "email": "test-user-multi-factor@example.invalid",
+      "emailVerified": true,
+      "credentials": [
+        {"type": "password", "value": "test-password-only", "temporary": false}
+      ],
+      "requiredActions": ["CONFIGURE_TOTP", "webauthn-register"]
+    },
+    {
+      "username": "test-user-multi-factor-2",
+      "enabled": true,
+      "email": "test-user-multi-factor-2@example.invalid",
+      "emailVerified": true,
+      "credentials": [
+        {"type": "password", "value": "test-password-only", "temporary": false}
+      ],
+      "requiredActions": ["CONFIGURE_TOTP", "webauthn-register"]
     }
   ]
 }

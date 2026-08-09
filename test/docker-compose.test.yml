@@ -6,10 +6,23 @@
 # IdPs (#102's own acceptance criterion): admin credentials here are
 # throwaway, generated fresh per run, and only ever reachable on localhost.
 services:
+  # Catch-all SMTP sink so RequiredActionVerifyEmail can actually succeed --
+  # without a reachable SMTP server it throws before rendering
+  # login-verify-email.ftl's own "check your email" content at all, and
+  # falls back to the generic error.ftl "Failed to send email" page instead
+  # (found live while auditing #106). No real mail ever leaves this
+  # container; nothing here talks to the outside world.
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    ports:
+      - "127.0.0.1:8025:8025"
+
   keycloak:
     # Keep this in sync with themes/apiary/keycloak.lock's [keycloak] image+digest.
     image: quay.io/keycloak/keycloak:26.7.1@sha256:f1f1f01e472c8a78df40d8f2a49a925274eda4d3d80d5f6edbb5c880ee3c01c6
     command: ["start-dev", "--import-realm"]
+    depends_on:
+      - mailhog
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: test-only-not-a-real-secret
