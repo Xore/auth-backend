@@ -1,6 +1,10 @@
-/* APIARY Keycloak login theme. The layout deliberately mirrors
-   Xore/theme/examples/auth.html while retaining Keycloak's upstream markup
-   and behavior for every login, required-action, recovery and error state. */
+/* APIARY Keycloak login theme.
+   Shell geometry matches the historical production login (auth-backend
+   commit 3c2779a — forward-auth/ui/login.html, #104): a single quiet
+   centered surface, not the later split-screen/artwork demo layout this
+   file used to have. Keycloak's own markup and behavior (upstream
+   keycloak.v2 templates) is retained for every login, required-action,
+   recovery and error state -- only presentation is overridden here. */
 :root { color-scheme: light dark; }
 
 html, body, #keycloak-bg {
@@ -11,24 +15,14 @@ html, body, #keycloak-bg {
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-body::after {
-  content: "";
-  position: fixed;
-  z-index: 0;
-  inset: 14px 14px 14px 50%;
-  border-radius: var(--radius-dialog);
-  background: var(--artwork-bg) url("../img/auth-artwork.svg") center / cover no-repeat;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 22%, transparent);
-}
-
 .pf-v5-c-login {
-  position: relative;
-  z-index: 1;
-  width: 50%;
+  width: 100%;
   min-height: 100vh;
   background: transparent;
 }
 
+/* Historical shell: full-height canvas, brand block centered above a single
+   card, no split grid / artwork / marketing eyebrow. */
 .pf-v5-c-login__container {
   box-sizing: border-box;
   display: flex;
@@ -36,71 +30,97 @@ body::after {
   max-width: none;
   min-height: 100vh;
   flex-direction: column;
+  align-items: center;
   justify-content: center;
-  padding: 112px clamp(28px, 6vw, 88px) 56px;
+  padding: 40px 16px;
 }
 
-.pf-v5-c-login__container::before {
-  content: "SECURE ACCESS\A One sign-on for every service behind the gate.";
-  display: block;
-  width: min(100%, 520px);
-  margin: 0 auto 30px;
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: .14em;
-  line-height: 1.5;
-  white-space: pre-line;
-  text-transform: uppercase;
-}
-
-.pf-v5-c-login__container::first-line { color: var(--accent); }
-
+/* Brand block: repurposed from the old top-left corner logo into the
+   historical centered title + subtitle, 32px above the card. Unlike the
+   split-screen version this replaced, the title is Keycloak's own
+   realm-driven displayName ("APIARY"), not CSS-generated content hiding it
+   -- #98 found that the previous version hid the real header text behind
+   `color:transparent;font-size:0` and layered a hardcoded "xore//auth"
+   ::before on top, branding the page after the retired product instead of
+   APIARY. The subtitle has no Keycloak-native per-realm slot to defer to,
+   so it stays as CSS content (historical default copy, #98's content). */
 #kc-header {
-  position: absolute;
-  top: 26px;
-  left: 32px;
+  position: static;
+  margin: 0 0 32px;
   padding: 0;
+  text-align: center;
 }
 
 #kc-header-wrapper {
-  color: transparent;
+  display: block;
+  /* !important required: keycloak.v2's own styles.css sets
+     `color: var(--pf-v5-global--Color--light-100) !important` here,
+     hardcoding near-white text -- correct for its own dark-hero-image demo,
+     wrong against this theme's light-mode card-on-page-background layout.
+     Confirmed live: without !important here, the real computed color stays
+     rgb(255,255,255) regardless of --text-primary's own correct value,
+     making the title unreadable in light mode. Only !important can beat
+     another !important declaration; specificity/source-order don't apply. */
+  color: var(--text-primary) !important;
   font-family: var(--font-display);
-  font-size: 0;
-  font-weight: 650;
-  letter-spacing: -.02em;
+  font-size: clamp(2.25rem, 5vw, 3rem);
+  font-weight: 400;
+  letter-spacing: -.01em;
+  line-height: 1.15;
 }
 
-#kc-header-wrapper::before {
-  content: "xore//auth";
-  color: var(--text-primary);
-  font-size: 19px;
+#kc-header-wrapper::after {
+  content: "One sign-on for every service behind the gate.";
+  display: block;
+  max-width: 320px;
+  margin: 12px auto 0;
+  color: var(--text-secondary);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  line-height: 1.5;
 }
 
+/* Fixed theme toggle, top-right -- placement only; the interactive button
+   itself and its click/persist behavior are #103's job (progressive
+   enhancement, same as the historical page's own pre-paint dark/light
+   script). This rule is inert until that button exists in the DOM. */
+.theme-toggle {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 10;
+}
+
+/* The card: capped at 384px (historical max-w-sm), 28px padding, subtle
+   1px border, panel radius, no shadow -- not the old 520px/shadow-raised
+   dialog treatment. */
 .pf-v5-c-login__main {
   box-sizing: border-box;
-  width: min(100%, 520px);
+  width: min(100%, 384px);
   margin: 0 auto;
   overflow: hidden;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-dialog);
-  background: var(--surface-0);
-  box-shadow: var(--shadow-raised);
+  border-radius: var(--radius-panel);
+  background: var(--surface-1);
+  box-shadow: none;
   color: var(--text-primary);
 }
 
-.pf-v5-c-login__main-header { padding: 24px 24px 6px; background: transparent; }
-.pf-v5-c-login__main-body { padding: 12px 24px 24px; background: transparent; }
+.pf-v5-c-login__main-header { padding: 28px 28px 8px; background: transparent; }
+.pf-v5-c-login__main-body { padding: 12px 28px 28px; background: transparent; }
 .pf-v5-c-login__main-footer { padding: 0; background: transparent; }
 
 #kc-page-title {
   margin: 0;
   color: var(--text-primary);
   font-family: var(--font-display);
-  font-size: clamp(1.55rem, 3vw, 2.15rem);
+  font-size: clamp(1.35rem, 2.4vw, 1.6rem);
   font-weight: 540;
-  letter-spacing: -.035em;
-  line-height: 1.12;
+  letter-spacing: -.025em;
+  line-height: 1.15;
 }
 
 .pf-v5-c-form { gap: 16px; }
@@ -161,6 +181,46 @@ a:hover { color: var(--text-link-hover); }
   color: var(--text-secondary);
   font-size: 12px;
 }
+/* login-config-totp.ftl -- #100: TOTP setup is a mandatory, first-login,
+   most-hit page in this realm (CONFIGURE_TOTP is a default required
+   action), so it gets individual coverage rather than relying on the
+   general shell rules alone. Real markup/IDs confirmed against the pinned
+   Keycloak release (keycloak.lock), not guessed. */
+#kc-totp-settings {
+  margin: 0 0 16px;
+  padding-left: 20px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+#kc-totp-settings li { margin-bottom: 12px; }
+#kc-totp-supported-apps { margin: 4px 0 0; padding-left: 18px; }
+
+#kc-totp-secret-qr-code {
+  display: block;
+  width: 176px;
+  height: 176px;
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  /* QR PNGs are opaque black-on-white; a white backing card keeps them
+     scannable regardless of the surrounding dark/light theme. */
+  background: #fff;
+}
+
+#kc-totp-secret-key {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: var(--radius-control);
+  background: var(--surface-0);
+  color: var(--text-primary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  letter-spacing: .03em;
+  word-break: break-all;
+}
+
 #kc-social-providers::before {
   content: "";
   display: block;
@@ -169,27 +229,65 @@ a:hover { color: var(--text-link-hover); }
   background: var(--border-subtle);
 }
 
+/* #103's staged-login elements -- injected by xore-auth.js on top of the
+   real #username/#password fields, matching the historical credential
+   step's "signing in as X, change" affordance. Inert/never rendered if JS
+   doesn't run: both fields just show together, unstaged, which is still a
+   complete functional Keycloak form (#104's own JS-off requirement). */
+.kc-signing-in-as {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 16px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.kc-signing-in-as__who {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kc-change-username {
+  flex-shrink: 0;
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.kc-change-username:hover { color: var(--text-primary); }
+
+/* Passkey ceremony busy state (xore-auth.js), alongside Keycloak's own
+   { once: true } click handler on the same button -- visual only. */
+.kc-busy { opacity: .6; pointer-events: none; }
+
 .pf-v5-c-login__main::after {
   content: "Protected · all activity logged";
   display: block;
-  padding: 0 24px 22px;
+  padding: 0 28px 28px;
   color: var(--text-muted);
   font-size: 11px;
   text-align: center;
 }
 
-@media (max-width: 900px) {
-  body::after { display: none; }
-  .pf-v5-c-login { width: 100%; }
-  .pf-v5-c-login__container { padding: 96px 24px 40px; }
-}
-
+/* Parity viewports per #104's historical browser-suite evidence: 1440x900,
+   820x1180, 390x844, 393x852, 1920x1080, 3840x2160 -- no horizontal
+   overflow, clipping, or zero-size text at any of them. The centered
+   single-column shell needs far less breakpoint-specific rework than the
+   old split layout did; these two tiers only tighten spacing. */
 @media (max-width: 520px) {
-  #kc-header { top: 22px; left: 22px; }
-  .pf-v5-c-login__container { justify-content: flex-start; padding: 86px 14px 24px; }
-  .pf-v5-c-login__container::before { margin-bottom: 20px; }
+  .pf-v5-c-login__container { padding: 32px 14px; }
+  #kc-header { margin-bottom: 24px; }
+  #kc-header-wrapper { font-size: 2rem; }
   .pf-v5-c-login__main-header { padding: 20px 18px 5px; }
   .pf-v5-c-login__main-body { padding: 10px 18px 20px; }
+  .pf-v5-c-login__main::after { padding: 0 18px 20px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,0 +1,114 @@
+# Keycloak compatibility record (#101).
+#
+# This pins the exact upstream release this theme was validated against --
+# not `main`, which is mutable and gives no compatibility guarantee for a
+# CSS-only child theme that depends on keycloak.v2's DOM/class contract
+# (template.ftl, page templates, theme.properties). A Keycloak upgrade is
+# only "supported" once this file, and the checks in
+# .github/scripts/verify-keycloak-compat.sh, are updated together with a
+# full theme test pass -- see docs/THEME-GUIDE.md's "Keycloak upgrades"
+# section.
+#
+# Checked by .github/workflows/theme.yml on every push/PR via
+# .github/scripts/verify-keycloak-compat.sh, which re-fetches the pinned
+# tag's own files from upstream and compares hashes -- not vendored/
+# committed copies (README.md's "Do not put ... deployment scripts here"
+# boundary, and #99's own "do not copy upstream CSS locally" acceptance
+# criterion, both apply equally to not vendoring upstream FTL/CSS just to
+# hash a local copy).
+
+[keycloak]
+# The exact image APIARY deploys (Xore/APIARY's Dockge-managed
+# honeypot-keycloak stack) -- image tag plus content digest, not tag alone,
+# since a tag can be re-pushed upstream.
+image = quay.io/keycloak/keycloak:26.7.1
+digest = sha256:f1f1f01e472c8a78df40d8f2a49a925274eda4d3d80d5f6edbb5c880ee3c01c6
+# Matching keycloak/keycloak git tag and its resolved commit, for fetching
+# the exact theme source tree the digest above was built from.
+git_tag = 26.7.1
+git_commit = 73f08b397f193712b26d317210dce99898129709
+
+[upstream_files]
+# sha256 of each file as of git_tag above, fetched fresh at CI time from
+# https://raw.githubusercontent.com/keycloak/keycloak/<git_tag>/themes/src/main/resources/theme/keycloak.v2/login/<path>
+theme.properties = f5032f39aabb1e0dc940564937263fb0dfb99c534ec0a1f92dea6c4baf0e03e2
+template.ftl = 6221a3176c73a3fd67abc97076deb9cef112378ce157735a78bd865800315b37
+resources/css/styles.css = 922d21115fe10855a9652cd8c234cf0f78e72de0c55ec7c7bf790fb5bd0f042c
+
+[required_dom_hooks]
+# Every upstream ID/class login.css depends on (extracted from the
+# selectors in themes/apiary/login/resources/css/login.css). Not an
+# exhaustive list of everything template.ftl renders -- only what this
+# theme's own CSS reaches into. Re-derive with:
+#   grep -oE '#[a-zA-Z][a-zA-Z0-9_-]*|\.pf-v5-c-[a-zA-Z0-9_-]*(__[a-zA-Z0-9_-]+)?' \
+#     themes/apiary/login/resources/css/login.css | sort -u
+hooks = #kc-form-options, #kc-header, #kc-header-wrapper, #kc-info-wrapper,
+        #kc-page-title, #kc-registration, #kc-social-providers,
+        #kc-totp-secret-key, #kc-totp-secret-qr-code, #kc-totp-settings,
+        #kc-totp-supported-apps, #keycloak-bg,
+        .pf-v5-c-alert, .pf-v5-c-button, .pf-v5-c-check__label, .pf-v5-c-form,
+        .pf-v5-c-form-control, .pf-v5-c-form__group, .pf-v5-c-form__helper-text,
+        .pf-v5-c-form__label, .pf-v5-c-helper-text, .pf-v5-c-helper-text__item,
+        .pf-v5-c-input-group, .pf-v5-c-login, .pf-v5-c-login__container,
+        .pf-v5-c-login__main, .pf-v5-c-login__main-body,
+        .pf-v5-c-login__main-footer, .pf-v5-c-login__main-header
+
+[javascript_compatibility]
+# #103's interaction layer. Own file (not vendored upstream/third-party
+# code), so this is a content hash of what's actually committed, not a
+# provenance pin like [upstream_files] above -- re-derive with
+# `sha256sum themes/apiary/login/resources/js/xore-auth.js` after any edit.
+xore-auth.js = 875e62f5de85fc0dfa15028b74b8bc3f3a885aebe539465035441f4e41adbfd5
+
+# theme.properties: scripts=js/xore-auth.js -- loaded via
+# base/login/template.ftl's `<#elseif properties.scripts?has_content>`
+# branch as a plain blocking <script src=... type="text/javascript">` in
+# <head> (NOT type="module"), which is load-bearing: the pre-paint theme
+# bootstrap at the top of xore-auth.js must run synchronously before body
+# paint, the same way the historical page's own inline <head> script did.
+# If a Keycloak upgrade changes this injection point, mechanism, or
+# ordering relative to the importmap/other <head> scripts, the pre-paint
+# guarantee breaks silently (a theme flash on load), not loudly.
+
+# Real upstream DOM this file depends on (confirmed against the pinned
+# release, not guessed) -- a Keycloak upgrade that renames/restructures any
+# of these breaks xore-auth.js's staged-login or passkey-busy features
+# (fails soft: falls back to the plain unstaged form, per the module-level
+# comment in xore-auth.js itself, but is still a real regression to catch):
+#   #kc-form-login          -- login.ftl's combined username+password form
+#   #username, #password    -- field.ftl's real input IDs
+#   .pf-v5-c-form__group    -- theme.properties' kcFormGroupClass, used to
+#                               find each field's whole label+input+error
+#                               group to hide/show
+#   input[type=submit]/button[type=submit] inside #kc-form-login
+#   [aria-invalid="true"] inside password's form group -- used to detect a
+#                               server-rendered validation error and skip
+#                               staging so the error stays visible in context
+#   #authenticateWebAuthnButton -- webauthn-authenticate.ftl's real trigger
+#                               id; Keycloak's own webauthnAuthenticate.js
+#                               attaches a {once:true} click listener here
+#   #registerWebAuthn       -- webauthn-register.ftl's real trigger id,
+#                               same {once:true} pattern via webauthnRegister.js
+# xore-auth.js only adds a second, independent click listener to the two
+# WebAuthn buttons above (a visual busy state) -- it never intercepts,
+# wraps, or replaces Keycloak's own listener or its navigator.credentials
+# call, and never touches password-visibility toggling, session polling,
+# or Keycloak's own submit-protection (`onsubmit="login.disabled = true"`
+# on #kc-form-login, left completely alone).
+status = tracked
+
+[historical_reference_provenance]
+# Visual/interaction parity baseline (#104) -- independent of the runtime
+# compatibility pins above. Not a dependency to copy retired Go
+# authentication logic from (auth-backend#104's own Non-goals).
+auth_backend_commit = 3c2779a8ca03f9d6df6ba5bba0a263131a514c2b
+xore_theme_pin = e150f6b9188c0a84d397c12419e3bc75df627da7
+source_templates = forward-auth/ui/login.html, forward-auth/ui/verify.html
+viewport_contract = 1440x900, 820x1180, 390x844, 393x852, 1920x1080, 3840x2160
+
+[screenshot_baseline]
+# Last completed full visual regression baseline against the pinned
+# release above. Set by #102 once that lands; empty until then.
+completed = false
+date =
+commit =

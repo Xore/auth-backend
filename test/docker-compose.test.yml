@@ -1,0 +1,42 @@
+# Disposable Keycloak for #102's regression suite. Pinned to the exact
+# image+digest recorded in themes/apiary/keycloak.lock -- not `latest`, not
+# even the bare tag -- so a passing/failing run means something about this
+# theme against the exact release APIARY actually deploys, not whatever
+# quay.io happens to serve today. No production credentials, no external
+# IdPs (#102's own acceptance criterion): admin credentials here are
+# throwaway, generated fresh per run, and only ever reachable on localhost.
+services:
+  keycloak:
+    # Keep this in sync with themes/apiary/keycloak.lock's [keycloak] image+digest.
+    image: quay.io/keycloak/keycloak:26.7.1@sha256:f1f1f01e472c8a78df40d8f2a49a925274eda4d3d80d5f6edbb5c880ee3c01c6
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: test-only-not-a-real-secret
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      # Local dev-only cache settings (THEME-GUIDE.md's own "Keycloak
+      # upgrades" section) so theme edits are picked up without a restart
+      # across repeated local test runs -- never set in production.
+      KC_SPI_THEME_STATIC_MAX_AGE: "-1"
+      KC_SPI_THEME_CACHE_THEMES: "false"
+      KC_SPI_THEME_CACHE_TEMPLATES: "false"
+    ports:
+      - "127.0.0.1:8180:8080"
+    volumes:
+      - ../themes/apiary:/opt/keycloak/themes/apiary:ro
+      - ./fixtures/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    healthcheck:
+      # Not /health/ready: confirmed live (both locally and in CI) that it
+      # 404s on this image/mode -- Quarkus' health subsystem isn't wired up
+      # the way `KC_HEALTH_ENABLED` alone implies here, and chasing its
+      # exact management-port/dev-mode configuration wasn't worth it when
+      # what this actually needs to know is simpler and more direct: can
+      # the realm this suite tests against actually serve a request. The
+      # well-known OIDC discovery document only 200s once the realm is
+      # fully imported and Keycloak is serving real traffic, which is
+      # exactly the condition being waited for.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e 'GET /realms/test-apiary/.well-known/openid-configuration HTTP/1.1\\r\\nhost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q '200 OK'"]
+      interval: 3s
+      timeout: 5s
+      retries: 40

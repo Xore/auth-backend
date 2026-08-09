@@ -1,5 +1,27 @@
 repository=https://github.com/Xore/theme
-commit=c336905335bc511aa9bab88ff31d4407285371d5
-date=2026-08-08T19:28:53+02:00
+commit=0f5ff9d3355506ed393b031ccf807f683ab1892a
+date=2026-08-08T19:34:49Z
 source=theme.min.css
-sha256=7b8e914193483fc61830a5759ab93bffdefa04a0812a3b98ba25ec0654b90561
+# Local patch (#102): upstream's theme.min.css opens with
+# `@import url("https://fonts.googleapis.com/...")`, pulling the Fira Sans/
+# Space Grotesk/Fira Code webfonts from Google's CDN on every login page
+# load -- a real violation of this repo's own "Assets must work without a
+# CDN or runtime network fetch" deployment contract (docs/THEME-GUIDE.md),
+# and a genuine privacy leak (every visitor's IP reaches Google before
+# they've authenticated to anything). Found live by #102's own
+# no-external-requests test, not by static review.
+#
+# The @import statement has been stripped from the committed
+# xore-theme.css below (nothing else changed -- verified brace-balanced
+# and byte-identical past the import). Text falls back to each font
+# stack's next entries (system-ui/"Segoe UI" for sans, etc.) instead of
+# the exact custom webfaces; that's an accepted degradation until the
+# fonts are actually self-hosted (real follow-up work, not done here).
+#
+# upstream_sha256 is the pristine file at the commit above, for
+# provenance/drift-tracking against a future re-sync; sha256 is what's
+# actually committed here and what CI's "Verify pinned Xore theme"
+# step checks against -- re-run the same @import-stripping process after
+# any future re-sync from upstream, don't just copy the new file in raw.
+upstream_sha256=8233f2565dc5238b1c44407248b711ddaab1a062a19458ebaf1953fc2859c4e2
+sha256=4eee9451dddf08bb8416a5be1f4daa8e3a18c5715499a090a7dbb9e1eb8327e2

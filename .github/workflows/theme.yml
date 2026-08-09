@@ -20,7 +20,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          allowed='^(\.gitattributes|\.gitignore|\.gitleaks\.toml|\.github/|README\.md|docs/|themes/apiary/)'
+          allowed='^(\.gitattributes|\.gitignore|\.gitleaks\.toml|\.github/|README\.md|docs/|themes/apiary/|test/)'
           unexpected="$(git ls-files | grep -Ev "$allowed" || true)"
           if [[ -n "$unexpected" ]]; then
             printf 'Files outside the theme-only boundary:\n%s\n' "$unexpected" >&2
@@ -41,4 +41,60 @@ jobs:
           test -n "$expected"
           printf '%s  %s\n' "$expected" "$css" | sha256sum --check --strict
           grep -Fxq 'parent=keycloak.v2' themes/apiary/login/theme.properties
-          grep -Fxq 'styles=css/xore-theme.css css/login.css' themes/apiary/login/theme.properties
+          # #99: parent styles must load before Xore/APIARY overrides, not
+          # replace them -- css/styles.css is keycloak.v2's own stylesheet.
+          grep -Fxq 'styles=css/styles.css css/xore-theme.css css/login.css' themes/apiary/login/theme.properties
+      - name: Verify Keycloak compatibility record (#101)
+        shell: bash
+        run: .github/scripts/verify-keycloak-compat.sh
+
+  regression:
+    # #102: renders the theme against a real disposable Keycloak instance,
+    # pinned to keycloak.lock's exact image+digest -- no production
+    # credentials, no external IdPs (both required by #102's own
+    # acceptance criteria); the realm/users are throwaway fixtures created
+    # fresh every run.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: validate
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Start disposable Keycloak
+        working-directory: test
+        run: |
+          docker compose -f docker-compose.test.yml up -d
+          for i in $(seq 1 40); do
+            status="$(docker inspect test-keycloak-1 --format '{{.State.Health.Status}}' 2>/dev/null || echo starting)"
+            [ "$status" = "healthy" ] && exit 0
+            sleep 3
+          done
+          echo "Keycloak did not become healthy in time" >&2
+          docker logs test-keycloak-1 || true
+          exit 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install test dependencies
+        working-directory: test
+        run: npm ci
+      - name: Install Playwright browsers
+        working-directory: test
+        run: npx playwright install --with-deps chromium
+      - name: Run regression suite
+        working-directory: test
+        env:
+          CI: "true"
+        run: npx playwright test
+      - name: Upload HTML report (screenshots/diffs on failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: test/playwright-report/
+          retention-days: 14
+      - name: Stop Keycloak
+        if: always()
+        working-directory: test
+        run: docker compose -f docker-compose.test.yml down -v
