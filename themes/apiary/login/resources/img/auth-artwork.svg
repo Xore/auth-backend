@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 1200" role="img" aria-label="Abstract warm landscape with a low sun over layered dunes">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f2ead9"/><stop offset=".7" stop-color="#ecdfc6"/><stop offset="1" stop-color="#e9d8b8"/></linearGradient>
+    <radialGradient id="sun" cx=".5" cy=".45" r=".55"><stop offset="0" stop-color="#e48b6c"/><stop offset="1" stop-color="#d97757"/></radialGradient>
+    <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" stitchTiles="stitch"/><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .05 0"/></filter>
+  </defs>
+  <rect width="900" height="1200" fill="url(#sky)"/><circle cx="450" cy="585" r="168" fill="url(#sun)"/>
+  <path d="M0 742 Q225 668 450 730 T900 712 V1200 H0Z" fill="#e6c49e"/><path d="M0 850 Q270 762 530 838 T900 820 V1200 H0Z" fill="#dba67f"/><path d="M0 950 Q300 872 565 940 T900 930 V1200 H0Z" fill="#c07e5b"/><path d="M0 1052 Q330 984 630 1044 T900 1036 V1200 H0Z" fill="#6e4536"/><rect width="900" height="1200" filter="url(#grain)"/>
+</svg>

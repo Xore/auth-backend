@@ -1,7 +1,0 @@
-# Vendored Xore/theme pin. Written by scripts/sync-theme.sh, enforced by
-# scripts/check-vendored-theme.sh. forward-auth/ui/theme.css must stay
-# byte-identical to theme.css at this commit.
-repository=https://github.com/Xore/theme
-commit=e150f6b9188c0a84d397c12419e3bc75df627da7
-date=2026-08-07T09:08:37+02:00
-sha256=83b641c1a40ffc620f43783a4628af6959b6d7898d250398d4d357fe21522a0e

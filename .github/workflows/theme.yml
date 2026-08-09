@@ -1,0 +1,44 @@
+name: Theme
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Enforce presentation-only repository boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          allowed='^(\.gitattributes|\.gitignore|\.gitleaks\.toml|\.github/|README\.md|docs/|themes/apiary/)'
+          unexpected="$(git ls-files | grep -Ev "$allowed" || true)"
+          if [[ -n "$unexpected" ]]; then
+            printf 'Files outside the theme-only boundary:\n%s\n' "$unexpected" >&2
+            exit 1
+          fi
+          if find themes/apiary -type f -print0 | xargs -0 grep -IlE \
+            '(client_secret|bootstrap-admin-password|postgres-password)' | grep -q .; then
+            printf 'Possible operational secret material found in theme files\n' >&2
+            exit 1
+          fi
+      - name: Verify pinned Xore theme and Keycloak declaration
+        shell: bash
+        run: |
+          set -euo pipefail
+          lock=themes/apiary/theme.lock
+          css=themes/apiary/login/resources/css/xore-theme.css
+          expected="$(sed -n 's/^sha256=//p' "$lock")"
+          test -n "$expected"
+          printf '%s  %s\n' "$expected" "$css" | sha256sum --check --strict
+          grep -Fxq 'parent=keycloak.v2' themes/apiary/login/theme.properties
+          grep -Fxq 'styles=css/xore-theme.css css/login.css' themes/apiary/login/theme.properties

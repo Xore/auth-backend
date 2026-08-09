@@ -1,6 +1,0 @@
-tools/
-/forward-auth
-node_modules/
-test-results/
-playwright-report/
-e2e/.auth-state.json
