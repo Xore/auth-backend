@@ -41,4 +41,9 @@ jobs:
           test -n "$expected"
           printf '%s  %s\n' "$expected" "$css" | sha256sum --check --strict
           grep -Fxq 'parent=keycloak.v2' themes/apiary/login/theme.properties
-          grep -Fxq 'styles=css/xore-theme.css css/login.css' themes/apiary/login/theme.properties
+          # #99: parent styles must load before Xore/APIARY overrides, not
+          # replace them -- css/styles.css is keycloak.v2's own stylesheet.
+          grep -Fxq 'styles=css/styles.css css/xore-theme.css css/login.css' themes/apiary/login/theme.properties
+      - name: Verify Keycloak compatibility record (#101)
+        shell: bash
+        run: .github/scripts/verify-keycloak-compat.sh
