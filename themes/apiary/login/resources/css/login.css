@@ -173,6 +173,46 @@ a:hover { color: var(--text-link-hover); }
   color: var(--text-secondary);
   font-size: 12px;
 }
+/* login-config-totp.ftl -- #100: TOTP setup is a mandatory, first-login,
+   most-hit page in this realm (CONFIGURE_TOTP is a default required
+   action), so it gets individual coverage rather than relying on the
+   general shell rules alone. Real markup/IDs confirmed against the pinned
+   Keycloak release (keycloak.lock), not guessed. */
+#kc-totp-settings {
+  margin: 0 0 16px;
+  padding-left: 20px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+#kc-totp-settings li { margin-bottom: 12px; }
+#kc-totp-supported-apps { margin: 4px 0 0; padding-left: 18px; }
+
+#kc-totp-secret-qr-code {
+  display: block;
+  width: 176px;
+  height: 176px;
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  /* QR PNGs are opaque black-on-white; a white backing card keeps them
+     scannable regardless of the surrounding dark/light theme. */
+  background: #fff;
+}
+
+#kc-totp-secret-key {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: var(--radius-control);
+  background: var(--surface-0);
+  color: var(--text-primary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  letter-spacing: .03em;
+  word-break: break-all;
+}
+
 #kc-social-providers::before {
   content: "";
   display: block;
