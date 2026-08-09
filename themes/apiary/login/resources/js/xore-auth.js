@@ -155,10 +155,21 @@
           userInput.focus();
           return;
         }
+        // The form's own inline onsubmit="login.disabled = true" (Keycloak's
+        // anti-double-submit guard) already ran by this point -- it fires on
+        // every submit event regardless of preventDefault() here, since
+        // preventDefault only cancels the default navigation, not sibling
+        // handlers. Left alone, the button stays permanently disabled once
+        // the credential step appears: it was never a real submission, so
+        // nothing else re-enables it. Caught live: the Sign In button did
+        // nothing after entering a password, on every attempt.
+        submitBtn.disabled = false;
         showCredentialStep();
       }
       // Credential-step submit: Keycloak's own inline onsubmit handler
-      // (login.disabled = true) already runs via the form's own attribute.
+      // (login.disabled = true) already runs via the form's own attribute,
+      // and is the real submission this time -- left disabled until the
+      // page navigates away.
     });
 
     userInput.addEventListener("keydown", function (e) {
