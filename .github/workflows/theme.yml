@@ -44,6 +44,18 @@ jobs:
           # #99: parent styles must load before Xore/APIARY overrides, not
           # replace them -- css/styles.css is keycloak.v2's own stylesheet.
           grep -Fxq 'styles=css/styles.css css/xore-theme.css css/login.css' themes/apiary/login/theme.properties
+          # #91: the account theme vendors its own copy of the identical
+          # upstream file (Keycloak resolves theme resources per theme
+          # type, login/ and account/ can't share one file on disk) --
+          # nothing enforced these stay identical until now. Byte-diffing
+          # against login/'s already-checked copy, rather than a second
+          # independent hash, is deliberate: it catches the copy silently
+          # drifting out of sync with login/'s (and therefore with
+          # theme.lock's own pin) without hardcoding a second hash that
+          # would just be the same value duplicated.
+          cmp themes/apiary/login/resources/css/xore-theme.css themes/apiary/account/resources/css/xore-theme.css
+          grep -Fxq 'parent=keycloak.v3' themes/apiary/account/theme.properties
+          grep -Fxq 'styles=css/xore-theme.css css/account.css' themes/apiary/account/theme.properties
       - name: Verify Keycloak compatibility record (#101)
         shell: bash
         run: .github/scripts/verify-keycloak-compat.sh
