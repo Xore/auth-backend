@@ -5,10 +5,11 @@ import { defineConfig, devices } from '@playwright/test';
 // image+digest), never a mock. No production credentials, no external
 // IdPs (both required by #102's own acceptance criteria) -- the realm and
 // users are throwaway fixtures created fresh per run.
-const BASE_URL = process.env.KEYCLOAK_TEST_BASE_URL ?? 'http://127.0.0.1:8180';
+const BASE_URL = process.env.KEYCLOAK_TEST_BASE_URL ?? 'http://localhost:8180';
 
 export default defineConfig({
   testDir: './specs',
+  globalSetup: require.resolve('./global-setup.ts'),
   fullyParallel: false, // shared Keycloak instance/realm state across specs
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,

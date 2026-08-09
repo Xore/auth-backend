@@ -46,12 +46,18 @@ hooks = #kc-form-options, #kc-header, #kc-header-wrapper, #kc-info-wrapper,
         #kc-page-title, #kc-registration, #kc-social-providers,
         #kc-totp-secret-key, #kc-totp-secret-qr-code, #kc-totp-settings,
         #kc-totp-supported-apps, #keycloak-bg,
-        .pf-v5-c-alert, .pf-v5-c-button, .pf-v5-c-check__label, .pf-v5-c-form,
+        .pf-v5-c-alert, .pf-v5-c-button, .pf-v5-c-check__label,
+        .pf-v5-c-data-list, .pf-v5-c-data-list__cell, .pf-v5-c-data-list__item,
+        .pf-v5-c-data-list__item-action, .pf-v5-c-form,
         .pf-v5-c-form-control, .pf-v5-c-form__group, .pf-v5-c-form__helper-text,
         .pf-v5-c-form__label, .pf-v5-c-helper-text, .pf-v5-c-helper-text__item,
         .pf-v5-c-input-group, .pf-v5-c-login, .pf-v5-c-login__container,
         .pf-v5-c-login__main, .pf-v5-c-login__main-body,
         .pf-v5-c-login__main-footer, .pf-v5-c-login__main-header
+        # select-authenticator.ftl/webauthn-authenticate.ftl's shared
+        # kcSelectAuthListClass etc. resolve to these PatternFly data-list
+        # classes (theme.properties, keycloak.v2) -- #106 added CSS reaching
+        # into them (login.css's select-auth-container rules).
 
 [javascript_compatibility]
 # #103's interaction layer. Own file (not vendored upstream/third-party

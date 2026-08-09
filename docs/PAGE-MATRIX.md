@@ -50,19 +50,19 @@ step, since the realm never added a WebAuthn executor to a custom flow.
 | `login-config-totp.ftl` | First login for every account (`CONFIGURE_TOTP` is default-on) — one of the most-hit pages in the whole realm | Covered — styled, and now exercised end-to-end by `test/specs/login.spec.ts` (#102) against a real disposable realm | follow-on OTP presentation |
 | `login-reset-password.ftl` | "Forgot your password?" link — `resetPasswordAllowed=true` | Covered by shell rules | recovery link + compact server error |
 | `login-update-password.ftl` | `UPDATE_PASSWORD` required action, opt-in / admin-triggered | Partial | password step (reused layout) |
-| `webauthn-register.ftl` | `webauthn-register` required action, opt-in (self-service) | Gap — WebAuthn status/error tiles not styled | passkey alternative |
-| `webauthn-authenticate.ftl` | Only for accounts that have already self-registered a WebAuthn credential | Gap | passkey alternative on credential step |
-| `webauthn-error.ftl` | WebAuthn ceremony failure | Gap | compact server error |
-| `select-authenticator.ftl` | Only for an account with more than one usable credential type registered (e.g. both TOTP and WebAuthn) | Gap | not in historical baseline — new state, needs explicit design |
+| `webauthn-register.ftl` | `webauthn-register` and `webauthn-register-passwordless` required actions, both opt-in (self-service) — **Keycloak 26.7.1 has no separate `webauthn-register-passwordless.ftl`; both required actions render this one template** (confirmed against the pinned release's theme source tree, not guessed — the older two-template assumption in this row no longer applies) | Covered — verified live via a real CDP virtual-authenticator registration ceremony (#106/#107); renders correctly via the general shell rules, no bespoke CSS needed | passkey alternative |
+| `webauthn-authenticate.ftl` | Only for accounts that have already self-registered a WebAuthn credential | Covered — verified live via a real ceremony (successful and, separately, failed); shell rules plus the new select-auth-container styling (shared with `select-authenticator.ftl` below) cover it fully | passkey alternative on credential step |
+| `webauthn-error.ftl` | WebAuthn ceremony failure | Covered — verified live by deliberately failing a real ceremony (no matching credential on the authenticator); renders correctly via shell rules (danger alert, themed secondary retry link) | compact server error |
+| `select-authenticator.ftl` | Reachable via "Try another way" once an account has 2+ *applicable* ALTERNATIVE credentials in the browser flow's 2FA subflow. **The real APIARY realm has never enabled this** — Keycloak's built-in `browser` flow ships a WebAuthn Authenticator execution here but it imports `DISABLED`; only OTP Form is active, so this page is not reachable in production today (verified against a live realm-facts check, not assumed). Verified live in this repo's own disposable test realm by deliberately flipping that execution to `ALTERNATIVE` (test/global-setup.ts) — a test-only change, not a recommendation to change the production realm, which remains a separate decision for whoever owns realm config (Xore/APIARY) | Covered (styled) — was a genuine Gap: keycloak.v2 ships this as a plain white PatternFly data-list with no dark-theme awareness at all (barely-legible muted-on-white text). Now matches this theme's list/row idiom | not in historical baseline — new state, explicit design added (dark card list, matches `.dropdown__item`/`.card__row`), not just shell inheritance |
 | `login-recovery-authn-code-*.ftl` | **N/A** — recovery-codes feature not enabled on this realm/runtime | N/A | — |
 | `register.ftl` / `register-commons.ftl` | **N/A** — `registrationAllowed=false` | N/A | — |
 | `social-providers.ftl` | **N/A** — no identity providers configured | N/A | SSO-first branch + divider (dormant, CSS already present from the historical `{{if .SSOEnabled}}` mapping but currently unreachable) |
 | `link-idp-action.ftl` | **N/A** — no identity providers configured | N/A | — |
 | `terms.ftl` | **N/A** — Terms and Conditions required action not enabled | N/A | — |
-| `login-oauth-grant.ftl` (consent) | Depends on per-client consent settings — not yet cross-checked against every client in the realm export | Needs verification | — |
-| `login-oauth2-device-verify-user-code.ftl` | Depends on whether any client has device flow enabled — not yet cross-checked | Needs verification | — |
-| `oid4vc-credential-offer.ftl` | No evidence any client uses OID4VC | Needs verification, likely N/A | — |
-| Base-inherited `login-verify-email.ftl` (not in keycloak.v2's own override list, falls through to `base`) | `VERIFY_EMAIL` required action, default-on — hit on every new account | Gap — not fetched/audited this pass, inherits `base` markup only | — |
+| `login-oauth-grant.ftl` (consent) | Cross-checked against every client in the real realm export: **none set `consentRequired: true`** — N/A in production today, confirmed not assumed. Styled anyway (a test-only `theme-test-consent-client` fixture exercises it) since any future client could enable it | Covered (styled) — was a real Gap: `#kc-page-title` wraps this template's own `<p>`, and the vendored `xore-theme.css`'s generic `p { color: var(--text-secondary) }` rule beat the inherited title color; separately the "No" secondary button rendered with keycloak.v2's stock blue PatternFly outline (a `pf-m-secondary` bug shared with every secondary button on the whole theme — see below) | — |
+| `login-oauth2-device-verify-user-code.ftl` | Cross-checked: **no client has `oauth2.device.authorization.grant.enabled`** — N/A in production today, confirmed not assumed. Verified live anyway via a test-only device-flow client | Covered — renders correctly via the general shell rules already, no bespoke CSS needed | — |
+| `oid4vc-credential-offer.ftl` | Cross-checked: every real client uses `protocol: openid-connect`, none use `oid4vc` — confirmed N/A, not just assumed | N/A, confirmed | — |
+| Base-inherited `login-verify-email.ftl` (not in keycloak.v2's own override list, falls through to `base`) | `VERIFY_EMAIL` required action, default-on — hit on every new account | Covered — verified live end-to-end. The fixture realm previously had no reachable SMTP server, so `RequiredActionVerifyEmail` threw before this template ever rendered, falling back to the generic `error.ftl` "Failed to send email" page instead of its own "check your email" content — fixed by adding a mailhog sink to `test/docker-compose.test.yml` + realm `smtpServer` config. Renders correctly via shell rules once actually reachable | — |
 | Base-inherited `error.ftl` | Any unhandled auth error | Partial — shell renders, not individually audited | compact server error |
 | Base-inherited `info.ftl` | E.g. "email sent" confirmations after reset-password | Partial | compact server error / confirmation state |
 | Base-inherited `logout-confirm.ftl` | Standard logout | Partial | — |
@@ -71,30 +71,43 @@ step, since the realm never added a WebAuthn executor to a custom flow.
 
 ## What's actually done vs. still open
 
-**Done this pass**: the matrix itself (this file), confirmed against the
-real realm export rather than assumed; the shell/branding work from #104
-and #98 covers every row via the general `.pf-v5-c-login*`/`#kc-*` rules
-(nothing renders as an unstyled raw PatternFly island, since those are
-upstream `keycloak.v2` classes this theme's CSS already targets globally).
+**Done this pass (#106)**: every row above is now individually
+audited/verified against a live disposable Keycloak instance (not just
+covered by shell inheritance and left unverified) --
 
-**Still open** (tracked here so they're not silently untested, per this
-issue's own acceptance criterion):
+- WebAuthn register/authenticate/error and `select-authenticator.ftl`:
+  exercised via real CDP virtual-authenticator ceremonies (register,
+  successful authenticate, and a deliberately-failed authenticate), not
+  simulated. `select-authenticator.ftl` needed real CSS (was unstyled
+  white-on-white); the WebAuthn pages needed none.
+- `login-verify-email.ftl`: was silently broken in the test fixture (no
+  reachable SMTP meant it never rendered its own content, only the
+  generic error fallback) -- fixed and now verified rendering correctly.
+- Consent and device-code: confirmed **not reachable by any real client in
+  the production realm today** (cross-checked every client's
+  `consentRequired`/device-flow attributes in the real realm export, not
+  assumed) -- styled and verified anyway via test-only fixture clients,
+  since either could be enabled by a future client. Consent had two real
+  bugs (title color, unstyled secondary button); device-code needed no
+  changes.
+- `oid4vc-credential-offer.ftl`: confirmed N/A (every real client uses
+  `openid-connect`, none use `oid4vc`) -- not just assumed.
+- `pf-m-secondary` (kcButtonSecondaryClass) was unstyled realm-wide --
+  found via the consent screen's "No" button, also affects WebAuthn's
+  "Cancel" AIA button, "Try another way", and "Switch organization".
+  Fixed in `login.css` for every page at once.
 
-- Individual audit + narrow CSS for `login-config-totp.ftl` (QR/secret
-  display) and the WebAuthn pages — these are real, frequently-hit pages
-  (TOTP setup is mandatory for every account) that have not been
-  individually exercised against a live realm, only covered by the
-  general shell rules.
-- `select-authenticator.ftl` has no historical-baseline equivalent at all
-  and needs an explicit design decision, not just shell inheritance.
-- Consent/device-code/OID4VC applicability depends on per-client settings
-  not yet cross-checked client-by-client.
-- Accessibility acceptance criteria (200% zoom, RTL, live-region
-  announcements, reduced motion beyond the existing `prefers-reduced-
-  motion` rule) not yet verified against a running instance.
-- The interaction-layer requirements (focus transitions, loading/
-  submitting states, no-JS behavior per state) are #103's scope, not
-  reachable until that lands.
+**Still open**, now #107's scope specifically (not re-litigated here):
+
+- RTL, 200% zoom, forced-colors, and CSP-specific assertions -- not yet
+  verified against a running instance.
+- Reduced-motion is still only asserted structurally (the static CSS rule
+  exists), not simulated/verified in the browser.
+- Whether to enable `select-authenticator.ftl`'s trigger condition (a
+  WebAuthn ALTERNATIVE execution) in the *production* realm remains a
+  separate decision for whoever owns realm config (Xore/APIARY) -- this
+  pass only proves the page renders correctly once reached, via a
+  test-fixture-only flow change (`test/global-setup.ts`).
 
 This matrix should be re-verified against a live realm export whenever
 realm config changes, and whenever `themes/apiary/keycloak.lock`'s pinned
