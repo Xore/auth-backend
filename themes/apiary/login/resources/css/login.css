@@ -53,7 +53,15 @@ html, body, #keycloak-bg {
 
 #kc-header-wrapper {
   display: block;
-  color: var(--text-primary);
+  /* !important required: keycloak.v2's own styles.css sets
+     `color: var(--pf-v5-global--Color--light-100) !important` here,
+     hardcoding near-white text -- correct for its own dark-hero-image demo,
+     wrong against this theme's light-mode card-on-page-background layout.
+     Confirmed live: without !important here, the real computed color stays
+     rgb(255,255,255) regardless of --text-primary's own correct value,
+     making the title unreadable in light mode. Only !important can beat
+     another !important declaration; specificity/source-order don't apply. */
+  color: var(--text-primary) !important;
   font-family: var(--font-display);
   font-size: clamp(2.25rem, 5vw, 3rem);
   font-weight: 400;
