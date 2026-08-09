@@ -79,6 +79,20 @@ test.describe('Personal info (#91)', () => {
         const menuToggleColor = await page.locator('.pf-v5-c-masthead .pf-v5-c-menu-toggle__text').first().evaluate((el) => getComputedStyle(el).color);
         expect(menuToggleColor, 'user-menu toggle text must not hardcode white').not.toBe('rgb(255, 255, 255)');
 
+        // #91: the real APIARY brand mark (theme.properties' `logo=`),
+        // not Keycloak's own default logo.svg. Header.tsx only exposes one
+        // logo path, so light/dark is handled inside the SVG itself (see
+        // img/apiary-mark.svg's own comment) -- assert the browser actually
+        // decoded it (naturalWidth/Height), not just that an <img> tag with
+        // some src exists, since a malformed inline SVG renders as a
+        // "successful" zero-size broken image with no console error at all
+        // (found live building this: an XML comment containing a literal
+        // double hyphen silently broke the whole file this way).
+        const brand = page.locator('.pf-v5-c-masthead img').first();
+        await expect(brand).toHaveAttribute('src', /apiary-mark\.svg$/);
+        const brandSize = await brand.evaluate((el: HTMLImageElement) => ({ w: el.naturalWidth, h: el.naturalHeight }));
+        expect(brandSize, 'brand mark must actually decode, not just have a src').toEqual({ w: 64, h: 64 });
+
         const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
         expect(hasOverflow, `${viewport.name} must not overflow horizontally`).toBe(false);
 

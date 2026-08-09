@@ -23,13 +23,14 @@ html, body, #app {
 }
 
 /* ── Masthead ──────────────────────────────────────────────────────────
-   Keycloak's own logo/wordmark stays in place for now -- theme.properties'
-   `logo=` only swaps the image asset, not the surrounding chrome, and this
-   repo has no APIARY logo asset yet (the login theme uses Keycloak's own
-   realm displayName as text branding instead; account console has no
-   equivalent per-page title slot in its masthead). Restyling colors only
-   here is a real, scoped v1; a full brand-mark swap is separate follow-up
-   work, not blocked on this. */
+   #91: theme.properties' `logo=img/apiary-mark.svg` swaps Keycloak's
+   default logo.svg for the real APIARY brand mark (the login theme instead
+   uses Keycloak's own realm displayName as text branding; account console
+   has no equivalent per-page title slot, so an image mark is the only
+   option here). See img/apiary-mark.svg's own comment for why light/dark
+   swapping needed an SVG wrapper instead of this project's usual
+   .theme-art--light/--dark two-<img> convention (theme/theme.css) -- the
+   masthead only ever renders a single <img>. */
 .pf-v5-c-masthead {
   background: var(--toolbar-bg);
   border-bottom: 1px solid var(--border-subtle);
