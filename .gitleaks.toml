@@ -10,4 +10,12 @@ useDefault = true
 description = "Fixed test-fixture password for the local, ephemeral Playwright e2e server (forward-auth/e2e/, port 18081 only) -- not a real credential. Needed as a content-based allowlist, not just an inline gitleaks:allow comment, because gitleaks scans historical commit diffs: the commit that first introduced this string (before the gitleaks:allow comment existed) is still in every PR's scanned range."
 regexes = [
   '''correct-horse-battery-staple-9432''',
+  # themes/apiary/keycloak.lock (#101/#102): sha256 content hashes and a
+  # historical-provenance git commit hash, both flagged by gitleaks'
+  # generic-api-key high-entropy-hex heuristic -- not secrets, this file's
+  # whole purpose is recording public, verifiable hashes/commits of
+  # upstream files and pins. Same historical-diff-scanning reasoning as
+  # the entry above applies.
+  '''875e62f5de85fc0dfa15028b74b8bc3f3a885aebe539465035441f4e41adbfd5''',
+  '''3c2779a8ca03f9d6df6ba5bba0a263131a514c2b''',
 ]
