@@ -72,3 +72,47 @@ template changes show up without a restart. **Production must not run with
 these disabled** — APIARY's deployed Keycloak keeps the default caching
 behavior; only ever disable it in a local/throwaway instance used for theme
 development, never against the real stack.
+
+## Regression suite (#102)
+
+`test/` renders this theme against a real disposable Keycloak instance —
+`test/docker-compose.test.yml`, pinned to `keycloak.lock`'s exact
+image+digest, mounting `themes/apiary` read-only and importing
+`test/fixtures/realm-export.json` (a throwaway `test-apiary` realm mirroring
+the real realm's key settings: registration off, TOTP mandatory, no SSO
+providers). No production credentials or external IdPs are involved.
+
+Run locally:
+
+```bash
+cd test
+docker compose -f docker-compose.test.yml up -d
+# wait for it healthy: docker inspect test-keycloak-1 --format '{{.State.Health.Status}}'
+npm ci
+npx playwright install chromium
+npx playwright test                    # all six viewport tiers
+npx playwright test --project=desktop-1440   # one tier while iterating
+docker compose -f docker-compose.test.yml down -v
+```
+
+Baseline screenshots live under `test/specs/login.spec.ts-snapshots/`, one
+per viewport project. Updating a baseline is a real content decision, not a
+formality — regenerate with `npx playwright test --update-snapshots`, then
+**look at the diff in the actual PNG**, not just accept it, and say in the
+PR which Xore/Keycloak pin (if any) motivated the change (#102's own
+acceptance criterion). CI uploads the HTML report (including before/after/
+diff images on any failure) as a workflow artifact.
+
+This suite already caught two real bugs no static review had (both fixed
+in the same change that added the suite): `#kc-header-wrapper`'s title text
+was fully invisible in light mode (keycloak.v2's own `styles.css` sets
+`color: ... !important`, silently beating this theme's non-`!important`
+override), and the vendored `xore-theme.css` was pulling Fira Sans/Space
+Grotesk/Fira Code from Google Fonts on every page load — a real violation
+of the no-CDN deployment contract above, patched out with the removal
+documented in `keycloak.lock`.
+
+Not yet covered here (tracked in `docs/PAGE-MATRIX.md` as open, not
+silently untested): WebAuthn/passkey ceremonies, `select-authenticator`,
+consent/device-code flows, RTL, 200% zoom, forced-colors, and reduced-motion
+interaction (only the static CSS rule is asserted, not simulated motion).

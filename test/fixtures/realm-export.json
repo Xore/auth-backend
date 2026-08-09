@@ -1,0 +1,85 @@
+{
+  "realm": "test-apiary",
+  "enabled": true,
+  "displayName": "APIARY",
+  "loginTheme": "apiary",
+  "accountTheme": "apiary",
+  "adminTheme": "keycloak.v2",
+  "emailTheme": "apiary",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": true,
+  "rememberMe": false,
+  "verifyEmail": false,
+  "loginWithEmailAllowed": true,
+  "bruteForceProtected": true,
+  "editUsernameAllowed": false,
+  "otpPolicyType": "totp",
+  "sslRequired": "none",
+  "requiredActions": [
+    {
+      "alias": "CONFIGURE_TOTP",
+      "name": "Configure OTP",
+      "providerId": "CONFIGURE_TOTP",
+      "enabled": true,
+      "defaultAction": true,
+      "priority": 10
+    },
+    {
+      "alias": "UPDATE_PASSWORD",
+      "name": "Update Password",
+      "providerId": "UPDATE_PASSWORD",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 20
+    },
+    {
+      "alias": "UPDATE_PROFILE",
+      "name": "Update Profile",
+      "providerId": "UPDATE_PROFILE",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 30
+    },
+    {
+      "alias": "webauthn-register",
+      "name": "Webauthn Register",
+      "providerId": "webauthn-register",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 40
+    },
+    {
+      "alias": "webauthn-register-passwordless",
+      "name": "Webauthn Register Passwordless",
+      "providerId": "webauthn-register-passwordless",
+      "enabled": true,
+      "defaultAction": false,
+      "priority": 50
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "theme-test-client",
+      "enabled": true,
+      "publicClient": true,
+      "protocol": "openid-connect",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "consentRequired": false,
+      "redirectUris": ["http://127.0.0.1:8180/realms/test-apiary/theme-test-landing*"],
+      "webOrigins": ["http://127.0.0.1:8180"]
+    }
+  ],
+  "users": [
+    {
+      "username": "test-user-no-totp",
+      "enabled": true,
+      "email": "test-user-no-totp@example.invalid",
+      "emailVerified": true,
+      "credentials": [
+        {"type": "password", "value": "test-password-only", "temporary": false}
+      ],
+      "requiredActions": ["CONFIGURE_TOTP"]
+    }
+  ]
+}

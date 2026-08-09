@@ -95,10 +95,17 @@
     if (!userGroup || !passGroup || !submitBtn) return;
 
     // A failed attempt re-renders this same page with an error already
-    // attached to the password field -- show both fields immediately so
-    // the error is visible in context instead of hiding it behind a
-    // "Continue" step the user already passed.
-    if (passGroup.querySelector('[aria-invalid="true"]')) return;
+    // attached -- show both fields immediately so the error is visible in
+    // context instead of hiding it behind a "Continue" step the user
+    // already passed. Checked against the whole form, not just the
+    // password group: confirmed live that Keycloak's real login.ftl
+    // attaches the shared "Invalid username or password" error to
+    // #username (messagesPerField.getFirstError('username','password'),
+    // via the username field's own macro call), not #password -- an
+    // invalid-credentials retry would otherwise get staged straight back
+    // to the identity step, one extra click removed from where the visible
+    // error actually is.
+    if (form.querySelector('[aria-invalid="true"]')) return;
 
     var whoLabel = document.createElement("div");
     whoLabel.className = "kc-signing-in-as";

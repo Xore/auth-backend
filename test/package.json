@@ -1,0 +1,12 @@
+{
+  "name": "apiary-keycloak-theme-tests",
+  "private": true,
+  "description": "Visual/responsive/a11y/interaction regression coverage for themes/apiary (#102). Renders a real disposable Keycloak instance pinned to keycloak.lock, never a mock.",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.1",
+    "@playwright/test": "^1.55.0"
+  }
+}

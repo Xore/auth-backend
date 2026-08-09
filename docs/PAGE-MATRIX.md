@@ -47,7 +47,7 @@ step, since the realm never added a WebAuthn executor to a custom flow.
 | `login-username.ftl` / `login.ftl` | Always — first step of every browser-flow login | Covered | username step |
 | `login-password.ftl` | Always — after username, since no custom identity-first-only flow removes it | Covered | "signing in as" credential step |
 | `login-otp.ftl` | Always for any account that has completed `CONFIGURE_TOTP` (default action → effectively all accounts) | Partial | follow-on OTP presentation (historical `verify.html`) |
-| `login-config-totp.ftl` | First login for every account (`CONFIGURE_TOTP` is default-on) — one of the most-hit pages in the whole realm | Gap — QR/TOTP secret display not individually audited | follow-on OTP presentation |
+| `login-config-totp.ftl` | First login for every account (`CONFIGURE_TOTP` is default-on) — one of the most-hit pages in the whole realm | Covered — styled, and now exercised end-to-end by `test/specs/login.spec.ts` (#102) against a real disposable realm | follow-on OTP presentation |
 | `login-reset-password.ftl` | "Forgot your password?" link — `resetPasswordAllowed=true` | Covered by shell rules | recovery link + compact server error |
 | `login-update-password.ftl` | `UPDATE_PASSWORD` required action, opt-in / admin-triggered | Partial | password step (reused layout) |
 | `webauthn-register.ftl` | `webauthn-register` required action, opt-in (self-service) | Gap — WebAuthn status/error tiles not styled | passkey alternative |
