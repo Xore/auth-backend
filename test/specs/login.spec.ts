@@ -138,10 +138,29 @@ async function addVirtualAuthenticator(page: Page) {
 // #102's own acceptance criteria: fail on external requests (no CDN/font
 // fetch) and console errors. Attached per-test so every spec below gets
 // this for free without repeating the wiring.
-function trackPageHealth(page: Page, baseURL: string) {
+//
+// #107: also asserts zero real CSP violations. Chromium reports a
+// `securitypolicyviolation` DOM event for every enforced-policy breach --
+// that is the actual enforcement signal, not an incidental side effect of
+// it also usually logging to the console (which the consoleErrors check
+// above only catches by accident, not by design). Registered via
+// addInitScript (awaited -- must be confirmed installed before the
+// caller's next page.goto(), not raced against it) so it's listening
+// before any theme script on the page runs, on every navigation this page
+// object makes -- every existing call site below gets real CSP coverage
+// for free, not just the dedicated tests in the "#107 CSP enforcement"
+// block further down.
+async function trackPageHealth(page: Page, baseURL: string) {
   const consoleErrors: string[] = [];
   const externalRequests: string[] = [];
   const baseOrigin = new URL(baseURL).origin;
+
+  await page.addInitScript(() => {
+    (window as any).__cspViolations = [];
+    window.addEventListener('securitypolicyviolation', (e) => {
+      (window as any).__cspViolations.push({ directive: e.violatedDirective, blockedURI: e.blockedURI });
+    });
+  });
 
   page.on('console', (msg) => {
     if (msg.type() !== 'error') return;
@@ -165,16 +184,64 @@ function trackPageHealth(page: Page, baseURL: string) {
   });
 
   return {
-    assertHealthy() {
+    async assertHealthy() {
       expect(consoleErrors, 'no console errors').toEqual([]);
       expect(externalRequests, 'no external/CDN requests -- theme must be fully local').toEqual([]);
+      const cspViolations = await page.evaluate(() => (window as any).__cspViolations ?? []);
+      expect(cspViolations, 'no real CSP violations (securitypolicyviolation events)').toEqual([]);
     },
   };
 }
 
+// #107: real production CSP (confirmed live against the deployed realm,
+// Keycloak's own unmodified default -- this repo's realm export carries no
+// browserSecurityHeaders override): object-src and frame-ancestors are
+// enforced, script-src is not restricted. Asserting the exact header value
+// catches a realm misconfiguration that silently widens or drops it;
+// asserting a deliberate object-src violation is actually blocked (not
+// merely assumed from the header being present) proves enforcement, not
+// just configuration.
+const EXPECTED_CSP = "frame-src 'self'; frame-ancestors 'self'; object-src 'none';";
+
+test.describe('#107 CSP enforcement', () => {
+  test('login page sends the expected Content-Security-Policy header', async ({ page, baseURL }) => {
+    const health = await trackPageHealth(page, baseURL!);
+    const response = await page.goto(authUrl(baseURL!));
+    await page.waitForSelector('#username');
+    expect(response?.headers()['content-security-policy']).toBe(EXPECTED_CSP);
+    await health.assertHealthy();
+  });
+
+  test('object-src is actually enforced, not just present in the header', async ({ page, baseURL }) => {
+    const health = await trackPageHealth(page, baseURL!);
+    await page.goto(authUrl(baseURL!));
+    await page.waitForSelector('#username');
+
+    // A real violation attempt, not a mock: an <object> element pointed at
+    // a same-origin resource still trips object-src 'none' -- CSP's
+    // object-src has no same-origin exception the way script-src's
+    // 'self' would. Same-origin (not cross-origin) specifically so a
+    // failure here can only mean object-src, never externalRequests/CORS.
+    const violation = await page.evaluate(() => new Promise((resolve) => {
+      window.addEventListener('securitypolicyviolation', (e) => resolve({
+        directive: e.violatedDirective,
+        blockedURI: e.blockedURI,
+      }), { once: true });
+      const obj = document.createElement('object');
+      obj.data = window.location.origin + '/favicon.ico';
+      document.body.appendChild(obj);
+    }));
+
+    expect(violation).toMatchObject({ directive: 'object-src' });
+    // No health.assertHealthy() here: this test deliberately triggers a
+    // real CSP violation, which assertHealthy()'s own "no violations"
+    // check would then correctly fail on.
+  });
+});
+
 test.describe('login page shell (#104 geometry, #98 branding)', () => {
   test('renders the centered shell with no split/artwork remnants', async ({ page, baseURL }) => {
-    const health = trackPageHealth(page, baseURL!);
+    const health = await trackPageHealth(page, baseURL!);
     await page.goto(authUrl(baseURL!));
     await page.waitForSelector('#username');
 
@@ -203,7 +270,7 @@ test.describe('login page shell (#104 geometry, #98 branding)', () => {
     const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
     expect(hasOverflow).toBe(false);
 
-    health.assertHealthy();
+    await health.assertHealthy();
     await expect(page).toHaveScreenshot('login-identity-step.png');
   });
 
@@ -293,7 +360,7 @@ test.describe('#103 staged identity/credential interaction', () => {
 
 test.describe('#100 TOTP setup (mandatory, most-hit required action)', () => {
   test('renders the QR/secret setup form after first login', async ({ page, baseURL }) => {
-    const health = trackPageHealth(page, baseURL!);
+    const health = await trackPageHealth(page, baseURL!);
     await page.goto(authUrl(baseURL!));
     await page.locator('#username').fill('test-user-no-totp');
     await page.locator('#username').press('Enter');
@@ -305,7 +372,7 @@ test.describe('#100 TOTP setup (mandatory, most-hit required action)', () => {
 
     await expect(page.locator('#kc-totp-secret-qr-code')).toBeVisible();
     await expect(page.locator('#totp')).toBeVisible();
-    health.assertHealthy();
+    await health.assertHealthy();
     await expect(page).toHaveScreenshot('totp-setup.png', {
       mask: [page.locator('#kc-totp-secret-qr-code'), page.locator('#kc-totp-secret-key')],
     });
@@ -314,7 +381,7 @@ test.describe('#100 TOTP setup (mandatory, most-hit required action)', () => {
 
 test.describe('#106 email verification (default required action, VERIFY_EMAIL)', () => {
   test('renders the real "check your email" state, not the SMTP-failure fallback', async ({ page, baseURL }) => {
-    const health = trackPageHealth(page, baseURL!);
+    const health = await trackPageHealth(page, baseURL!);
     await page.goto(authUrl(baseURL!));
     await page.locator('#username').fill('test-user-verify-email');
     await page.locator('#username').press('Enter');
@@ -327,14 +394,14 @@ test.describe('#106 email verification (default required action, VERIFY_EMAIL)',
     // to send email" page instead -- confirmed live while auditing #106.
     await expect(page.locator('#kc-page-title')).toHaveText('Email verification');
     await expect(page.getByText('Click here', { exact: false })).toBeVisible();
-    health.assertHealthy();
+    await health.assertHealthy();
     await expect(page).toHaveScreenshot('verify-email.png');
   });
 });
 
 test.describe('#106 consent (login-oauth-grant.ftl -- not reachable by any real client today)', () => {
   test('renders with theme-matched title and secondary button, not PatternFly defaults', async ({ page, baseURL }) => {
-    const health = trackPageHealth(page, baseURL!);
+    const health = await trackPageHealth(page, baseURL!);
     await page.goto(authUrl(baseURL!, 'theme-test-consent-client'));
     await page.locator('#username').fill('test-user-consent');
     await page.locator('#username').press('Enter');
@@ -357,7 +424,7 @@ test.describe('#106 consent (login-oauth-grant.ftl -- not reachable by any real 
     const noBg = await noButton.evaluate((el) => getComputedStyle(el).backgroundColor);
     expect(noBg).not.toBe('rgba(0, 0, 0, 0)');
 
-    health.assertHealthy();
+    await health.assertHealthy();
     await expect(page).toHaveScreenshot('consent.png');
   });
 });
@@ -406,7 +473,7 @@ test.describe('#106 WebAuthn/passkey required action (webauthn-register.ftl)', (
     test.skip(testInfo.project.name !== STATEFUL_WEBAUTHN_PROJECT, 'stateful ceremony -- runs once, see comment above this describe block');
     await addVirtualAuthenticator(page);
     await stubLandingPage(page);
-    const health = trackPageHealth(page, baseURL!);
+    const health = await trackPageHealth(page, baseURL!);
     await page.goto(authUrl(baseURL!));
     await page.locator('#username').fill('test-user-webauthn-register');
     await page.locator('#username').press('Enter');
@@ -419,7 +486,7 @@ test.describe('#106 WebAuthn/passkey required action (webauthn-register.ftl)', (
     // pinned release's theme source tree; docs/PAGE-MATRIX.md's older
     // reference to a distinct passwordless template no longer applies).
     await expect(page.locator('#kc-page-title')).toHaveText('Passkey Registration');
-    health.assertHealthy();
+    await health.assertHealthy();
     await expect(page).toHaveScreenshot('webauthn-register.png');
 
     await clickWebAuthnButton(page, '#registerWebAuthn');
@@ -446,7 +513,7 @@ test.describe('#106/#107 select-authenticator + WebAuthn authenticate/error (2+ 
     await stubLandingPage(page);
     await setupMultiFactorUser(page, baseURL!, 'test-user-multi-factor');
 
-    const health = trackPageHealth(page, baseURL!);
+    const health = await trackPageHealth(page, baseURL!);
     await page.goto(authUrl(baseURL!));
     await page.locator('#username').fill('test-user-multi-factor');
     await page.locator('#username').press('Enter');
@@ -464,7 +531,7 @@ test.describe('#106/#107 select-authenticator + WebAuthn authenticate/error (2+ 
     const headlineColor = await page.locator('.select-auth-box-headline').first().evaluate((el) => getComputedStyle(el).color);
     expect(headlineColor).not.toBe('rgb(255, 255, 255)');
     expect(headlineColor).not.toBe('');
-    health.assertHealthy();
+    await health.assertHealthy();
     await expect(page).toHaveScreenshot('select-authenticator.png');
 
     // webauthn-authenticate.ftl's own credential list shares this exact markup.
@@ -495,7 +562,7 @@ test.describe('#106/#107 select-authenticator + WebAuthn authenticate/error (2+ 
     await cdp.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId });
     await addVirtualAuthenticator(page);
 
-    const health = trackPageHealth(page, baseURL!);
+    const health = await trackPageHealth(page, baseURL!);
     await page.goto(authUrl(baseURL!));
     await page.locator('#username').fill('test-user-multi-factor-2');
     await page.locator('#username').press('Enter');
@@ -516,18 +583,18 @@ test.describe('#106/#107 select-authenticator + WebAuthn authenticate/error (2+ 
     // real, differently-rendered markup, not a typo.
     const retry = page.getByRole('link', { name: 'Try Another Way' });
     await expect(retry).toBeVisible();
-    health.assertHealthy();
+    await health.assertHealthy();
     await expect(page).toHaveScreenshot('webauthn-error.png');
   });
 });
 
 test.describe('#106 OAuth2 device flow (login-oauth2-device-verify-user-code.ftl -- not reachable by any real client today)', () => {
   test('renders the device code entry form via shell rules', async ({ page, baseURL }) => {
-    const health = trackPageHealth(page, baseURL!);
+    const health = await trackPageHealth(page, baseURL!);
     await page.goto(`${baseURL}/realms/${REALM}/protocol/openid-connect/auth/device`);
     await expect(page.locator('#kc-page-title')).toHaveText('Device Login');
     await expect(page.locator('#device_user_code')).toBeVisible();
-    health.assertHealthy();
+    await health.assertHealthy();
     await expect(page).toHaveScreenshot('device-code.png');
   });
 });
@@ -535,7 +602,7 @@ test.describe('#106 OAuth2 device flow (login-oauth2-device-verify-user-code.ftl
 test.describe('#107 RTL / 200% zoom / forced-colors', () => {
   test('renders correctly with dir="rtl" (Arabic locale)', async ({ page, baseURL }) => {
     await withInternationalization(baseURL!, async () => {
-      const health = trackPageHealth(page, baseURL!);
+      const health = await trackPageHealth(page, baseURL!);
       // `ui_locales` (the OIDC-standard request parameter) is what
       // Keycloak's authorization endpoint actually honors here --
       // `kc_locale` (a plausible guess, since Keycloak does use that name
@@ -565,7 +632,7 @@ test.describe('#107 RTL / 200% zoom / forced-colors', () => {
       // centering), not a sub-pixel assertion.
       expect(Math.abs(cardCenter - viewportWidth / 2)).toBeLessThan(16);
 
-      health.assertHealthy();
+      await health.assertHealthy();
       await expect(page).toHaveScreenshot('login-rtl.png');
     });
   });
@@ -579,7 +646,7 @@ test.describe('#107 RTL / 200% zoom / forced-colors', () => {
     // and keycloak.lock's viewport_contract both already treat "@2x
     // effective CSS px" this way for the UHQ tier).
     await page.setViewportSize({ width: 720, height: 450 });
-    const health = trackPageHealth(page, baseURL!);
+    const health = await trackPageHealth(page, baseURL!);
     await page.goto(authUrl(baseURL!));
     await page.waitForSelector('#username');
 
@@ -593,7 +660,7 @@ test.describe('#107 RTL / 200% zoom / forced-colors', () => {
     expect(cardBox!.y).toBeGreaterThanOrEqual(0);
     expect(cardBox!.x + cardBox!.width).toBeLessThanOrEqual(720 + 1);
 
-    health.assertHealthy();
+    await health.assertHealthy();
     await expect(page).toHaveScreenshot('login-200pct-zoom.png');
   });
 
@@ -622,7 +689,7 @@ test.describe('#107 RTL / 200% zoom / forced-colors', () => {
     const engaged = await page.evaluate(() => window.matchMedia('(forced-colors: active)').matches);
     expect(engaged).toBe(true);
 
-    const health = trackPageHealth(page, baseURL!);
+    const health = await trackPageHealth(page, baseURL!);
     await page.locator('#username').fill('test-user-no-totp');
     await page.locator('#username').press('Enter');
     await page.locator('#password').fill('test-password-only');
@@ -631,6 +698,6 @@ test.describe('#107 RTL / 200% zoom / forced-colors', () => {
     // credentials the staged-interaction tests use, landing on the
     // mandatory TOTP setup page.
     await expect(page.locator('#kc-totp-secret-qr-code')).toBeVisible();
-    health.assertHealthy();
+    await health.assertHealthy();
   });
 });
