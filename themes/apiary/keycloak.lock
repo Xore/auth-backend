@@ -35,6 +35,15 @@ theme.properties = f5032f39aabb1e0dc940564937263fb0dfb99c534ec0a1f92dea6c4baf0e0
 template.ftl = 6221a3176c73a3fd67abc97076deb9cef112378ce157735a78bd865800315b37
 resources/css/styles.css = 922d21115fe10855a9652cd8c234cf0f78e72de0c55ec7c7bf790fb5bd0f042c
 
+[email_upstream_files]
+# #91: same provenance pin as [upstream_files] above, applied to
+# themes/apiary/email/html/template.ftl -- the one upstream file that
+# override replaces. Different base path: base/email, not keycloak.v2/login
+# (base/email has no keycloak.v2 override at all for this release, no
+# theme.properties either -- confirmed against the real upstream tree).
+# https://raw.githubusercontent.com/keycloak/keycloak/<git_tag>/themes/src/main/resources/theme/base/email/<path>
+html/template.ftl = 1e2a39459aa8211afadfba39db4ee4aad38ab8624c53a39fe1500f076f5df1d8
+
 [required_dom_hooks]
 # Every upstream ID/class login.css depends on (extracted from the
 # selectors in themes/apiary/login/resources/css/login.css). Not an

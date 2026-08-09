@@ -23,14 +23,13 @@ lock="themes/apiary/keycloak.lock"
 git_tag="$(sed -n 's/^git_tag = //p' "$lock")"
 [[ -n "$git_tag" ]] || { echo "no git_tag found in $lock" >&2; exit 1; }
 
-base_url="https://raw.githubusercontent.com/keycloak/keycloak/${git_tag}/themes/src/main/resources/theme/keycloak.v2/login"
-
 fail=0
+# $1: base_url  $2: rel_path  $3: section (for the hash lookup below)
 check_one() {
-    local rel_path="$1" expected
-    expected="$(sed -n "s#^${rel_path//./\\.} = ##p" "$lock")"
+    local base_url="$1" rel_path="$2" section="$3" expected
+    expected="$(awk -v s="[$section]" 'BEGIN{RS="";FS="\n"} $0 ~ s' "$lock" | sed -n "s#^${rel_path//./\\.} = ##p")"
     if [[ -z "$expected" ]]; then
-        echo "FAIL: no recorded hash for '$rel_path' in $lock" >&2
+        echo "FAIL: no recorded hash for '$rel_path' in $lock's [$section]" >&2
         fail=1
         return
     fi
@@ -40,21 +39,27 @@ check_one() {
         echo "FAIL: ${rel_path} drifted from the pinned Keycloak ${git_tag} release" >&2
         echo "  expected sha256: ${expected}" >&2
         echo "  actual   sha256: ${actual}" >&2
-        echo "  This theme's CSS/DOM assumptions (theme.properties parent/styles," >&2
-        echo "  template.ftl structure, or keycloak.v2's own stylesheet) have not" >&2
-        echo "  been re-validated against this change. If this is an intentional" >&2
-        echo "  Keycloak upgrade, update themes/apiary/keycloak.lock's git_tag/" >&2
-        echo "  digest/hashes together with a full theme test pass -- see" >&2
-        echo "  docs/THEME-GUIDE.md. If it isn't, something is wrong upstream or" >&2
-        echo "  with this pin; do not just update the hash to make CI pass." >&2
+        echo "  This theme's CSS/DOM/FTL assumptions have not been re-validated" >&2
+        echo "  against this change. If this is an intentional Keycloak upgrade," >&2
+        echo "  update themes/apiary/keycloak.lock's git_tag/digest/hashes together" >&2
+        echo "  with a full theme test pass -- see docs/THEME-GUIDE.md. If it" >&2
+        echo "  isn't, something is wrong upstream or with this pin; do not just" >&2
+        echo "  update the hash to make CI pass." >&2
         fail=1
     else
         echo "OK: ${rel_path} matches Keycloak ${git_tag}"
     fi
 }
 
-check_one "theme.properties"
-check_one "template.ftl"
-check_one "resources/css/styles.css"
+login_base="https://raw.githubusercontent.com/keycloak/keycloak/${git_tag}/themes/src/main/resources/theme/keycloak.v2/login"
+check_one "$login_base" "theme.properties" "upstream_files"
+check_one "$login_base" "template.ftl" "upstream_files"
+check_one "$login_base" "resources/css/styles.css" "upstream_files"
+
+# #91: themes/apiary/email/html/template.ftl overrides base/email's own
+# file, not keycloak.v2/login's -- a separate upstream tree, no
+# theme.properties there to pin (base/email doesn't have one at all).
+email_base="https://raw.githubusercontent.com/keycloak/keycloak/${git_tag}/themes/src/main/resources/theme/base/email"
+check_one "$email_base" "html/template.ftl" "email_upstream_files"
 
 exit "$fail"
