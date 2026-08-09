@@ -221,6 +221,44 @@ a:hover { color: var(--text-link-hover); }
   background: var(--border-subtle);
 }
 
+/* #103's staged-login elements -- injected by xore-auth.js on top of the
+   real #username/#password fields, matching the historical credential
+   step's "signing in as X, change" affordance. Inert/never rendered if JS
+   doesn't run: both fields just show together, unstaged, which is still a
+   complete functional Keycloak form (#104's own JS-off requirement). */
+.kc-signing-in-as {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 16px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.kc-signing-in-as__who {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kc-change-username {
+  flex-shrink: 0;
+  margin-left: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.kc-change-username:hover { color: var(--text-primary); }
+
+/* Passkey ceremony busy state (xore-auth.js), alongside Keycloak's own
+   { once: true } click handler on the same button -- visual only. */
+.kc-busy { opacity: .6; pointer-events: none; }
+
 .pf-v5-c-login__main::after {
   content: "Protected · all activity logged";
   display: block;

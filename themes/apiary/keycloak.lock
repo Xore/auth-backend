@@ -54,14 +54,48 @@ hooks = #kc-form-options, #kc-header, #kc-header-wrapper, #kc-info-wrapper,
         .pf-v5-c-login__main-footer, .pf-v5-c-login__main-header
 
 [javascript_compatibility]
-# Populated once #103 (Xore auth interaction layer) actually ships local
-# JavaScript -- there is nothing to hash yet. When it lands this section
-# must record: vendored Xore JS hashes/provenance, any Keycloak bridge
-# module, theme.properties' scripts= order/attributes, and every upstream
-# DOM ID/class/data hook, built-in module, form field, and event behavior
-# the interaction layer depends on (password visibility, WebAuthn,
-# conditional passkey, session-polling, submit-protection scripts).
-status = not-yet-applicable
+# #103's interaction layer. Own file (not vendored upstream/third-party
+# code), so this is a content hash of what's actually committed, not a
+# provenance pin like [upstream_files] above -- re-derive with
+# `sha256sum themes/apiary/login/resources/js/xore-auth.js` after any edit.
+xore-auth.js = 875e62f5de85fc0dfa15028b74b8bc3f3a885aebe539465035441f4e41adbfd5
+
+# theme.properties: scripts=js/xore-auth.js -- loaded via
+# base/login/template.ftl's `<#elseif properties.scripts?has_content>`
+# branch as a plain blocking <script src=... type="text/javascript">` in
+# <head> (NOT type="module"), which is load-bearing: the pre-paint theme
+# bootstrap at the top of xore-auth.js must run synchronously before body
+# paint, the same way the historical page's own inline <head> script did.
+# If a Keycloak upgrade changes this injection point, mechanism, or
+# ordering relative to the importmap/other <head> scripts, the pre-paint
+# guarantee breaks silently (a theme flash on load), not loudly.
+
+# Real upstream DOM this file depends on (confirmed against the pinned
+# release, not guessed) -- a Keycloak upgrade that renames/restructures any
+# of these breaks xore-auth.js's staged-login or passkey-busy features
+# (fails soft: falls back to the plain unstaged form, per the module-level
+# comment in xore-auth.js itself, but is still a real regression to catch):
+#   #kc-form-login          -- login.ftl's combined username+password form
+#   #username, #password    -- field.ftl's real input IDs
+#   .pf-v5-c-form__group    -- theme.properties' kcFormGroupClass, used to
+#                               find each field's whole label+input+error
+#                               group to hide/show
+#   input[type=submit]/button[type=submit] inside #kc-form-login
+#   [aria-invalid="true"] inside password's form group -- used to detect a
+#                               server-rendered validation error and skip
+#                               staging so the error stays visible in context
+#   #authenticateWebAuthnButton -- webauthn-authenticate.ftl's real trigger
+#                               id; Keycloak's own webauthnAuthenticate.js
+#                               attaches a {once:true} click listener here
+#   #registerWebAuthn       -- webauthn-register.ftl's real trigger id,
+#                               same {once:true} pattern via webauthnRegister.js
+# xore-auth.js only adds a second, independent click listener to the two
+# WebAuthn buttons above (a visual busy state) -- it never intercepts,
+# wraps, or replaces Keycloak's own listener or its navigator.credentials
+# call, and never touches password-visibility toggling, session polling,
+# or Keycloak's own submit-protection (`onsubmit="login.disabled = true"`
+# on #kc-form-login, left completely alone).
+status = tracked
 
 [historical_reference_provenance]
 # Visual/interaction parity baseline (#104) -- independent of the runtime
