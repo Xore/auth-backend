@@ -42,25 +42,35 @@ account recovery is an administrator-driven credential reset.
 `themes/apiary/keycloak.lock` is the compatibility record: the exact
 image/digest APIARY deploys, sha256 hashes of the upstream `keycloak.v2`
 files this theme's CSS actually depends on (`theme.properties`,
-`template.ftl`, `resources/css/styles.css`), and the specific DOM IDs/classes
-`login.css` reaches into. `.github/workflows/theme.yml` runs
+`template.ftl`, `resources/css/styles.css`), the specific DOM IDs/classes
+`login.css` reaches into, and (`[email_upstream_files]`) the one upstream
+`base/email` file `themes/apiary/email/html/template.ftl` replaces — a
+different upstream tree from `keycloak.v2/login`, since `base/email` has no
+`keycloak.v2` override and no `theme.properties` of its own for this
+release. `.github/workflows/theme.yml` runs
 `.github/scripts/verify-keycloak-compat.sh` on every push/PR, which
 re-fetches those files fresh from the pinned tag and fails CI with a
 readable diff if they've drifted from what's recorded — this is a CSS-only
 child theme, so a change to keycloak.v2's markup or class names is a real
-compatibility break even though no line in this repo changed.
+compatibility break even though no line in this repo changed. The account
+console (`keycloak.v3`) has no equivalent file-hash check: it's a compiled
+React SPA with no individually-fetchable FreeMarker/CSS files to hash, so
+its upgrade-compatibility coverage is a DOM-hook selector scan instead —
+see `test/specs/account.spec.ts`'s "Account theme DOM-hook compatibility"
+describe block.
 
 A Keycloak version bump requires, in order:
 
 1. Update `[keycloak]` in `keycloak.lock` to the new image, digest, and
    matching `git_tag`/`git_commit`.
-2. Re-derive `[upstream_files]`'s hashes against the new tag (the same
-   `raw.githubusercontent.com/keycloak/keycloak/<tag>/...` paths
-   `verify-keycloak-compat.sh` fetches) and update them.
+2. Re-derive `[upstream_files]`'s and `[email_upstream_files]`'s hashes
+   against the new tag (the same `raw.githubusercontent.com/keycloak/keycloak/<tag>/...`
+   paths `verify-keycloak-compat.sh` fetches) and update them.
 3. Re-derive `[required_dom_hooks]` if `login.css` gained/lost selectors
    (regenerate command is in the file's own comment).
 4. Run the full pre-merge checklist above against the new image, plus every
-   flow #103's interaction layer touches once that exists.
+   flow #103's interaction layer touches once that exists, plus
+   `test/specs/account.spec.ts`'s DOM-hook scan and `test/specs/email.spec.ts`.
 5. Only then does `verify-keycloak-compat.sh` pass again — do not edit the
    recorded hash to make a real drift finding go away without doing 1-4.
 

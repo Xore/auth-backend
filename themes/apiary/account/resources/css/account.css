@@ -10,7 +10,11 @@
 /* light dark, not a forced dark-only scheme -- matches ../../login/resources/css/login.css's own convention, deferring to the browser/OS preference rather than assuming one. */
 :root { color-scheme: light dark; }
 
-html, body, #root {
+/* #91: the SPA mounts into `#app` (confirmed live against the real static
+   shell -- `<div id="app">`), not `#root`. Dead selector until now; html/
+   body's own rules already covered the visible background in practice,
+   but a real element should back this instead of a guessed React default. */
+html, body, #app {
   min-height: 100%;
   margin: 0;
   background: var(--app-bg);
@@ -19,18 +23,45 @@ html, body, #root {
 }
 
 /* ── Masthead ──────────────────────────────────────────────────────────
-   Keycloak's own logo/wordmark stays in place for now -- theme.properties'
-   `logo=` only swaps the image asset, not the surrounding chrome, and this
-   repo has no APIARY logo asset yet (the login theme uses Keycloak's own
-   realm displayName as text branding instead; account console has no
-   equivalent per-page title slot in its masthead). Restyling colors only
-   here is a real, scoped v1; a full brand-mark swap is separate follow-up
-   work, not blocked on this. */
+   #91: theme.properties' `logo=img/apiary-mark.svg` swaps Keycloak's
+   default logo.svg for the real APIARY brand mark (the login theme instead
+   uses Keycloak's own realm displayName as text branding; account console
+   has no equivalent per-page title slot, so an image mark is the only
+   option here). See img/apiary-mark.svg's own comment for why light/dark
+   swapping needed an SVG wrapper instead of this project's usual
+   .theme-art--light/--dark two-<img> convention (theme/theme.css) -- the
+   masthead only ever renders a single <img>. */
 .pf-v5-c-masthead {
   background: var(--toolbar-bg);
   border-bottom: 1px solid var(--border-subtle);
 }
 .pf-v5-c-masthead__toggle .pf-v5-c-button { color: var(--text-secondary); }
+/* keycloak.v3 wraps the masthead's actual content in a `.pf-v5-c-toolbar`
+   that carries its own hardcoded near-black PatternFly default
+   (rgb(21,21,21)) independent of the masthead's own background -- found
+   live, confirmed via elementFromPoint: the masthead itself correctly
+   resolved to --toolbar-bg, but this nested element painted over it
+   entirely, so every color/theme (light and dark) rendered a solid black
+   bar regardless. */
+.pf-v5-c-masthead .pf-v5-c-toolbar { background: transparent; }
+/* The masthead's own user-menu toggle (username + chevron, top right)
+   hardcodes white text -- invisible in light mode against --toolbar-bg's
+   near-white value (confirmed live: rgb(255,255,255) text on rgb(245,244,240)).
+   Dark mode happened to look fine only because white-on-dark is
+   coincidentally readable, not because this was actually themed. */
+.pf-v5-c-masthead .pf-v5-c-menu-toggle,
+.pf-v5-c-masthead .pf-v5-c-menu-toggle__text,
+.pf-v5-c-masthead .pf-v5-c-menu-toggle__controls {
+  color: var(--text-secondary);
+}
+
+/* The outer `.pf-v5-c-page` wrapper also carries its own hardcoded light
+   PatternFly default (rgb(240,240,240)) -- normally fully occluded by
+   .pf-v5-c-page__main/__sidebar's own backgrounds below, but matched here
+   defensively so no themed surface has an unstyled PatternFly gray
+   showing through any gap (a scrollbar gutter, an unstyled state this
+   version doesn't currently reach, etc). */
+.pf-v5-c-page { background: var(--app-bg); }
 
 /* ── Sidebar navigation ──────────────────────────────────────────────── */
 .pf-v5-c-page__sidebar { background: var(--sidebar-bg); }
@@ -136,11 +167,18 @@ a:hover { color: var(--text-link-hover); }
 .pf-v5-c-helper-text, .pf-v5-c-form__helper-text, .pf-v5-c-form__helper-text a { font-size: 11px; }
 .pf-v5-c-helper-text__item.pf-m-error, .pf-v5-c-form__helper-text.pf-m-error { color: var(--danger); }
 
-/* ── Tables (device activity, applications) ─────────────────────────── */
-.pf-v5-c-table { color: var(--text-primary); background: transparent; }
-.pf-v5-c-table thead th { color: var(--text-muted); border-bottom: 1px solid var(--border-subtle); }
-.pf-v5-c-table tbody tr { border-bottom: 1px solid var(--border-subtle); }
-
-/* ── Data list (jump-to-section, applications list) ─────────────────── */
+/* ── Data lists (device activity, applications) ───────────────────────
+   #91: despite looking like tables, both of these render as
+   `.pf-v5-c-data-list`/`.pf-v5-c-description-list` (confirmed live by
+   inspecting the real classes on both pages, not guessed from how they
+   look) -- this Keycloak version's account console never uses a real
+   PatternFly Table component anywhere reachable from this realm's enabled
+   features. A `.pf-v5-c-table` rule block lived here before this comment;
+   it matched zero real elements and has been removed rather than kept as
+   defensive dead weight. Header/cell text and expanded description-list
+   rows (the `>` chevron detail view) already render correctly via
+   inheritance from html/body/#app above plus PatternFly's own
+   `pf-v5-theme-dark` class toggling -- verified live in both themes,
+   nothing here needs its own override. */
 .pf-v5-c-data-list { background: transparent; }
 .pf-v5-c-data-list__item { background: transparent; border-bottom: 1px solid var(--border-subtle); }

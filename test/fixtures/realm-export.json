@@ -130,7 +130,8 @@
       "credentials": [
         {"type": "password", "value": "test-password-only", "temporary": false}
       ],
-      "requiredActions": ["CONFIGURE_TOTP"]
+      "requiredActions": ["CONFIGURE_TOTP"],
+      "realmRoles": ["default-roles-test-apiary"]
     },
     {
       "username": "test-user-verify-email",
@@ -140,7 +141,8 @@
       "credentials": [
         {"type": "password", "value": "test-password-only", "temporary": false}
       ],
-      "requiredActions": ["VERIFY_EMAIL"]
+      "requiredActions": ["VERIFY_EMAIL"],
+      "realmRoles": ["default-roles-test-apiary"]
     },
     {
       "username": "test-user-webauthn-register",
@@ -150,7 +152,8 @@
       "credentials": [
         {"type": "password", "value": "test-password-only", "temporary": false}
       ],
-      "requiredActions": ["webauthn-register"]
+      "requiredActions": ["webauthn-register"],
+      "realmRoles": ["default-roles-test-apiary"]
     },
     {
       "username": "test-user-consent",
@@ -160,7 +163,8 @@
       "credentials": [
         {"type": "password", "value": "test-password-only", "temporary": false}
       ],
-      "requiredActions": []
+      "requiredActions": [],
+      "realmRoles": ["default-roles-test-apiary"]
     },
     {
       "username": "test-user-multi-factor",
@@ -170,7 +174,8 @@
       "credentials": [
         {"type": "password", "value": "test-password-only", "temporary": false}
       ],
-      "requiredActions": ["CONFIGURE_TOTP", "webauthn-register"]
+      "requiredActions": ["CONFIGURE_TOTP", "webauthn-register"],
+      "realmRoles": ["default-roles-test-apiary"]
     },
     {
       "username": "test-user-multi-factor-2",
@@ -180,7 +185,8 @@
       "credentials": [
         {"type": "password", "value": "test-password-only", "temporary": false}
       ],
-      "requiredActions": ["CONFIGURE_TOTP", "webauthn-register"]
+      "requiredActions": ["CONFIGURE_TOTP", "webauthn-register"],
+      "realmRoles": ["default-roles-test-apiary"]
     }
   ]
 }
