@@ -228,7 +228,16 @@ test.describe('Account security (#91)', () => {
     await expect(page.getByText('Set up Authenticator application').first()).toBeVisible();
     health.assertHealthy();
     await closeSidebarNavIfOpen(page);
-    await expect(page).toHaveScreenshot('account-signing-in.png');
+    // The password credential's own "Created <live timestamp>" line
+    // (data-testrole="created-at") is real server state, not fixture data
+    // -- it reflects whenever this realm/user was actually provisioned,
+    // which differs release to release and CI run to CI run. Baked
+    // straight into a screenshot baseline this flakes forever (found live:
+    // failed in CI at both mobile-390 and iphone-393 with an ~8000-pixel
+    // diff, entirely the timestamp string's own length/wrap shifting
+    // everything after it). Masked, not asserted on, since its exact value
+    // was never what this screenshot exists to verify.
+    await expect(page).toHaveScreenshot('account-signing-in.png', { mask: [page.locator('[data-testrole="created-at"]')] });
   });
 
   test('Device activity lists the current session and offers sign-out', async ({ page, baseURL }) => {
