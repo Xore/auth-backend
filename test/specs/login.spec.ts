@@ -282,6 +282,107 @@ test.describe('login page shell (#104 geometry, #98 branding)', () => {
   });
 });
 
+// #114 (#91's own acceptance criteria: "hover, focus, disabled, loading"
+// state coverage): none of these four had explicit, intentional coverage
+// before this block. Focus is exercised incidentally elsewhere by
+// keyboard-interaction tests, but never asserted as a real visual-state
+// change the way hover/disabled/loading are here.
+test.describe('#114 hover/focus/disabled/loading state coverage', () => {
+  test('primary submit button changes background on hover and keyboard focus', async ({ page, baseURL }) => {
+    await page.goto(authUrl(baseURL!));
+    await page.waitForSelector('#username');
+    await page.locator('#username').fill('test-user-consent');
+    await page.locator('#username').press('Enter');
+    await page.waitForSelector('#password');
+
+    const submitBtn = page.locator('input[type="submit"], button[type="submit"]');
+    const restBg = await submitBtn.evaluate((el) => getComputedStyle(el).backgroundColor);
+
+    // .pf-v5-c-button transitions background-color (login.css's own
+    // `transition:` rule) -- toHaveCSS polls/retries until the transition
+    // settles instead of racing a single evaluate() read against it
+    // (confirmed live: a bare evaluate() immediately after .hover() caught
+    // the pre-transition color often enough to be a real flake, not a
+    // one-off).
+    await submitBtn.hover();
+    await expect(submitBtn, 'primary button background must change on hover (login.css .pf-m-primary:hover)').not.toHaveCSS('background-color', restBg);
+    await page.mouse.move(0, 0); // leave hover before checking focus in isolation
+
+    // A plain .focus() call does trigger :focus-visible on this button
+    // (confirmed live), so real keyboard-Tab choreography isn't needed to
+    // exercise the same rule hover does (.pf-m-primary:focus-visible).
+    await submitBtn.focus();
+    await expect(submitBtn, 'primary button background must change on keyboard focus (login.css .pf-m-primary:focus-visible)').not.toHaveCSS('background-color', restBg);
+  });
+
+  test('secondary ("No") button on the consent page changes on hover and focus', async ({ page, baseURL }) => {
+    // Same real trigger the consent describe block's own test already
+    // uses: kcButtonSecondaryClass reaches this exact button, and its
+    // visible border/background live on PatternFly's ::after-pseudo-element
+    // custom-property indirection, not its own border/background/color
+    // (login.css's own comment on .pf-m-secondary) -- a plain-property
+    // override is a no-op there, so hover/focus need the same
+    // computed-style check to mean anything.
+    await page.goto(authUrl(baseURL!, 'theme-test-consent-client'));
+    await page.locator('#username').fill('test-user-consent');
+    await page.locator('#username').press('Enter');
+    await page.locator('#password').fill('test-password-only');
+    await submit(page);
+
+    const noButton = page.getByRole('button', { name: 'No' });
+    await expect(noButton).toBeVisible();
+    const restBg = await noButton.evaluate((el) => getComputedStyle(el).backgroundColor);
+
+    await noButton.hover();
+    await expect(noButton, 'secondary button background must change on hover (login.css .pf-m-secondary hover custom properties)').not.toHaveCSS('background-color', restBg);
+    await page.mouse.move(0, 0);
+
+    await noButton.focus();
+    await expect(noButton, 'secondary button background must change on keyboard focus (login.css .pf-m-secondary focus custom properties)').not.toHaveCSS('background-color', restBg);
+  });
+
+  test('submit button is disabled while the credential-step submission is in flight', async ({ page, baseURL }) => {
+    await stubLandingPage(page);
+    await page.goto(authUrl(baseURL!));
+    await page.waitForSelector('#username');
+    await page.locator('#username').fill('test-user-consent');
+    await page.locator('#username').press('Enter');
+    await page.locator('#password').fill('test-password-only');
+
+    // Keycloak's own inline onsubmit="login.disabled = true" (the form's
+    // built-in anti-double-submit guard -- see xore-auth.js's own comment
+    // on this exact attribute) is what disables this button. Delay the
+    // real POST (credential-step submission goes to login-actions/authenticate,
+    // not the openid-connect/auth URL the page itself loaded from) so
+    // there's an observable window to catch it disabled before the page
+    // navigates away.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    await page.route('**/login-actions/authenticate**', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      await gate;
+      await route.continue();
+    });
+
+    // Playwright's own locator actions (click/evaluate alike) wait for any
+    // in-flight navigation to settle before they'll even run -- exactly the
+    // state this test needs to inspect mid-flight, so they'd deadlock
+    // against the held POST above. Click and read `disabled` in one plain
+    // page.evaluate() instead: btn.click() dispatches the submit event (and
+    // therefore Keycloak's synchronous onsubmit handler) synchronously, so
+    // `disabled` already reflects it by the time click() returns, no
+    // separate Playwright-tracked round trip involved.
+    const disabledRightAfterClick = await page.evaluate(() => {
+      const btn = document.querySelector<HTMLButtonElement>('#kc-login')!;
+      btn.click();
+      return btn.disabled;
+    });
+    expect(disabledRightAfterClick, 'submit button must be disabled synchronously on submit, before the response even comes back').toBe(true);
+    release();
+    await page.waitForLoadState('networkidle');
+  });
+});
+
 test.describe('#103 staged identity/credential interaction', () => {
   test('Enter key advances from identity to credential step and back via change', async ({ page, baseURL }) => {
     await page.goto(authUrl(baseURL!));
@@ -489,7 +590,25 @@ test.describe('#106 WebAuthn/passkey required action (webauthn-register.ftl)', (
     await health.assertHealthy();
     await expect(page).toHaveScreenshot('webauthn-register.png');
 
-    await clickWebAuthnButton(page, '#registerWebAuthn');
+    // #114: xore-auth.js's setupPasskeyBusyState adds aria-busy="true" and
+    // the .kc-busy class (login.css: opacity .6, pointer-events: none)
+    // synchronously in its own click listener, alongside (never racing)
+    // Keycloak's own { once: true } listener that starts the real
+    // navigator.credentials.create() ceremony -- click and read the
+    // resulting state in one plain page.evaluate() so this is observed
+    // deterministically regardless of how fast the virtual authenticator
+    // responds, not via a separate Playwright-tracked round trip that could
+    // just as easily run after the ceremony (and the busy state with it)
+    // has already resolved.
+    const beforeUrl = page.url();
+    const busyRightAfterClick = await page.evaluate(() => {
+      const btn = document.getElementById('registerWebAuthn') as HTMLButtonElement;
+      btn.click();
+      return { ariaBusy: btn.getAttribute('aria-busy'), busyClass: btn.classList.contains('kc-busy') };
+    });
+    expect(busyRightAfterClick, 'registerWebAuthn must go visibly busy the instant the ceremony starts').toEqual({ ariaBusy: 'true', busyClass: true });
+    await page.waitForURL((url) => url.toString() !== beforeUrl, { timeout: 10_000 }).catch(() => {});
+    await page.waitForLoadState('networkidle');
     // A real, successful ceremony lands back at the client redirect with an
     // auth code -- not stuck on the required-action page or an error state.
     expect(page.url()).toContain('/theme-test-landing');

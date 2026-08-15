@@ -12,23 +12,41 @@ import path from 'path';
 const REALM = 'test-apiary';
 const ACCOUNT_URL = `/realms/${REALM}/account/`;
 
-// Unlike login.spec.ts, this suite doesn't run across all 6 viewport
-// projects: "Personal info"'s own tests already open explicit-viewport
-// contexts (desktop 1440x900 / mobile 390x844) regardless of which project
-// runs them, so the project matrix would only re-run the exact same two
-// sizes six times over. Every other describe block here uses the default
-// page/viewport and was written and verified against desktop-1440 alone --
-// running them under narrower projects surfaces real, separately-tracked
-// gaps (#113: nav collapses behind a hamburger these tests don't drive, and
-// a genuine button-name a11y violation at mobile-390/iphone-393) rather
-// than a theme regression, but at 30s per timeout that also blew this
-// workflow's regression job past its 15-minute budget (confirmed live:
-// CI's own run history shows the job cancelled at 15m17s once this file's
-// tests entered the matrix). Scoping to desktop-1440 fixes both at once;
-// #113 tracks doing the narrow-viewport coverage properly and on purpose.
-test.beforeEach(({}, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop-1440', 'Account console suite runs once against desktop-1440 -- see comment above (#113).');
-});
+// #113: below ~820px (tablet-820, mobile-390, iphone-393) the account
+// console's sidebar nav collapses behind a hamburger toggle in the
+// masthead. Every describe block below that navigates via the sidebar
+// (anything that isn't "Personal info", which manages its own explicit
+// viewport contexts) drives openSidebarNav() first so it still works when
+// the project's own viewport is one of the narrow ones -- previously these
+// tests only ever ran under desktop-1440 (where the sidebar needs no
+// toggle), and the whole suite was skipped outright everywhere else to
+// avoid a 30s-per-test timeout waiting for nav text that was present in the
+// DOM but hidden off-canvas (confirmed live: that timeout blew CI's
+// 15-minute regression-job budget once this file entered the project
+// matrix). Fixing the navigation removes that timeout, so the file now
+// runs across the full matrix like login.spec.ts does.
+async function openSidebarNav(page: Page) {
+  const nav = page.locator('.pf-v5-c-page__sidebar');
+  if (await nav.evaluate((el) => el.classList.contains('pf-m-expanded'))) return;
+  const toggle = page.locator('.pf-v5-c-masthead .pf-v5-c-button').first();
+  if (!(await toggle.isVisible())) return; // wide viewport -- no hamburger, sidebar is already visible
+  await toggle.click();
+  await expect(nav).toHaveClass(/pf-m-expanded/);
+}
+
+// Selecting a nav item does *not* auto-close the drawer here (confirmed
+// live) -- it only closes on an outside click, which most of these tests
+// never make. Screenshot-taking tests need it closed explicitly first, or
+// the drawer sits on top of the exact content the screenshot exists to
+// verify (found live: account-applications.png's very first narrow-viewport
+// baseline was almost entirely the open drawer, not the Applications list).
+async function closeSidebarNavIfOpen(page: Page) {
+  const nav = page.locator('.pf-v5-c-page__sidebar');
+  if (!(await nav.evaluate((el) => el.classList.contains('pf-m-expanded')))) return;
+  const toggle = page.locator('.pf-v5-c-masthead .pf-v5-c-button').first();
+  await toggle.click();
+  await expect(nav).not.toHaveClass(/pf-m-expanded/);
+}
 
 async function login(page: Page, baseURL: string, username: string) {
   await page.goto(baseURL + ACCOUNT_URL);
@@ -72,94 +90,110 @@ function trackPageHealth(page: Page, baseURL: string) {
 }
 
 test.describe('Personal info (#91)', () => {
-  for (const theme of ['light', 'dark'] as const) {
-    for (const viewport of [{ name: 'desktop', width: 1440, height: 900 }, { name: 'mobile', width: 390, height: 844 }]) {
-      test(`renders correctly in ${theme} at ${viewport.name}`, async ({ browser, baseURL }) => {
-        const ctx = await browser.newContext({ viewport, colorScheme: theme });
-        const page = await ctx.newPage();
-        const health = trackPageHealth(page, baseURL!);
-        await login(page, baseURL!, 'test-user-consent');
+  // These screenshot-based tests each open their own explicit-viewport
+  // browser context (desktop 1440x900 / mobile 390x844) regardless of
+  // which project runs them, so running them under all 6 projects would
+  // just re-run the exact same two sizes six times over -- scoped to
+  // desktop-1440 only for that reason (a real redundancy concern, distinct
+  // from the hamburger-nav gap the rest of this file had -- #113). The
+  // WCAG check just below this block deliberately stays *outside* this
+  // skip: it uses the project's own default viewport, and #113's own
+  // button-name a11y violation only reproduces at mobile-390/iphone-393 --
+  // skipping it there would skip the one check that actually catches it.
+  test.describe('screenshots', () => {
+    test.beforeEach(({}, testInfo) => {
+      test.skip(testInfo.project.name !== 'desktop-1440', 'Each test here already covers every viewport it needs via explicit browser contexts -- see comment above.');
+    });
 
-        await expect(page.getByTestId('page-heading')).toHaveText('Personal info');
-        await expect(page.locator('#username')).toHaveValue('test-user-consent');
+    for (const theme of ['light', 'dark'] as const) {
+      for (const viewport of [{ name: 'desktop', width: 1440, height: 900 }, { name: 'mobile', width: 390, height: 844 }]) {
+        test(`renders correctly in ${theme} at ${viewport.name}`, async ({ browser, baseURL }) => {
+          const ctx = await browser.newContext({ viewport, colorScheme: theme });
+          const page = await ctx.newPage();
+          const health = trackPageHealth(page, baseURL!);
+          await login(page, baseURL!, 'test-user-consent');
 
-        // #91 (found live auditing this suite): keycloak.v3 wraps the
-        // masthead's real content in a `.pf-v5-c-toolbar` that carries its
-        // own hardcoded near-black PatternFly default independent of the
-        // masthead's own background, and the user-menu toggle hardcodes
-        // white text -- both invisible/wrong in at least one theme unless
-        // account.css explicitly overrides them (see that file's own
-        // comments). Assert computed styles directly, not just "no visual
-        // regression", so a future drift fails loudly here instead of only
-        // being visible in a screenshot diff nobody looked closely at.
-        const toolbarBg = await page.locator('.pf-v5-c-masthead .pf-v5-c-toolbar').first().evaluate((el) => getComputedStyle(el).backgroundColor);
-        expect(toolbarBg, 'masthead toolbar must not paint over the themed masthead background').toBe('rgba(0, 0, 0, 0)');
-        const menuToggleColor = await page.locator('.pf-v5-c-masthead .pf-v5-c-menu-toggle__text').first().evaluate((el) => getComputedStyle(el).color);
-        expect(menuToggleColor, 'user-menu toggle text must not hardcode white').not.toBe('rgb(255, 255, 255)');
+          await expect(page.getByTestId('page-heading')).toHaveText('Personal info');
+          await expect(page.locator('#username')).toHaveValue('test-user-consent');
 
-        // #91: the real APIARY brand mark (theme.properties' `logo=`),
-        // not Keycloak's own default logo.svg. Header.tsx only exposes one
-        // logo path, so light/dark is handled inside the SVG itself (see
-        // img/apiary-mark.svg's own comment) -- assert the browser actually
-        // decoded it (naturalWidth/Height), not just that an <img> tag with
-        // some src exists, since a malformed inline SVG renders as a
-        // "successful" zero-size broken image with no console error at all
-        // (found live building this: an XML comment containing a literal
-        // double hyphen silently broke the whole file this way).
-        const brand = page.locator('.pf-v5-c-masthead img').first();
-        await expect(brand).toHaveAttribute('src', /apiary-mark\.svg$/);
-        const brandSize = await brand.evaluate((el: HTMLImageElement) => ({ w: el.naturalWidth, h: el.naturalHeight }));
-        expect(brandSize, 'brand mark must actually decode, not just have a src').toEqual({ w: 64, h: 64 });
+          // #91 (found live auditing this suite): keycloak.v3 wraps the
+          // masthead's real content in a `.pf-v5-c-toolbar` that carries its
+          // own hardcoded near-black PatternFly default independent of the
+          // masthead's own background, and the user-menu toggle hardcodes
+          // white text -- both invisible/wrong in at least one theme unless
+          // account.css explicitly overrides them (see that file's own
+          // comments). Assert computed styles directly, not just "no visual
+          // regression", so a future drift fails loudly here instead of only
+          // being visible in a screenshot diff nobody looked closely at.
+          const toolbarBg = await page.locator('.pf-v5-c-masthead .pf-v5-c-toolbar').first().evaluate((el) => getComputedStyle(el).backgroundColor);
+          expect(toolbarBg, 'masthead toolbar must not paint over the themed masthead background').toBe('rgba(0, 0, 0, 0)');
+          const menuToggleColor = await page.locator('.pf-v5-c-masthead .pf-v5-c-menu-toggle__text').first().evaluate((el) => getComputedStyle(el).color);
+          expect(menuToggleColor, 'user-menu toggle text must not hardcode white').not.toBe('rgb(255, 255, 255)');
 
-        const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
-        expect(hasOverflow, `${viewport.name} must not overflow horizontally`).toBe(false);
+          // #91: the real APIARY brand mark (theme.properties' `logo=`),
+          // not Keycloak's own default logo.svg. Header.tsx only exposes one
+          // logo path, so light/dark is handled inside the SVG itself (see
+          // img/apiary-mark.svg's own comment) -- assert the browser actually
+          // decoded it (naturalWidth/Height), not just that an <img> tag with
+          // some src exists, since a malformed inline SVG renders as a
+          // "successful" zero-size broken image with no console error at all
+          // (found live building this: an XML comment containing a literal
+          // double hyphen silently broke the whole file this way).
+          const brand = page.locator('.pf-v5-c-masthead img').first();
+          await expect(brand).toHaveAttribute('src', /apiary-mark\.svg$/);
+          const brandSize = await brand.evaluate((el: HTMLImageElement) => ({ w: el.naturalWidth, h: el.naturalHeight }));
+          expect(brandSize, 'brand mark must actually decode, not just have a src').toEqual({ w: 64, h: 64 });
 
-        health.assertHealthy();
-        await expect(page).toHaveScreenshot(`account-personal-info-${theme}-${viewport.name}.png`);
-        await ctx.close();
-      });
+          const hasOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+          expect(hasOverflow, `${viewport.name} must not overflow horizontally`).toBe(false);
+
+          health.assertHealthy();
+          await expect(page).toHaveScreenshot(`account-personal-info-${theme}-${viewport.name}.png`);
+          await ctx.close();
+        });
+      }
     }
-  }
+
+    // #91's own acceptance criteria explicitly calls for "validation, error"
+    // state coverage, not just the default/happy-path render every other
+    // test here checks. test-user-consent has no firstName/lastName set and
+    // this clears the required Email field too, so submitting fails
+    // validation on all three -- a real server round trip, not a simulated
+    // client-side state.
+    test('shows a themed validation error on save with missing required fields', async ({ page, baseURL }) => {
+      // No trackPageHealth/assertHealthy here -- unlike every other test in
+      // this file, a real server-rejected 400 is this test's own expected
+      // outcome, not a health regression to flag.
+      await login(page, baseURL!, 'test-user-consent');
+      await page.locator('#email').fill('');
+      await page.getByRole('button', { name: 'Save' }).click();
+
+      await expect(page.locator('.pf-v5-c-alert.pf-m-danger')).toBeVisible();
+      await expect(page.locator('.pf-v5-c-helper-text__item.pf-m-error, .pf-v5-c-form__helper-text.pf-m-error').first()).toBeVisible();
+      await expect(page).toHaveScreenshot('account-personal-info-validation-error.png');
+
+      // Restore state for any later test that reuses this fixture user.
+      await page.locator('#email').fill('test-user-consent@example.invalid');
+    });
+
+    // The other, equally-real state #91's acceptance criteria names:
+    // "success". A real save that the server actually accepts, not a
+    // simulated success banner.
+    test('shows a themed success alert on a real accepted save', async ({ page, baseURL }) => {
+      await login(page, baseURL!, 'test-user-consent');
+      await page.locator('#firstName').fill('Test');
+      await page.locator('#lastName').fill('User');
+      await page.getByRole('button', { name: 'Save' }).click();
+
+      await expect(page.locator('.pf-v5-c-alert.pf-m-success')).toBeVisible();
+      await expect(page).toHaveScreenshot('account-personal-info-success.png');
+    });
+  });
 
   test('has no automatically detectable WCAG violations', async ({ page, baseURL }) => {
     await login(page, baseURL!, 'test-user-consent');
     const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze();
     expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
-  });
-
-  // #91's own acceptance criteria explicitly calls for "validation, error"
-  // state coverage, not just the default/happy-path render every other
-  // test here checks. test-user-consent has no firstName/lastName set and
-  // this clears the required Email field too, so submitting fails
-  // validation on all three -- a real server round trip, not a simulated
-  // client-side state.
-  test('shows a themed validation error on save with missing required fields', async ({ page, baseURL }) => {
-    // No trackPageHealth/assertHealthy here -- unlike every other test in
-    // this file, a real server-rejected 400 is this test's own expected
-    // outcome, not a health regression to flag.
-    await login(page, baseURL!, 'test-user-consent');
-    await page.locator('#email').fill('');
-    await page.getByRole('button', { name: 'Save' }).click();
-
-    await expect(page.locator('.pf-v5-c-alert.pf-m-danger')).toBeVisible();
-    await expect(page.locator('.pf-v5-c-helper-text__item.pf-m-error, .pf-v5-c-form__helper-text.pf-m-error').first()).toBeVisible();
-    await expect(page).toHaveScreenshot('account-personal-info-validation-error.png');
-
-    // Restore state for any later test that reuses this fixture user.
-    await page.locator('#email').fill('test-user-consent@example.invalid');
-  });
-
-  // The other, equally-real state #91's acceptance criteria names:
-  // "success". A real save that the server actually accepts, not a
-  // simulated success banner.
-  test('shows a themed success alert on a real accepted save', async ({ page, baseURL }) => {
-    await login(page, baseURL!, 'test-user-consent');
-    await page.locator('#firstName').fill('Test');
-    await page.locator('#lastName').fill('User');
-    await page.getByRole('button', { name: 'Save' }).click();
-
-    await expect(page.locator('.pf-v5-c-alert.pf-m-success')).toBeVisible();
-    await expect(page).toHaveScreenshot('account-personal-info-success.png');
   });
 });
 
@@ -167,6 +201,7 @@ test.describe('Account security (#91)', () => {
   test('Signing in shows the password credential and a passkey setup link', async ({ page, baseURL }) => {
     const health = trackPageHealth(page, baseURL!);
     await login(page, baseURL!, 'test-user-consent');
+    await openSidebarNav(page);
     await page.getByText('Account security', { exact: true }).click();
     await page.getByText('Signing in', { exact: true }).click();
     await expect(page.getByTestId('page-heading')).toHaveText('Signing in');
@@ -179,14 +214,27 @@ test.describe('Account security (#91)', () => {
     // longer than the default 5s auto-retry (and longer than
     // `networkidle`, which resolved before this settled) before the
     // "Two-factor authentication" section appears at all.
-    await expect(page.getByRole('button', { name: /Set up Authenticator application/i })).toBeVisible({ timeout: 15_000 });
+    const otpCreate = page.locator('[data-testid="otp/create"]');
+    await otpCreate.waitFor({ state: 'attached', timeout: 15_000 });
+    // #113: below PatternFly's `lg` breakpoint this action collapses from
+    // the inline link-button above into this row's own "more actions"
+    // kebab (the same collapse pattern the masthead's own
+    // options-kebab-toggle uses) -- both elements are always in the DOM,
+    // CSS just toggles which one is visible, so open the kebab first when
+    // the direct button isn't.
+    if (!(await otpCreate.isVisible())) {
+      await otpCreate.locator('xpath=preceding-sibling::button[1]').click();
+    }
+    await expect(page.getByText('Set up Authenticator application').first()).toBeVisible();
     health.assertHealthy();
+    await closeSidebarNavIfOpen(page);
     await expect(page).toHaveScreenshot('account-signing-in.png');
   });
 
   test('Device activity lists the current session and offers sign-out', async ({ page, baseURL }) => {
     const health = trackPageHealth(page, baseURL!);
     await login(page, baseURL!, 'test-user-consent');
+    await openSidebarNav(page);
     await page.getByText('Account security', { exact: true }).click();
     await page.getByText('Device activity', { exact: true }).click();
     await expect(page.getByTestId('page-heading')).toHaveText('Device activity');
@@ -204,6 +252,7 @@ test.describe('Applications (#91)', () => {
   test('lists the Account Console client itself', async ({ page, baseURL }) => {
     const health = trackPageHealth(page, baseURL!);
     await login(page, baseURL!, 'test-user-consent');
+    await openSidebarNav(page);
     await page.getByText('Applications', { exact: true }).click();
     await expect(page.getByTestId('page-heading')).toHaveText('Application');
     // Despite the visual table styling (account.css's own `.pf-v5-c-table`
@@ -214,6 +263,7 @@ test.describe('Applications (#91)', () => {
     // reliable here.
     await expect(page.getByText('Account Console', { exact: true })).toBeVisible({ timeout: 15_000 });
     health.assertHealthy();
+    await closeSidebarNavIfOpen(page);
     await expect(page).toHaveScreenshot('account-applications.png');
   });
 });
@@ -221,7 +271,13 @@ test.describe('Applications (#91)', () => {
 test.describe('Masthead user menu (#91)', () => {
   test('opens, is legible, and offers sign out', async ({ page, baseURL }) => {
     await login(page, baseURL!, 'test-user-consent');
-    const toggle = page.locator('.pf-v5-c-masthead .pf-v5-c-menu-toggle').first();
+    // #113: below PatternFly's `lg` breakpoint the direct user-menu toggle
+    // (options-toggle) is hidden and its actions (Sign out included) move
+    // into the masthead's own "more options" kebab (options-kebab-toggle)
+    // instead -- both are always in the DOM, CSS just toggles which one is
+    // visible.
+    const directToggle = page.locator('[data-testid="options-toggle"]');
+    const toggle = (await directToggle.isVisible()) ? directToggle : page.locator('[data-testid="options-kebab-toggle"]');
     await toggle.click();
     const signOut = page.getByRole('menuitem', { name: 'Sign out' });
     await expect(signOut).toBeVisible();
@@ -324,11 +380,14 @@ test.describe('Account theme DOM-hook compatibility (#91, #101 analogue)', () =>
     await page.getByRole('button', { name: 'Save' }).click();
     await visit();
 
+    await openSidebarNav(page);
     await page.getByText('Account security', { exact: true }).click();
     await page.getByText('Signing in', { exact: true }).click();
     await visit();
+    await openSidebarNav(page);
     await page.getByText('Device activity', { exact: true }).click();
     await visit();
+    await openSidebarNav(page);
     await page.getByText('Applications', { exact: true }).click();
     await visit();
 
